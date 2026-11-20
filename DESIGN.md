@@ -612,3 +612,101 @@ identical prompts replayed with the cache off and on.
   near-ties on the GPU, with the noise floor measured alongside.
 - **Hit rate is logged**: `PrefixCacheStats` (lookups, hits, hit rate, tokens saved,
   catch-up tokens, inserted/evicted blocks), exported by the server's `/metrics` in Phase 5.
+
+---
+
+## Phase 5 — OpenAI-compatible server
+
+### D-025 Two processes: HTTP front end and engine
+
+- **Decision.** `minfer serve` runs the HTTP server (FastAPI on uvicorn/uvloop/httptools)
+  in one process and the engine in a child process (`minfer/server/async_engine.py`,
+  `spawn` start method because CUDA does not survive a fork). The front end tokenizes,
+  applies the chat template, detokenizes incrementally and writes SSE; the engine process
+  only ever sees token ids.
+- **IPC.** Two one-way pipes. Front end → engine: `add` (request id, prompt ids, sampling
+  params), `abort`, `stop`. Engine → front end: one `tokens` message *per engine step*
+  carrying every `(request id, token id, finish reason, cached tokens)` the step produced,
+  `error` for a rejected request, a `metrics` snapshot every 250 ms and whenever the engine
+  goes idle, and `dead` before exiting on a failure. The front end reads the pipe from the
+  event loop (`loop.add_reader`), so there are no extra threads on either side.
+- **Why not a thread.** That was the first implementation; see B-002.
+- **Failure handling.** If the engine process dies, every in-flight request fails with a
+  server error and `/health` turns 503 (`test_engine_process_death_...`). A client that
+  disconnects, or a stop string that matches, aborts the request in the engine and frees
+  its KV.
+
+### B-002 Engine thread and event loop fought over the GIL (fixed by D-025)
+
+- **Symptom.** First server version: the engine loop on a thread inside the uvicorn
+  process. Under `vllm bench serve` (random dataset, 512 prompt / 128 output tokens,
+  300 requests at 30 req/s, `--temperature 0`) median TPOT was 38.5 ms and median TTFT
+  140 ms, with peak concurrency 230.
+- **Isolation.** The same arrival process replayed in-process with `bench/driver.py`
+  (no HTTP) gave median TPOT 9.0 ms. The server's own counters showed the engine doing
+  447 steps at 26.7 ms each, against ~1,400 steps at 8.5 ms in-process: the engine *itself*
+  was 3× slower when an event loop streaming ~3,300 chunks/s lived in the same interpreter.
+  Greedy vs sampled requests made no difference (so not the sampler), and shrinking the GIL
+  switch interval from 5 ms to 0.1 ms only moved median TPOT to 33 ms (so not just handoff
+  latency).
+- **Root cause.** Every PyTorch operator call releases and re-acquires the GIL. An eager
+  pass makes several hundred such calls per step, and at each one the event-loop thread —
+  which always has chunks to serialize and write under load — can take the lock. The
+  engine's per-step Python time and the front end's per-step Python time add up serially,
+  and slower steps raise concurrency, which raises the front end's work per step further.
+- **Fix.** Separate processes (D-025). Same benchmark, same machine: 1,550 steps at 6.7 ms,
+  median TPOT 7.0 ms, median TTFT 36 ms, peak concurrency 75.
+- These before/after numbers are development measurements (the thread-based version was
+  never committed); the committed evidence for the current design is M-007.
+
+### D-026 Protocol details
+
+- Routes: `/v1/completions` (string, token-id, and batched prompts), `/v1/chat/completions`
+  (chat template applied; `tools` passed to the template; multi-part text content
+  accepted), `/v1/models`, `/health`, `/metrics`, and vLLM-compatible `/tokenize` and
+  `/detokenize` (vLLM's benchmark client uses them to align prompt lengths).
+- Streaming is SSE, one chunk per token that produces text, a final chunk with the finish
+  reason, an optional usage chunk (`stream_options.include_usage`), then `[DONE]`.
+- Detokenization uses `tokenizers.decoders.DecodeStream` (incremental, UTF-8 safe,
+  ~0.85 µs per token measured) rather than re-decoding a growing suffix.
+- Stop strings are applied on the detokenized stream with hold-back: text that could
+  still become the start of a stop string is not sent, so a stop string split across
+  tokens never leaks (`test_stop_string_split_across_pieces_is_never_leaked`).
+- `usage.prompt_tokens_details.cached_tokens` reports the request's prefix-cache hit.
+- Unknown request fields are ignored; fields that would change the output but are not
+  implemented (`n > 1`, penalties, `echo`, non-text content parts) are rejected with a 400
+  in OpenAI's error envelope rather than silently dropped.
+- `/metrics` (Prometheus text): running/waiting requests (queue depth), token counters and
+  output tokens/s, prefill/decode token counters, engine step count and time, preemptions,
+  KV pool usage, and the prefix cache's hit rate, hit/lookup/catch-up tokens, tokens saved,
+  tree size and evictions.
+
+### Known limit: the sampler sorts the whole vocabulary
+
+Requests with temperature > 0 go through a full descending sort of 151,936 logits per row
+(D-016). Measured on the H100 with random logits: 1.2 ms per step at batch 32 and 5.6 ms at
+batch 256, against 0.06 ms for argmax at batch 256. Benchmarks in this repository use greedy decoding
+for all engines, so this is not in their hot path; a top-k pre-filter is the obvious fix
+and is left for Phase 11.
+
+### M-007 `vllm bench serve` against minfer; `openai` client (Phase 5 acceptance)
+
+- Script: `bench/serve_compat.sh` → `bench/results/serve_compat/` (vLLM's result JSON plus
+  the server's `/metrics` afterwards). vLLM 0.34.0's benchmark client, random dataset,
+  512 prompt / 128 output tokens, 500 requests at 30 req/s, greedy:
+
+  | endpoint | completed | failed | out tok/s | median TTFT | median TPOT | p99 TPOT |
+  |---|---|---|---|---|---|---|
+  | `/v1/completions` | 500 | 0 | 3704 | 33.4 ms | 6.81 ms | 8.12 ms |
+  | `/v1/chat/completions` | 500 | 0 | 3704 | 33.6 ms | 6.91 ms | 8.43 ms |
+
+  This is a compatibility result (the client is load-limited at 30 req/s), not a
+  performance comparison; that is Phase 6.
+- The first chat run failed all 500 requests: the client sends `content` as a list of
+  typed parts, which the Qwen chat template does not accept. Fixed by flattening text
+  parts (and rejecting non-text ones); covered by `test_chat_accepts_multi_part_text_content`.
+- `tests/test_server.py` (10 tests) drives a real `minfer serve` process with the official
+  `openai` Python client: chat and completions, streaming and not, streamed text equal to
+  the non-streamed text, usage chunks, token-id and batched prompts, stop strings, seeded
+  sampling, error envelopes, prefix-cache hits visible in `usage` and `/metrics`, and the
+  raw SSE wire format.
