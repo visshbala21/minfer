@@ -1449,3 +1449,171 @@ files are in `bench/results/reproduction_rerun/` (profiler traces omitted).
     throughput 24607 → 25627 tok/s. With 1,000 requests arriving at once the outcome
     depends on how each server's admission happens to interleave with tokenization, and
     one run of it is not a stable measurement. The README says so.
+
+---
+
+## Phase 13 — Benchmark fairness audit
+
+The question for this phase: read the benchmarks of Phases 6, 8 and 12 as a reviewer who
+does not believe them. Two comparisons were audited — the three-engine matrix and the
+Triton-vs-FlashInfer microbenchmark — and one of the two did not survive as published.
+
+### M-019 The Triton-vs-FlashInfer comparison was against FlashInfer's slower configuration (revises M-011)
+
+- **What was wrong.** `bench/triton_kernel.py` built FlashInfer's decode wrapper with its
+  default `use_tensor_cores=False`. For grouped-query attention with a group size of 4 or
+  more, SGLang selects FlashInfer's tensor-core decode path, and that path is the faster one
+  for this head layout (12 query heads over 2 KV heads) at **every** batch size and context
+  measured. M-011's "faster at 18 of 19 points (1.35–3.46×)" was therefore a comparison with
+  a configuration nobody tuning FlashInfer would use. It was not a host-overhead artefact:
+  M-011's headline numbers were already kernel-only (replayed from a CUDA graph, no
+  `plan()`); the baseline itself was the problem.
+- **Re-measured** (`bench/triton_kernel.py` → `bench/results/triton_kernel.json`), GPU time
+  per layer in µs replayed from a CUDA graph (kernel only), then one decode step's worth of
+  attention in ms of wall-clock time (host preparation + 28 replayed layers; end to end):
+
+  | batch | context | FlashInfer plain | FlashInfer tensor cores | Triton | Triton vs plain | **Triton vs best** | step: FlashInfer (ms) | step: Triton (ms) | **end to end** |
+  |---|---|---|---|---|---|---|---|---|---|
+  | 1 | 128 | 11.1 | 6.6 | 7.0 | 1.58× | 0.94× | 0.22 | 0.21 | 1.04× |
+  | 8 | 128 | 11.4 | 7.1 | 8.0 | 1.42× | 0.88× | 0.24 | 0.24 | 0.97× |
+  | 32 | 128 | 15.5 | 10.7 | 5.6 | 2.79× | 1.92× | 0.34 | 0.17 | 1.95× |
+  | 64 | 128 | 15.7 | 11.3 | 5.9 | 2.65× | 1.90× | 0.35 | 0.18 | 1.91× |
+  | 256 | 128 | 29.8 | 17.6 | 8.4 | 3.54× | 2.09× | 0.53 | 0.25 | 2.09× |
+  | 1 | 1,024 | 11.6 | 7.5 | 7.2 | 1.62× | 1.05× | 0.25 | 0.22 | 1.14× |
+  | 8 | 1,024 | 15.7 | 11.6 | 9.0 | 1.75× | 1.29× | 0.36 | 0.27 | 1.33× |
+  | 32 | 1,024 | 28.7 | 15.5 | 11.7 | 2.46× | 1.33× | 0.47 | 0.35 | 1.36× |
+  | 64 | 1,024 | 43.7 | 33.5 | 29.1 | 1.50× | 1.15× | 0.98 | 0.83 | 1.17× |
+  | 256 | 1,024 | 157.2 | 97.7 | 93.0 | 1.69× | 1.05× | 2.79 | 2.63 | 1.06× |
+  | 1 | 4,096 | 15.5 | 11.2 | 10.9 | 1.43× | 1.03× | 0.35 | 0.32 | 1.10× |
+  | 8 | 4,096 | 28.0 | 15.2 | 14.2 | 1.98× | 1.08× | 0.46 | 0.42 | 1.12× |
+  | 32 | 4,096 | 78.2 | 54.9 | 52.0 | 1.50× | 1.06× | 1.58 | 1.48 | 1.07× |
+  | 64 | 4,096 | 151.8 | 99.5 | 96.5 | 1.57× | 1.03× | 2.83 | 2.72 | 1.04× |
+  | 256 | 4,096 | 586.9 | 359.6 | 357.7 | 1.64× | 1.01× | 10.13 | 10.02 | 1.01× |
+  | 1 | 16,384 | 23.6 | 13.4 | 24.7 | 0.96× | 0.54× | 0.41 | 0.71 | 0.58× |
+  | 8 | 16,384 | 79.2 | 55.1 | 54.9 | 1.44× | 1.00× | 1.59 | 1.56 | 1.02× |
+  | 32 | 16,384 | 294.2 | 188.3 | 187.3 | 1.57× | 1.01× | 5.32 | 5.27 | 1.01× |
+  | 64 | 16,384 | 581.3 | 364.3 | 366.8 | 1.58× | 0.99× | 10.26 | 10.30 | 1.00× |
+
+- **What is true.** Against FlashInfer's best configuration the Triton kernel is
+  **0.54–2.09×** kernel-only: more than 5% faster at 9 of 19 points, more than 5% slower at
+  3, and within 5% at 7. It wins clearly only with short contexts and many sequences
+  (≥ 32 sequences × 128 tokens: 1.9–2.1×) and moderately at 1,024-token contexts
+  (1.05–1.33×); once the context reaches 4,096 tokens the two kernels are the same speed
+  (0.99–1.08×), and at batch 1 with a 16k context the Triton kernel takes almost twice as
+  long (0.54×). End to end the picture is the same (0.58–2.09×): host preparation is
+  0.05–0.09 ms for `plan()` and 0.03–0.13 ms for the Triton path's table copy, small next
+  to 28 kernel launches, so "no host planning" was never a material advantage either.
+- **Numerics** are unaffected: the tensor-core path is as close to float32 as the plain one
+  (max abs error 0.0038 over the 19 points).
+- **Changes made.** (1) `needs_tensor_cores` now selects the tensor-core path for every
+  group size ≥ 4, so minfer's own FlashInfer decode option (`--decode-kernel flashinfer`,
+  and the FP8-KV path, which can only use FlashInfer) runs FlashInfer's faster kernel; the
+  "− Triton decode" ablation row is re-measured on that basis in Phase 17. (2) The
+  microbenchmark measures both FlashInfer configurations, takes the faster as the baseline,
+  and reports kernel-only and end-to-end numbers separately; the README table and plot show
+  all three kernels. (3) The Triton kernel stays the default decode kernel: at the batch
+  sizes and contexts of the agent workload it is equal or somewhat faster, never much
+  slower. Whether that default survives at 7B (group size 7) is re-checked in Phase 14.
+
+### D-038 Every setting of the three servers, side by side
+
+Collected from each server's start-up log (`bench/logs/matrix_*_server.log`, and one
+SGLang start at `--log-level info`, which prints its resolved `server_args`) and from the
+sources of vLLM 0.34.0 and SGLang 0.5.23 where the logs do not say.
+
+| setting | minfer | vLLM 0.34.0 | SGLang 0.5.23 | same? |
+|---|---|---|---|---|
+| model, dtype, context | Qwen2.5-1.5B, bf16, 32,768 | same (`--dtype bfloat16`) | same (`--dtype bfloat16`) | yes |
+| prefix caching | on: radix tree over 16-token blocks | on: SHA-256 hash chain over 16-token blocks | on: radix tree, page size 1 | all on; measured hit rate 92.5–93.3% for all three |
+| chunked prefill | on: 2,048 prefill tokens per step while anything decodes | on: bounded by `max_num_batched_tokens` 8,192 | on: `chunked_prefill_size` 8,192 | all on; minfer's chunk is the smallest (costs it TTFT on long uncached prompts, M-017) |
+| max running sequences | 256 | 1,024 (H100 default) | 4,096 (derived) | differs; irrelevant at ≤ 64 concurrent sessions, decisive for ShareGPT "max" (1,000 at once) — see M-015 |
+| max batched tokens per step | 8,192 | 8,192 | `max_prefill_tokens` 16,384 | comparable |
+| CUDA graphs | decode: 9 batch buckets to 256; prefill: 55 (spans, tokens) buckets to 1,024 tokens | decode and prefill: 51 sizes to 512 (`FULL_AND_PIECEWISE`) | decode: 36 batch sizes to 256; prefill: 58 token shapes to 8,192 | all on |
+| model compilation | hand-written fused Triton kernels | `torch.compile` (inductor), optimization level 2 | none by default (`--enable-torch-compile` is opt-in and experimental) | each engine's default |
+| attention kernels | Triton decode, FlashInfer prefill | FlashAttention 3 | FlashAttention 3 (`fa3`) | each engine's default |
+| KV memory | 90% of memory free after weights: 2.55 M tokens | `gpu_memory_utilization` default: 2.64 M tokens | `mem_fraction_static` 0.83: 2.33 M tokens | comparable; none evicts on this workload |
+| scheduling policy | cache-aware admission (no effect measured, M-016) | FCFS | FCFS (`lpm` is opt-in) | — |
+| warm-up | one "max" agent trace (64 sessions, seed 10,000) before any measured run | same trace | same trace (plus its own built-in start-up warm-up) | yes |
+| tokenizer and chat template | client renders the chat template; server tokenizes the text | same | same | yes: `prompt_tokens` totals are identical for all three at every rate |
+| sampling | `temperature=0`, `ignore_eos`, `max_tokens` from the trace | same request | same request | yes: `completion_tokens` totals identical |
+| streaming | SSE, one chunk per token | SSE, `stream_interval` 1 | SSE, `stream_interval` 1 | yes |
+| access log | off | **on** (one uvicorn line per request) | off at `--log-level warning` | **no** → fixed below |
+| processes | HTTP front end + engine | API server + engine core | HTTP server + tokenizer/detokenizer managers + scheduler | each engine's default |
+| client | `bench/agent_workload.py`, one process, same machine | same | same | yes |
+
+Two findings from the table alone:
+
+1. **vLLM was the only server writing an access-log line per request.** Measured effect:
+   none beyond noise (below). Disabled anyway, as a matter of parity.
+2. **The three "defaults" are not equally tuned for this workload.** vLLM compiles the
+   model by default; SGLang's compilation and its batch tokenizer are opt-in. "Every
+   engine at its defaults" (D-028) was a defensible rule but not the strongest baseline, so
+   the documented opt-in flags were measured (M-020).
+
+### M-020 The baselines with their documented tuning flags
+
+Script: `bench/fairness_audit.py` → `bench/results/fairness_audit.json`. A fresh server per
+configuration, the matrix's warm-up, and the matrix's agent traces at 4 req/s, 16 req/s and
+"max" (same seeds, byte-identical prompts). Qwen2.5-1.5B, as in the published matrix.
+
+| engine / configuration | flags added to the defaults | 4 req/s: TTFT p50 / p99 (ms) | 4 req/s: TPOT p50 / p99 (ms) | 16 req/s: TTFT p50 / p99 (ms) | 16 req/s: TPOT p50 / p99 (ms) | max: tok/s | max: TTFT p50 / p99 (ms) | max: TPOT p50 / p99 (ms) |
+|---|---|---|---|---|---|---|---|---|
+| minfer / default | — | 39 / 67 | 2.64 / 3.15 | 40 / 82 | 2.99 / 4.18 | 4211 | 84 / 258 | 10.99 / 12.74 |
+| vLLM / default | — | 62 / 99 | 2.38 / 2.96 | 64 / 127 | 2.54 / 3.39 | 4987 | 157 / 644 | 7.61 / 9.75 |
+| vLLM / no access log | `--disable-uvicorn-access-log` | 63 / 95 | 2.40 / 3.09 | 65 / 119 | 2.49 / 3.18 | 4937 | 158 / 727 | 7.47 / 9.22 |
+| vLLM / xxhash | `--prefix-caching-hash-algo` `xxhash` | 58 / 101 | 2.38 / 3.00 | 66 / 130 | 2.54 / 3.39 | 4954 | 149 / 709 | 7.58 / 9.39 |
+| vLLM / interactivity | `--performance-mode` `interactivity` | 61 / 99 | 2.39 / 3.22 | 65 / 124 | 2.46 / 3.35 | 4917 | 173 / 744 | 7.39 / 9.58 |
+| vLLM / throughput | `--performance-mode` `throughput` | 63 / 103 | 2.40 / 3.42 | 66 / 126 | 2.55 / 3.40 | 4899 | 133 / 737 | 7.78 / 9.54 |
+| SGLang / default | — | 49 / 95 | 2.32 / 3.03 | 50 / 114 | 2.60 / 3.48 | 5071 | 103 / 453 | 8.33 / 10.77 |
+| SGLang / lpm | `--schedule-policy` `lpm` | 49 / 94 | 2.34 / 3.07 | 48 / 130 | 2.60 / 3.55 | 5021 | 122 / 465 | 8.11 / 10.60 |
+| SGLang / batch tokenizer | `--enable-dynamic-batch-tokenizer` | 48 / 86 | 2.36 / 2.72 | 55 / 107 | 2.59 / 3.18 | 5796 | 116 / 402 | 6.83 / 8.27 |
+| SGLang / mixed chunk | `--enable-mixed-chunk` | 49 / 95 | 2.33 / 3.05 | 48 / 122 | 2.48 / 3.43 | 5131 | 308 / 540 | 5.69 / 7.73 |
+| SGLang / torch compile | `--enable-torch-compile` | 141 / 193 | 69.87 / 70.87 | 132 / 214 | 40.10 / 72.23 | 1225 | 120 / 472 | 9.00 / 70.78 |
+| minfer / token ids | (prompts sent as token ids) | 16 / 34 | 2.65 / 3.23 | 17 / 32 | 2.98 / 4.28 | 4214 | 33 / 216 | 11.50 / 13.56 |
+| vLLM / token ids | (prompts sent as token ids) | 36 / 68 | 2.39 / 3.14 | 36 / 87 | 2.52 / 3.26 | 5207 | 88 / 406 | 8.34 / 9.93 |
+| SGLang / token ids | (prompts sent as token ids) | 19 / 30 | 2.35 / 2.77 | 20 / 35 | 2.60 / 3.33 | 5569 | 31 / 346 | 8.61 / 10.09 |
+| vLLM / tuned | `--disable-uvicorn-access-log` | 62 / 100 | 2.40 / 3.03 | 64 / 126 | 2.56 / 3.55 | 4979 | 125 / 651 | 7.75 / 9.63 |
+| SGLang / tuned | `--enable-dynamic-batch-tokenizer` | 48 / 83 | 2.36 / 2.72 | 53 / 105 | 2.61 / 3.28 | 5780 | 113 / 373 | 6.83 / 8.20 |
+
+- **vLLM: nothing moved.** Access log off, xxHash prefix hashing, and the `interactivity`
+  and `throughput` performance modes all land within the spread of vLLM's own repeated
+  default runs (TTFT p50 at 4 req/s: 58–63 ms; at "max": 125–173 ms across six starts;
+  saturated throughput 4,899–4,987 tok/s). Its defaults already are its best configuration
+  here. The matrix now passes `--disable-uvicorn-access-log` for parity only.
+- **SGLang: one flag matters.** `--enable-dynamic-batch-tokenizer` raises saturated
+  throughput from 5,071 to 5,796 tok/s (+14%) and lowers saturated TPOT p50 from 8.33 to
+  6.83 ms, at the cost of ~5 ms of TTFT p50 at 16 req/s (49.6 → 54.6 ms; its p99 improves).
+  Confirmed in a second start (`sglang/tuned`: 5,780 tok/s, 6.83 ms). **The matrix now runs
+  SGLang with it**, which makes minfer's saturated-throughput deficit larger than
+  published: 4,211 vs 5,780 tok/s is 0.73×, where the README said 0.83× of vLLM and 0.84×
+  of SGLang. `--schedule-policy lpm` changed nothing; `--enable-mixed-chunk` lowers
+  saturated TPOT (5.69 ms) but triples saturated TTFT p50 (308 ms); `--enable-torch-compile`
+  made SGLang several times slower on this workload (TPOT 40–70 ms; cause not
+  investigated — its own help text calls it experimental) and is reported, not adopted.
+- **Does minfer's TTFT lead survive? Against the tuned baselines, yes, as published:**
+  39–40 ms vs 62–64 ms (vLLM) and 48–53 ms (SGLang) at 4–16 req/s, and 84 ms vs 125 and
+  113 ms at saturation.
+- **But most of that lead over SGLang is the HTTP front end, not the engine.** With the
+  prompts sent as token ids — no server-side tokenization for anyone — TTFT p50 is
+  **16–17 ms (minfer), 36 ms (vLLM), 19–20 ms (SGLang)** at 4–16 req/s, and at saturation
+  **33 / 88 / 31 ms**: SGLang is then level with minfer at the median when saturated
+  (minfer keeps the better p99: 216 vs 346 ms). So of minfer's ~10 ms lead over SGLang on
+  text prompts, about 3 ms is the engine (admission, cache lookup, the prefill pass) and
+  the rest is how each server gets 25 KB of prompt text tokenized and to its engine. Over
+  vLLM the lead is the same size with and without tokenization (~20 ms), so there it is in
+  the engine path. Text prompts are what agents send, so the published comparison is the
+  relevant one, but its explanation ("a shorter path from socket to first token") needed
+  this decomposition, and the README now carries it.
+- The same experiment shows where minfer's own TTFT goes: 23 of its 39 ms on a mostly
+  cached 6k-token request is tokenization and request handling in the front end.
+- **TPOT and throughput are unchanged by the audit for vLLM** (2.4–2.5 ms; minfer
+  2.6–3.0 ms) **and worse for minfer relative to tuned SGLang at saturation** (above).
+
+### Phase 13 acceptance
+
+Every setting compared is in D-038; every change made is in M-019 (FlashInfer decode
+configuration, microbenchmark method) and M-020 (`TUNED` flags in `bench/servers.py`).
+TTFT, TPOT and throughput on the agent workload are re-measured in M-020. The README's
+Triton claim is replaced, its headline explanation of the TTFT lead is qualified, and its
+tables carry the audit; the full matrix with the tuned baselines is re-run at 7B in
+Phase 14 and at 1.5B in Phase 17.

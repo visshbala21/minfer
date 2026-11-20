@@ -241,18 +241,18 @@ def plot_triton_kernel() -> None:
     for ax, context in zip(axes[0], contexts, strict=True):
         subset = [r for r in rows if r["context_tokens"] == context]
         xs = [str(r["batch_size"]) for r in subset]
-        micro = [
-            [r[key] * 1e3 for r in subset] for key in ("flashinfer_graph_ms", "triton_graph_ms")
-        ]
-        _line(ax, xs, micro[0], SERIES["vllm"], "FlashInfer decode kernel")
-        _line(ax, xs, micro[1], SERIES["minfer"], "minfer Triton kernel")
+        keys = ("flashinfer_graph_ms", "flashinfer_tc_graph_ms", "triton_graph_ms")
+        micro = [[r[key] * 1e3 for r in subset] for key in keys]
+        _line(ax, xs, micro[0], SERIES["sglang"], "FlashInfer decode, plain")
+        _line(ax, xs, micro[1], SERIES["vllm"], "FlashInfer decode, tensor cores")
+        _line(ax, xs, micro[2], SERIES["minfer"], "minfer Triton kernel")
         ax.set_title(f"{context:,}-token contexts (µs per layer)")
         ax.set_xlabel("batch size")
         ax.set_ylim(bottom=0)
         ax.margins(x=0.14)
     note = (
-        "One attention layer, 12 heads / 2 KV heads, bf16; GPU time per call when replayed "
-        "from a CUDA graph (bench/triton_kernel.py)."
+        "One attention layer, 12 heads / 2 KV heads, bf16; kernel-only GPU time per call when "
+        "replayed from a CUDA graph, no host-side planning (bench/triton_kernel.py)."
     )
     _finish(
         fig,

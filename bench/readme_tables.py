@@ -245,7 +245,7 @@ def fp8_table() -> str:
 
 
 def triton_table() -> str:
-    """Triton vs FlashInfer decode attention, replayed from a CUDA graph."""
+    """Triton vs FlashInfer decode attention: kernel only and end to end."""
     data = _load("triton_kernel.json")
     if not data:
         return MISSING
@@ -254,14 +254,33 @@ def triton_table() -> str:
             str(r["batch_size"]),
             f"{r['context_tokens']:,}",
             f"{r['flashinfer_graph_ms'] * 1e3:.1f}",
+            f"{r['flashinfer_tc_graph_ms'] * 1e3:.1f}",
             f"{r['triton_graph_ms'] * 1e3:.1f}",
-            f"{r['speedup_in_graph']:.2f}×",
+            f"{r['speedup_in_graph_vs_best']:.2f}×",
+            f"{r['flashinfer_step_ms']:.2f}",
+            f"{r['triton_step_ms']:.2f}",
+            f"{r['speedup_end_to_end']:.2f}×",
             f"{r['triton_vs_flashinfer_max_abs']:.4f}",
         ]
         for r in data["rows"]
     ]
-    header = ["batch", "context", "FlashInfer (µs/layer)", "Triton (µs/layer)", "speedup"]
-    return _table([*header, "max abs difference"], rows)
+    header = ["batch", "context", "FlashInfer, plain (µs/layer)"]
+    header += ["FlashInfer, tensor cores (µs/layer)", "Triton (µs/layer)"]
+    header += ["kernel only: Triton vs best FlashInfer"]
+    header += ["step: FlashInfer plan + 28 layers (ms)", "step: Triton prep + 28 layers (ms)"]
+    header += ["end to end: Triton vs FlashInfer", "max abs difference"]
+    kernel = [r["speedup_in_graph_vs_best"] for r in data["rows"]]
+    step = [r["speedup_end_to_end"] for r in data["rows"]]
+    faster = sum(value > 1.05 for value in kernel)
+    slower = sum(value < 0.95 for value in kernel)
+    summary = (
+        f"Kernel only, against the faster FlashInfer configuration, the Triton kernel is "
+        f"{min(kernel):.2f}–{max(kernel):.2f}× as fast: more than 5% faster at {faster} of "
+        f"{len(kernel)} points, more than 5% slower at {slower}, within 5% at "
+        f"{len(kernel) - faster - slower}. End to end (host preparation included) it is "
+        f"{min(step):.2f}–{max(step):.2f}×."
+    )
+    return _table(header, rows) + "\n\n" + summary
 
 
 def chunked_prefill_table() -> str:
@@ -474,6 +493,39 @@ def reproduction_table() -> str:
     return "\n".join([table, "", *held])
 
 
+def fairness_audit_table() -> str:
+    """The baselines under their tuning flags, and all engines with pre-tokenized prompts."""
+    data = _load("fairness_audit.json")
+    if not data:
+        return MISSING
+    rates = data["rates"]
+    rows = []
+    for name, entry in data["configs"].items():
+        engine, variant = name.split("/")
+        flags = " ".join(f"`{flag}`" for flag in entry["flags"])
+        if entry.get("prompts_as_token_ids"):
+            flags = "(prompts sent as token ids)"
+        cells = [f"{ENGINES[engine]} / {variant.replace('_', ' ')}", flags or "—"]
+        for rate in rates:
+            row = entry.get(rate)
+            if row is None:
+                cells += ["failed to start", "", ""]
+                continue
+            cells += [
+                f"{row['output_tokens_per_second']:.0f}" if rate == "max" else "",
+                f"{row['ttft_ms']['p50']:.0f} / {row['ttft_ms']['p99']:.0f}",
+                f"{row['tpot_ms']['p50']:.2f} / {row['tpot_ms']['p99']:.2f}",
+            ]
+        rows.append([cell for cell in cells if cell != ""])
+    header = ["engine / configuration", "flags added to the defaults"]
+    for rate in rates:
+        prefix = "max" if rate == "max" else f"{rate} req/s"
+        if rate == "max":
+            header.append("max: tok/s")
+        header += [f"{prefix}: TTFT p50 / p99 (ms)", f"{prefix}: TPOT p50 / p99 (ms)"]
+    return _table(header, rows)
+
+
 SECTIONS: dict[str, Callable[[], str]] = {
     "headline": headline,
     "agent-results": agent_table,
@@ -485,6 +537,7 @@ SECTIONS: dict[str, Callable[[], str]] = {
     "speculation": speculation_table,
     "fp8": fp8_table,
     "triton": triton_table,
+    "fairness-audit": fairness_audit_table,
     "equivalence": equivalence_table,
     "profile": profile_table,
     "reproduction": reproduction_table,
