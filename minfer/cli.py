@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import sys
 import time
 from collections.abc import Sequence
@@ -113,6 +114,30 @@ def _generate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _serve(args: argparse.Namespace) -> int:
+    """Serve the OpenAI-compatible API."""
+    import uvicorn
+    from transformers import AutoTokenizer
+
+    from minfer.engine import Engine
+    from minfer.server import create_app
+
+    tokenizer = AutoTokenizer.from_pretrained(args.model)
+    # The engine (and the model) live in a separate process; see minfer/server/async_engine.py.
+    factory = functools.partial(Engine.from_pretrained, args.model, engine_config_from_args(args))
+    app = create_app(factory, tokenizer, args.served_model_name or args.model)
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        log_level=args.log_level,
+        loop="uvloop",
+        http="httptools",
+        access_log=False,
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """The ``minfer`` argument parser."""
     parser = argparse.ArgumentParser(prog="minfer", description=__doc__)
@@ -128,6 +153,16 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--sampling-seed", type=int, default=None)
     add_engine_arguments(generate)
     generate.set_defaults(handler=_generate)
+
+    serve = commands.add_parser("serve", help="serve the OpenAI-compatible HTTP API")
+    serve.add_argument("--host", default="0.0.0.0")
+    serve.add_argument("--port", type=int, default=8000)
+    serve.add_argument(
+        "--served-model-name", default=None, help="name clients use (default: --model)"
+    )
+    serve.add_argument("--log-level", default="info")
+    add_engine_arguments(serve)
+    serve.set_defaults(handler=_serve)
     return parser
 
 
