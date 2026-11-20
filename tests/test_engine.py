@@ -30,6 +30,20 @@ def make_engine(model, **config) -> Engine:
     return Engine(model, engine_config, eos_token_ids=() if eos is None else (eos,))
 
 
+def assert_all_released(engine: Engine) -> None:
+    """No sequence holds a block; whatever is still allocated belongs to the prefix cache."""
+    blocks, cache = engine.blocks, engine.prefix_cache
+    assert not engine.has_work
+    assert blocks.num_free + blocks.num_evictable == blocks.num_usable
+    if cache is None:
+        assert blocks.num_free == blocks.num_usable
+        blocks.check_invariants(external_refs={})
+    else:
+        cache.check_invariants()
+        blocks.check_invariants(external_refs=cache.block_refs())
+        assert cache.num_blocks == blocks.num_evictable
+
+
 def make_prompts(count: int, seed: int = 0, max_len: int = 40) -> list[list[int]]:
     rng = random.Random(seed)
     return [[rng.randrange(4, 199) for _ in range(rng.randint(1, max_len))] for _ in range(count)]
@@ -62,7 +76,7 @@ def test_greedy_matches_dense_oracle(model, oracle):
     prompts, eos, expected = oracle
     engine = make_engine(model, eos=eos)
     assert engine.generate(prompts, SamplingParams(max_tokens=24)) == expected
-    assert engine.blocks.num_free == engine.blocks.num_usable
+    assert_all_released(engine)
     assert engine.stats.requests_finished == len(prompts)
     # Every token except each request's last sampled one went through the model exactly once.
     stats = engine.stats
@@ -79,14 +93,25 @@ def test_greedy_matches_dense_oracle(model, oracle):
         {"prefill_chunk_tokens": 5},
         {"block_size": 1},
         {"block_size": 16, "num_blocks": 64},
+        {"prefix_cache": False},
+        {"prefix_cache": False, "max_batched_tokens": 7},
     ],
-    ids=["serial", "five-at-a-time", "token-budget", "chunked-prefill", "block-1", "block-16"],
+    ids=[
+        "serial",
+        "five-at-a-time",
+        "token-budget",
+        "chunked-prefill",
+        "block-1",
+        "block-16",
+        "no-cache",
+        "no-cache-token-budget",
+    ],
 )
 def test_greedy_is_invariant_to_batching(model, oracle, config):
     prompts, eos, expected = oracle
     engine = make_engine(model, eos=eos, **config)
     assert engine.generate(prompts, SamplingParams(max_tokens=24)) == expected
-    engine.blocks.check_invariants(external_refs={})
+    assert_all_released(engine)
 
 
 def test_preemption_recomputes_to_the_same_output(model, oracle):
@@ -95,7 +120,7 @@ def test_preemption_recomputes_to_the_same_output(model, oracle):
     engine = make_engine(model, eos=eos, num_blocks=25, watermark=0.0)
     assert engine.generate(prompts, SamplingParams(max_tokens=24)) == expected
     assert engine.scheduler.num_preemptions > 0
-    assert engine.blocks.num_free == engine.blocks.num_usable
+    assert_all_released(engine)
     # Recomputed tokens show up as extra work.
     stats = engine.stats
     processed = stats.prefill_tokens + stats.decode_tokens
@@ -214,5 +239,4 @@ def test_abort_releases_blocks(model):
     for seq_id in ids:
         engine.abort(seq_id)
     engine.abort(ids[0])  # idempotent
-    assert not engine.has_work
-    assert engine.blocks.num_free == engine.blocks.num_usable
+    assert_all_released(engine)

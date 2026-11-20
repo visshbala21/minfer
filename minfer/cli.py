@@ -45,6 +45,19 @@ def add_engine_arguments(parser: argparse.ArgumentParser) -> None:
         const=None,
         help="prefill whole prompts in one pass",
     )
+    group.add_argument(
+        "--prefix-cache",
+        action=argparse.BooleanOptionalAction,
+        default=defaults.prefix_cache,
+        help="share KV between requests with a common prefix (radix-tree cache)",
+    )
+    group.add_argument(
+        "--cache-aware-scheduling",
+        action=argparse.BooleanOptionalAction,
+        default=defaults.cache_aware_scheduling,
+        help="admit the waiting request with the longest cached prefix first",
+    )
+    group.add_argument("--starvation-seconds", type=float, default=defaults.starvation_seconds)
     group.add_argument("--seed", type=int, default=defaults.seed)
 
 
@@ -59,6 +72,9 @@ def engine_config_from_args(args: argparse.Namespace) -> EngineConfig:
         max_model_len=args.max_model_len,
         cuda_graphs=args.cuda_graphs,
         prefill_chunk_tokens=args.prefill_chunk_tokens,
+        prefix_cache=args.prefix_cache,
+        cache_aware_scheduling=args.cache_aware_scheduling,
+        starvation_seconds=args.starvation_seconds,
         seed=args.seed,
     )
 

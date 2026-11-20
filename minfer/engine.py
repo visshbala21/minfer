@@ -28,6 +28,7 @@ from minfer.attention.paged import (
 )
 from minfer.cache.block_manager import BlockManager, kv_bytes_per_block, plan_num_blocks
 from minfer.cache.kv_store import PagedKVStore
+from minfer.cache.radix_tree import PrefixCache
 from minfer.model.loader import load_model, resolve_model_dir
 from minfer.model.qwen2 import Qwen2Model
 from minfer.sampling import SamplingParams
@@ -58,6 +59,12 @@ class EngineConfig:
             many prefill tokens per step, so a long prompt is interleaved with decode steps
             instead of stalling them. ``None`` disables chunking (prefill is bounded by
             ``max_batched_tokens`` only).
+        prefix_cache: Share KV blocks between requests with a common token prefix through
+            the radix-tree prefix cache.
+        cache_aware_scheduling: Admit the waiting request with the longest cached prefix
+            first (needs ``prefix_cache``); off means first-come-first-served.
+        starvation_seconds: A request that has waited this long is admitted in arrival
+            order regardless of cache-aware preference.
         seed: Seed of the engine-level random stream used by unseeded sampling requests.
     """
 
@@ -72,6 +79,9 @@ class EngineConfig:
     cuda_graphs: bool = True
     cuda_graph_batch_sizes: tuple[int, ...] = (1, 2, 4, 8, 16, 32, 64, 128, 256)
     prefill_chunk_tokens: int | None = 2048
+    prefix_cache: bool = True
+    cache_aware_scheduling: bool = True
+    starvation_seconds: float = 1.0
     seed: int = 0
 
 
@@ -175,14 +185,18 @@ class Engine:
                 )
         else:
             self.backend = ReferencePagedBackend(self.store)
+        self.prefix_cache = PrefixCache(self.blocks) if config.prefix_cache else None
         self.scheduler = Scheduler(
             SchedulerConfig(
                 max_num_seqs=config.max_num_seqs,
                 max_batched_tokens=config.max_batched_tokens,
                 max_prefill_tokens=config.prefill_chunk_tokens,
                 watermark=config.watermark,
+                cache_aware=config.cache_aware_scheduling,
+                starvation_seconds=config.starvation_seconds,
             ),
             self.blocks,
+            self.prefix_cache,
         )
         self.stats = EngineStats()
         self._sequences: dict[int, Sequence] = {}
@@ -227,7 +241,6 @@ class Engine:
             prompt_len=len(prompt),
             params=params,
             max_new_tokens=min(params.max_tokens, limit - len(prompt)),
-            arrival_time=time.perf_counter(),
             rng=random.Random(params.seed) if params.seed is not None else None,
         )
         self._next_id += 1
@@ -263,12 +276,19 @@ class Engine:
             self._run_prefill(plan, sampled, rows)
         if plan.decode:
             self._run_decode(plan, sampled, rows)
-        outputs: list[StepOutput] = []
         if sampled:
             logits = rows[0] if len(rows) == 1 else torch.cat(rows, dim=0)
             tokens = self._sample(logits, sampled).tolist()
             for seq, token in zip(sampled, tokens, strict=True):
-                outputs.append(self._append(seq, token))
+                seq.tokens.append(token)
+        else:
+            tokens = []
+        # Publish newly filled blocks to the prefix cache before any sequence finishes and
+        # gives up its table.
+        self.scheduler.commit(plan.decode)
+        self.scheduler.commit(seq for seq, _ in plan.prefill)
+        outputs = [self._emit(seq, token) for seq, token in zip(sampled, tokens, strict=True)]
+        self.stats.generated_tokens += len(outputs)
         self.stats.steps += 1
         self.stats.step_seconds += time.perf_counter() - started
         return outputs
@@ -336,10 +356,8 @@ class Engine:
         tokens[index] = drawn
         return tokens
 
-    def _append(self, seq: Sequence, token: int) -> StepOutput:
-        """Record a sampled token and finish the sequence if it hit a stop condition."""
-        seq.tokens.append(token)
-        self.stats.generated_tokens += 1
+    def _emit(self, seq: Sequence, token: int) -> StepOutput:
+        """Report a token already appended to ``seq``; finish it on a stop condition."""
         params = seq.params
         reason = None
         if (token in self.eos_token_ids and not params.ignore_eos) or (

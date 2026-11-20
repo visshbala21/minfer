@@ -23,6 +23,12 @@ def test_feature_toggles():
     )
 
 
+def test_prefix_cache_toggles():
+    assert parse("--no-prefix-cache").prefix_cache is False
+    assert parse("--no-cache-aware-scheduling").cache_aware_scheduling is False
+    assert parse("--starvation-seconds", "0.25").starvation_seconds == 0.25
+
+
 def test_limits():
     config = parse("--max-num-seqs", "8", "--num-blocks", "100", "--block-size", "32")
     assert (config.max_num_seqs, config.num_blocks, config.block_size) == (8, 100, 32)
