@@ -5,6 +5,7 @@ from __future__ import annotations
 import torch
 
 from minfer.attention import DenseCausalAttention
+from minfer.engine import Engine, EngineConfig
 from minfer.model import ModelConfig, Qwen2Model
 
 
@@ -59,3 +60,10 @@ def dense_greedy(
         if token == eos:
             break
     return out
+
+
+def make_tiny_engine(**config: object) -> Engine:
+    """A CPU engine over the tiny model (top-level so it can be built in a child process)."""
+    config.setdefault("num_blocks", 400)
+    config.setdefault("block_size", 4)
+    return Engine(make_tiny_model(), EngineConfig(attention_backend="reference", **config))

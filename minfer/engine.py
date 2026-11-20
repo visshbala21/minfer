@@ -12,7 +12,7 @@ import json
 import random
 import time
 from collections.abc import Sequence as Seq
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -93,11 +93,14 @@ class StepOutput:
         seq_id: The request the token belongs to.
         token_id: The sampled token (a stop token is reported, with ``finish_reason`` set).
         finish_reason: ``None`` while the request continues; ``"stop"`` or ``"length"``.
+        cached_tokens: On the final token only: prompt tokens the request took from the
+            prefix cache when it was first admitted.
     """
 
     seq_id: int
     token_id: int
     finish_reason: str | None
+    cached_tokens: int = 0
 
 
 @dataclass
@@ -112,7 +115,6 @@ class EngineStats:
     decode_tokens: int = 0
     generated_tokens: int = 0
     step_seconds: float = 0.0
-    extra: dict[str, float] = field(default_factory=dict)
 
 
 def read_eos_token_ids(model_dir: Path, fallback: int) -> tuple[int, ...]:
@@ -261,6 +263,42 @@ class Engine:
         """Whether any request is waiting or running."""
         return self.scheduler.has_work
 
+    def metrics(self) -> dict[str, float]:
+        """A snapshot of counters and gauges (what the server's ``/metrics`` exports)."""
+        stats, blocks, scheduler = self.stats, self.blocks, self.scheduler
+        snapshot: dict[str, float] = {
+            "requests_running": len(scheduler.running),
+            "requests_waiting": len(scheduler.waiting),
+            "requests_total": stats.requests_added,
+            "requests_finished_total": stats.requests_finished,
+            "prompt_tokens_total": stats.prompt_tokens,
+            "generation_tokens_total": stats.generated_tokens,
+            "prefill_tokens_total": stats.prefill_tokens,
+            "decode_tokens_total": stats.decode_tokens,
+            "engine_steps_total": stats.steps,
+            "engine_step_seconds_total": stats.step_seconds,
+            "preemptions_total": scheduler.num_preemptions,
+            "kv_blocks": blocks.num_usable,
+            "kv_blocks_used": blocks.num_used,
+            "kv_blocks_evictable": blocks.num_evictable,
+            "kv_usage_ratio": blocks.num_used / blocks.num_usable,
+        }
+        cache = self.prefix_cache
+        if cache is not None:
+            cs = cache.stats
+            snapshot.update(
+                prefix_cache_hit_rate=cs.hit_rate,
+                prefix_cache_lookup_tokens_total=cs.lookup_tokens,
+                prefix_cache_hit_tokens_total=cs.hit_tokens,
+                prefix_cache_catchup_tokens_total=cs.catchup_tokens,
+                prefill_tokens_saved_total=cs.prefill_tokens_saved,
+                prefix_cache_requests_hit_total=cs.hits,
+                prefix_cache_blocks=cache.num_blocks,
+                prefix_cache_nodes=cache.num_nodes,
+                prefix_cache_evicted_blocks_total=cs.evicted_blocks,
+            )
+        return snapshot
+
     # ------------------------------------------------------------------ step
 
     @torch.inference_mode()
@@ -370,7 +408,8 @@ class Engine:
             self.scheduler.finish(seq, reason)
             del self._sequences[seq.seq_id]
             self.stats.requests_finished += 1
-        return StepOutput(seq.seq_id, token, reason)
+            return StepOutput(seq.seq_id, token, reason, seq.cache_hit_tokens)
+        return StepOutput(seq.seq_id, token, None)
 
     # ----------------------------------------------------------- convenience
 
