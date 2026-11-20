@@ -14,8 +14,8 @@
   "bytes_all_reduced_per_token": 8192
  },
  "cpu_wall_seconds_not_a_benchmark": {
-  "single_process": 0.29624430398689583,
-  "two_processes_gloo": 1.11918438700377
+  "single_process": 2.108363888983149,
+  "two_processes_gloo": 69.29213349000202
  },
  "target_models": {
   "Qwen/Qwen2.5-1.5B-Instruct": {

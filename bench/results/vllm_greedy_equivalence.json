@@ -5,10 +5,10 @@
  "max_tokens": 128,
  "num_prompts": 20,
  "one_at_a_time": {
-  "identical": 8,
-  "diverged": 12,
+  "identical": 11,
+  "diverged": 9,
   "tokens_compared": 2001,
-  "max_fp32_margin_at_divergence": 0.33040809631347656,
+  "max_fp32_margin_at_divergence": 0.21325111389160156,
   "cases": [
    {
     "prompt": "Explain how a hash map handles collisions.",
@@ -38,34 +38,23 @@
     "vllm_tokens": 128,
     "minfer_tokens": 128,
     "identical": false,
-    "first_divergence": 38,
+    "first_divergence": 63,
     "minfer_token": 1447,
-    "vllm_token": 6351,
+    "vllm_token": 315,
     "fp32_top2_tokens": [
-     6351,
-     1447
+     1447,
+     315
     ],
-    "fp32_top2_margin": 0.06624031066894531,
-    "fp32_logit_minfer_token": 25.555376052856445,
-    "fp32_logit_vllm_token": 25.62161636352539,
+    "fp32_top2_margin": 0.21325111389160156,
+    "fp32_logit_minfer_token": 29.583656311035156,
+    "fp32_logit_vllm_token": 29.370405197143555,
     "both_in_fp32_top2": true
    },
    {
     "prompt": "Translate into French: 'The train to Lyon leaves at half past seven tomorrow morning.'",
     "vllm_tokens": 19,
-    "minfer_tokens": 16,
-    "identical": false,
-    "first_divergence": 10,
-    "minfer_token": 2429,
-    "vllm_token": 220,
-    "fp32_top2_tokens": [
-     220,
-     2429
-    ],
-    "fp32_top2_margin": 0.33040809631347656,
-    "fp32_logit_minfer_token": 21.576929092407227,
-    "fp32_logit_vllm_token": 21.907337188720703,
-    "both_in_fp32_top2": true
+    "minfer_tokens": 19,
+    "identical": true
    },
    {
     "prompt": "用中文简要解释什么是量子纠缠。",
@@ -78,16 +67,16 @@
     "vllm_tokens": 128,
     "minfer_tokens": 128,
     "identical": false,
-    "first_divergence": 50,
-    "minfer_token": 14,
-    "vllm_token": 10525,
+    "first_divergence": 57,
+    "minfer_token": 41284,
+    "vllm_token": 37920,
     "fp32_top2_tokens": [
-     10525,
-     14
+     41284,
+     37920
     ],
-    "fp32_top2_margin": 0.12039947509765625,
-    "fp32_logit_minfer_token": 20.846084594726562,
-    "fp32_logit_vllm_token": 20.96648406982422,
+    "fp32_top2_margin": 0.11468887329101562,
+    "fp32_logit_minfer_token": 21.95379638671875,
+    "fp32_logit_vllm_token": 21.839107513427734,
     "both_in_fp32_top2": true
    },
    {
@@ -151,19 +140,8 @@
    {
     "prompt": "Write a limerick about a programmer who loves coffee.",
     "vllm_tokens": 35,
-    "minfer_tokens": 38,
-    "identical": false,
-    "first_divergence": 18,
-    "minfer_token": 1817,
-    "vllm_token": 1449,
-    "fp32_top2_tokens": [
-     1817,
-     1449
-    ],
-    "fp32_top2_margin": 0.05102729797363281,
-    "fp32_logit_minfer_token": 21.541179656982422,
-    "fp32_logit_vllm_token": 21.49015235900879,
-    "both_in_fp32_top2": true
+    "minfer_tokens": 35,
+    "identical": true
    },
    {
     "prompt": "List the planets of the solar system in order from the sun, one per line.",
@@ -198,23 +176,12 @@
     "prompt": "Write a bash one-liner that counts the lines in every .py file under the current directory.",
     "vllm_tokens": 128,
     "minfer_tokens": 128,
-    "identical": false,
-    "first_divergence": 47,
-    "minfer_token": 825,
-    "vllm_token": 1558,
-    "fp32_top2_tokens": [
-     1558,
-     825
-    ],
-    "fp32_top2_margin": 0.12232780456542969,
-    "fp32_logit_minfer_token": 28.425941467285156,
-    "fp32_logit_vllm_token": 28.548269271850586,
-    "both_in_fp32_top2": true
+    "identical": true
    },
    {
     "prompt": "What is the capital of Australia, and why was it chosen?",
     "vllm_tokens": 113,
-    "minfer_tokens": 114,
+    "minfer_tokens": 107,
     "identical": false,
     "first_divergence": 13,
     "minfer_token": 3283,
@@ -250,23 +217,23 @@
     "vllm_tokens": 128,
     "minfer_tokens": 128,
     "identical": false,
-    "first_divergence": 86,
-    "minfer_token": 438,
-    "vllm_token": 11537,
+    "first_divergence": 73,
+    "minfer_token": 358,
+    "vllm_token": 4354,
     "fp32_top2_tokens": [
-     438,
-     11537
+     4354,
+     358
     ],
-    "fp32_top2_margin": 6.866455078125e-05,
-    "fp32_logit_minfer_token": 22.51854705810547,
-    "fp32_logit_vllm_token": 22.518478393554688,
+    "fp32_top2_margin": 0.13388633728027344,
+    "fp32_logit_minfer_token": 26.110214233398438,
+    "fp32_logit_vllm_token": 26.24410057067871,
     "both_in_fp32_top2": true
    }
   ]
  },
  "batched_20": {
-  "identical": 11,
-  "diverged": 9,
+  "identical": 10,
+  "diverged": 10,
   "tokens_compared": 2001,
   "max_fp32_margin_at_divergence": 0.21325111389160156,
   "cases": [
@@ -327,34 +294,23 @@
     "vllm_tokens": 128,
     "minfer_tokens": 128,
     "identical": false,
-    "first_divergence": 50,
-    "minfer_token": 14,
-    "vllm_token": 10525,
+    "first_divergence": 57,
+    "minfer_token": 41284,
+    "vllm_token": 37920,
     "fp32_top2_tokens": [
-     10525,
-     14
+     41284,
+     37920
     ],
-    "fp32_top2_margin": 0.12039947509765625,
-    "fp32_logit_minfer_token": 20.846084594726562,
-    "fp32_logit_vllm_token": 20.96648406982422,
+    "fp32_top2_margin": 0.11468887329101562,
+    "fp32_logit_minfer_token": 21.95379638671875,
+    "fp32_logit_vllm_token": 21.839107513427734,
     "both_in_fp32_top2": true
    },
    {
     "prompt": "Summarize the plot of Romeo and Juliet in three sentences.",
     "vllm_tokens": 50,
-    "minfer_tokens": 56,
-    "identical": false,
-    "first_divergence": 25,
-    "minfer_token": 11,
-    "vllm_token": 8818,
-    "fp32_top2_tokens": [
-     8818,
-     11
-    ],
-    "fp32_top2_margin": 0.12429428100585938,
-    "fp32_logit_minfer_token": 25.11098861694336,
-    "fp32_logit_vllm_token": 25.23528289794922,
-    "both_in_fp32_top2": true
+    "minfer_tokens": 50,
+    "identical": true
    },
    {
     "prompt": "What is the derivative of x^3 * sin(x)? Show the steps.",
@@ -388,24 +344,35 @@
    {
     "prompt": "Return a JSON object with the keys \"name\", \"age\" and \"city\" for a fictional person.",
     "vllm_tokens": 30,
-    "minfer_tokens": 30,
-    "identical": true
+    "minfer_tokens": 31,
+    "identical": false,
+    "first_divergence": 9,
+    "minfer_token": 13079,
+    "vllm_token": 61686,
+    "fp32_top2_tokens": [
+     61686,
+     13079
+    ],
+    "fp32_top2_margin": 0.1871337890625,
+    "fp32_logit_minfer_token": 24.35015869140625,
+    "fp32_logit_vllm_token": 24.53729248046875,
+    "both_in_fp32_top2": true
    },
    {
     "prompt": "Why is the sky blue?",
     "vllm_tokens": 128,
-    "minfer_tokens": 128,
+    "minfer_tokens": 97,
     "identical": false,
-    "first_divergence": 106,
-    "minfer_token": 1576,
-    "vllm_token": 11,
+    "first_divergence": 72,
+    "minfer_token": 13,
+    "vllm_token": 624,
     "fp32_top2_tokens": [
-     1576,
-     11
+     624,
+     13
     ],
-    "fp32_top2_margin": 0.1258563995361328,
-    "fp32_logit_minfer_token": 29.969308853149414,
-    "fp32_logit_vllm_token": 29.84345245361328,
+    "fp32_top2_margin": 0.06534194946289062,
+    "fp32_logit_minfer_token": 29.272747039794922,
+    "fp32_logit_vllm_token": 29.338088989257812,
     "both_in_fp32_top2": true
    },
    {
@@ -425,16 +392,16 @@
     "vllm_tokens": 128,
     "minfer_tokens": 128,
     "identical": false,
-    "first_divergence": 118,
-    "minfer_token": 537,
-    "vllm_token": 304,
+    "first_divergence": 64,
+    "minfer_token": 11477,
+    "vllm_token": 2781,
     "fp32_top2_tokens": [
-     537,
-     304
+     11477,
+     2781
     ],
-    "fp32_top2_margin": 0.025089263916015625,
-    "fp32_logit_minfer_token": 24.17343521118164,
-    "fp32_logit_vllm_token": 24.148345947265625,
+    "fp32_top2_margin": 0.022050857543945312,
+    "fp32_logit_minfer_token": 19.198413848876953,
+    "fp32_logit_vllm_token": 19.176362991333008,
     "both_in_fp32_top2": true
    },
    {
@@ -452,13 +419,24 @@
    {
     "prompt": "What is the capital of Australia, and why was it chosen?",
     "vllm_tokens": 113,
-    "minfer_tokens": 113,
-    "identical": true
+    "minfer_tokens": 107,
+    "identical": false,
+    "first_divergence": 13,
+    "minfer_token": 3283,
+    "vllm_token": 315,
+    "fp32_top2_tokens": [
+     3283,
+     315
+    ],
+    "fp32_top2_margin": 0.08890533447265625,
+    "fp32_logit_minfer_token": 28.980234146118164,
+    "fp32_logit_vllm_token": 28.891328811645508,
+    "both_in_fp32_top2": true
    },
    {
     "prompt": "Explain what a mutex is to a five-year-old.",
     "vllm_tokens": 118,
-    "minfer_tokens": 99,
+    "minfer_tokens": 126,
     "identical": false,
     "first_divergence": 8,
     "minfer_token": 13598,
@@ -477,16 +455,16 @@
     "vllm_tokens": 128,
     "minfer_tokens": 128,
     "identical": false,
-    "first_divergence": 86,
-    "minfer_token": 438,
-    "vllm_token": 11537,
+    "first_divergence": 73,
+    "minfer_token": 358,
+    "vllm_token": 4354,
     "fp32_top2_tokens": [
-     438,
-     11537
+     4354,
+     358
     ],
-    "fp32_top2_margin": 6.866455078125e-05,
-    "fp32_logit_minfer_token": 22.51854705810547,
-    "fp32_logit_vllm_token": 22.518478393554688,
+    "fp32_top2_margin": 0.13388633728027344,
+    "fp32_logit_minfer_token": 26.110214233398438,
+    "fp32_logit_vllm_token": 26.24410057067871,
     "both_in_fp32_top2": true
    }
   ]
@@ -494,12 +472,12 @@
  "vllm_one_at_a_time_vs_vllm_batched_identical": 9,
  "teacher_forced": {
   "positions": 2001,
-  "minfer_bf16_argmax_equals_vllm_token": 1977,
+  "minfer_bf16_argmax_equals_vllm_token": 1985,
   "fp32_reference_argmax_equals_vllm_token": 1985,
-  "minfer_bf16_argmax_equals_fp32_argmax": 1979,
-  "minfer_bf16_vs_fp32_mean_abs_logit_error": 0.04871140999057661,
-  "minfer_bf16_vs_fp32_max_abs_logit_error": 1.1602874994277954,
-  "max_fp32_margin_at_disagreement": 0.3304023742675781,
+  "minfer_bf16_argmax_equals_fp32_argmax": 1983,
+  "minfer_bf16_vs_fp32_mean_abs_logit_error": 0.04741566253268439,
+  "minfer_bf16_vs_fp32_max_abs_logit_error": 1.1791810989379883,
+  "max_fp32_margin_at_disagreement": 0.3040733337402344,
   "disagreements": [
    {
     "case": 0,
@@ -516,15 +494,6 @@
     "minfer_token": 5264,
     "vllm_token": 3070,
     "fp32_margin_between_them": 0.3040733337402344,
-    "both_in_fp32_top2": true,
-    "fp32_prefers": "vllm"
-   },
-   {
-    "case": 2,
-    "position": 38,
-    "minfer_token": 1447,
-    "vllm_token": 6351,
-    "fp32_margin_between_them": 0.06625556945800781,
     "both_in_fp32_top2": true,
     "fp32_prefers": "vllm"
    },
@@ -547,33 +516,6 @@
     "fp32_prefers": "vllm"
    },
    {
-    "case": 2,
-    "position": 98,
-    "minfer_token": 1008,
-    "vllm_token": 41517,
-    "fp32_margin_between_them": 0.025938034057617188,
-    "both_in_fp32_top2": true,
-    "fp32_prefers": "vllm"
-   },
-   {
-    "case": 3,
-    "position": 10,
-    "minfer_token": 2429,
-    "vllm_token": 220,
-    "fp32_margin_between_them": 0.3304023742675781,
-    "both_in_fp32_top2": true,
-    "fp32_prefers": "vllm"
-   },
-   {
-    "case": 5,
-    "position": 50,
-    "minfer_token": 14,
-    "vllm_token": 10525,
-    "fp32_margin_between_them": 0.12037086486816406,
-    "both_in_fp32_top2": true,
-    "fp32_prefers": "vllm"
-   },
-   {
     "case": 5,
     "position": 57,
     "minfer_token": 41284,
@@ -590,15 +532,6 @@
     "fp32_margin_between_them": 0.04852294921875,
     "both_in_fp32_top2": true,
     "fp32_prefers": "minfer"
-   },
-   {
-    "case": 8,
-    "position": 62,
-    "minfer_token": 279,
-    "vllm_token": 498,
-    "fp32_margin_between_them": 0.11658096313476562,
-    "both_in_fp32_top2": true,
-    "fp32_prefers": "vllm"
    },
    {
     "case": 11,
@@ -628,15 +561,6 @@
     "fp32_prefers": "vllm"
    },
    {
-    "case": 12,
-    "position": 18,
-    "minfer_token": 1817,
-    "vllm_token": 1449,
-    "fp32_margin_between_them": 0.051036834716796875,
-    "both_in_fp32_top2": true,
-    "fp32_prefers": "minfer"
-   },
-   {
     "case": 14,
     "position": 64,
     "minfer_token": 11477,
@@ -646,29 +570,20 @@
     "fp32_prefers": "minfer"
    },
    {
-    "case": 14,
-    "position": 114,
-    "minfer_token": 374,
-    "vllm_token": 323,
-    "fp32_margin_between_them": 0.026411056518554688,
-    "both_in_fp32_top2": true,
-    "fp32_prefers": "minfer"
-   },
-   {
-    "case": 16,
-    "position": 47,
-    "minfer_token": 825,
-    "vllm_token": 1558,
-    "fp32_margin_between_them": 0.122344970703125,
-    "both_in_fp32_top2": true,
-    "fp32_prefers": "vllm"
-   },
-   {
     "case": 17,
     "position": 13,
     "minfer_token": 3283,
     "vllm_token": 315,
     "fp32_margin_between_them": 0.08892631530761719,
+    "both_in_fp32_top2": true,
+    "fp32_prefers": "minfer"
+   },
+   {
+    "case": 17,
+    "position": 24,
+    "minfer_token": 4013,
+    "vllm_token": 1293,
+    "fp32_margin_between_them": 0.0001430511474609375,
     "both_in_fp32_top2": true,
     "fp32_prefers": "minfer"
    },
@@ -683,19 +598,10 @@
    },
    {
     "case": 19,
-    "position": 86,
-    "minfer_token": 438,
-    "vllm_token": 11537,
-    "fp32_margin_between_them": 7.43865966796875e-05,
-    "both_in_fp32_top2": true,
-    "fp32_prefers": "minfer"
-   },
-   {
-    "case": 19,
-    "position": 106,
-    "minfer_token": 10520,
-    "vllm_token": 1184,
-    "fp32_margin_between_them": 0.017580032348632812,
+    "position": 73,
+    "minfer_token": 358,
+    "vllm_token": 4354,
+    "fp32_margin_between_them": 0.1338653564453125,
     "both_in_fp32_top2": true,
     "fp32_prefers": "vllm"
    },

@@ -287,7 +287,154 @@ def chunked_prefill_table() -> str:
     return _table([*header, "long-prompt TTFT p50 (ms)", "out tok/s"], rows)
 
 
+def profile_table() -> str:
+    """Kernels per step and GPU time, before and after the Phase 11 optimizations."""
+    before, after = _load("profiles/before/summary.json"), _load("profiles/after/summary.json")
+    if not before or not after:
+        return MISSING
+    rows = []
+    for name, b in before["scenarios"].items():
+        a = after["scenarios"][name]
+        rows.append(
+            [
+                name.replace("_", " "),
+                f"{b['cuda_kernels_per_step']:.0f}",
+                f"{a['cuda_kernels_per_step']:.0f}",
+                f"{b['gpu_kernel_ms_per_step']:.2f}",
+                f"{a['gpu_kernel_ms_per_step']:.2f}",
+            ]
+        )
+    header = ["scenario", "CUDA kernels/step before", "after", "GPU ms/step before", "after"]
+    return _table(header, rows)
+
+
+def equivalence_table() -> str:
+    """Greedy-output comparisons: against vLLM, and prefix cache on vs off."""
+    vllm, cache = _load("vllm_greedy_equivalence.json"), _load("prefix_cache_equivalence.json")
+    if not vllm or not cache:
+        return MISSING
+    prompts = vllm["num_prompts"]
+    forced = vllm["teacher_forced"]
+    requests = cache["workload"]["requests"]
+    floor = cache["noise_floor_cache_off_vs_cache_off_rebatched"]
+    tokens = cache["tokens_through_the_model"]
+    rows = [
+        [
+            "minfer vs vLLM, 20 prompts, one request at a time",
+            f"{vllm['one_at_a_time']['identical']}/{prompts} outputs identical",
+            f"{vllm['one_at_a_time']['max_fp32_margin_at_divergence']:.2f}",
+        ],
+        [
+            "minfer (batched) vs vLLM (one at a time)",
+            f"{vllm['batched_20']['identical']}/{prompts} outputs identical",
+            f"{vllm['batched_20']['max_fp32_margin_at_divergence']:.2f}",
+        ],
+        [
+            "**vLLM (batched) vs vLLM (one at a time)** — the noise floor",
+            f"{vllm['vllm_one_at_a_time_vs_vllm_batched_identical']}/{prompts} outputs identical",
+            "—",
+        ],
+        [
+            "minfer fed vLLM's tokens (teacher-forced), per position",
+            f"{forced['minfer_bf16_argmax_equals_vllm_token']}/{forced['positions']} tokens equal",
+            f"{forced['max_fp32_margin_at_disagreement']:.2f}",
+        ],
+        [
+            f"prefix cache on vs off, {requests} agent-style requests",
+            f"{cache['identical_outputs']}/{requests} outputs identical",
+            f"{cache['max_fp32_margin_at_divergence']:.2f}",
+        ],
+        [
+            "**cache off vs cache off, different batching** — the noise floor",
+            f"{floor['identical_outputs']}/{requests} outputs identical",
+            f"{floor['max_fp32_margin_at_divergence']:.2f}",
+        ],
+    ]
+    header = ["comparison (greedy, bf16)", "result", "largest float32 margin at a difference"]
+    saved = (
+        f"\n\nIn the prefix-cache run the cache served {cache['prefix_cache']['hit_rate']:.1%} of "
+        f"prompt tokens and cut the tokens run through the model from {tokens['cache_off']:,} "
+        f"to {tokens['cache_on']:,}."
+    )
+    return _table(header, rows) + saved
+
+
+def _span(values: list[float], fmt: str) -> str:
+    low, high = format(min(values), fmt), format(max(values), fmt)
+    return low if low == high else f"{low}–{high}"
+
+
+def headline() -> str:
+    """The comparison in a few generated sentences (agent workload)."""
+    matrix = _matrix()
+    if not all(matrix.get(e, {}).get("agent") for e in ENGINES):
+        return MISSING
+    steady = [r for r in matrix["minfer"]["agent"] if r != "max"]
+
+    def over(engine: str, get: Callable[[dict], float], fmt: str) -> str:
+        return _span([get(matrix[engine]["agent"][r]) for r in steady], fmt)
+
+    def at_max(engine: str, get: Callable[[dict], float], fmt: str) -> str:
+        return format(get(matrix[engine]["agent"]["max"]), fmt)
+
+    def ttft50(r: dict) -> float:
+        return r["ttft_ms"]["p50"]
+
+    def ttft99(r: dict) -> float:
+        return r["ttft_ms"]["p99"]
+
+    def tpot50(r: dict) -> float:
+        return r["tpot_ms"]["p50"]
+
+    def hit(r: dict) -> float:
+        return r["server_prefix_cache_hit_rate"]
+
+    def tok(r: dict) -> float:
+        return r["output_tokens_per_second"]
+
+    lines = [
+        f"On the multi-turn agent workload at {steady[0]}–{steady[-1]} req/s "
+        "(Qwen2.5-1.5B-Instruct, bf16, one H100, greedy, identical traces):",
+        "",
+        "| | minfer | vLLM | SGLang |",
+        "|---|---|---|---|",
+    ]
+    for label, get, fmt in (
+        ("TTFT p50 (ms)", ttft50, ".0f"),
+        ("TTFT p99 (ms)", ttft99, ".0f"),
+        ("TPOT p50 (ms)", tpot50, ".2f"),
+        ("prefix-cache hit rate", hit, ".1%"),
+    ):
+        lines.append(f"| {label} | " + " | ".join(over(e, get, fmt) for e in ENGINES) + " |")
+    lines.append(
+        '| saturated output tok/s ("max") | '
+        + " | ".join(at_max(e, tok, ".0f") for e in ENGINES)
+        + " |"
+    )
+
+    def relative(metric: Callable[[dict], float], rates: list[str]) -> str:
+        cells = []
+        for engine in ENGINES:
+            ratios = [
+                metric(matrix[engine]["agent"][r]) / metric(matrix["vllm"]["agent"][r])
+                for r in rates
+            ]
+            cells.append(_span(ratios, ".2f") + "×")
+        return " | ".join(cells)
+
+    lines.append(f"| TTFT p50 relative to vLLM | {relative(ttft50, steady)} |")
+    lines.append(f"| TPOT p50 relative to vLLM | {relative(tpot50, steady)} |")
+    lines.append(f"| saturated tok/s relative to vLLM | {relative(tok, ['max'])} |")
+    lines.append(
+        "| saturated TTFT p50 / p99 (ms) | "
+        + " | ".join(f"{at_max(e, ttft50, '.0f')} / {at_max(e, ttft99, '.0f')}" for e in ENGINES)
+        + " |"
+    )
+    return "\n".join(lines)
+
+
 SECTIONS: dict[str, Callable[[], str]] = {
+    "headline": headline,
     "agent-results": agent_table,
     "sharegpt-results": sharegpt_table,
     "decode-latency": decode_latency_table,
@@ -297,6 +444,8 @@ SECTIONS: dict[str, Callable[[], str]] = {
     "speculation": speculation_table,
     "fp8": fp8_table,
     "triton": triton_table,
+    "equivalence": equivalence_table,
+    "profile": profile_table,
 }
 
 
