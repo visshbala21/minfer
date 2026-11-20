@@ -67,7 +67,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["ANN", "D"]
 # Triton kernels are typed by the compiler from their call sites, not by annotations.
-"minfer/attention/triton_decode.py" = ["ANN001", "ANN202"]
+"minfer/attention/triton_decode.py" = ["ANN001", "ANN202", "E501"]
+"minfer/model/fused.py" = ["ANN001", "ANN202", "E501"]
 "bench/**" = ["D"]
 "deploy/**" = ["D"]
 

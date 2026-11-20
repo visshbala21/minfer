@@ -310,3 +310,84 @@ def test_speculation_on_the_real_model(reference, tokenizer, speculation):
         gap = abs(margin["fp32_logit_minfer_token"] - margin["fp32_logit_vllm_token"])
         assert gap < 1.5, (speculation, at, margin)
     check_outputs(engine, outputs, [params] * len(prompts))
+
+
+# ------------------------------------------------- Phase 8: Triton paged-attention kernel
+
+
+@pytest.mark.parametrize(
+    ("batch", "context", "splits"),
+    [(1, 1, 1), (3, 17, 1), (5, 200, 4), (2, 3000, 16), (64, 130, None), (1, 5000, None)],
+)
+def test_triton_decode_kernel_matches_flashinfer_and_float32(batch, context, splits):
+    """Same attention as FlashInfer's decode kernel, to bf16 rounding; float32 is the judge."""
+    from bench.triton_kernel import BLOCK, HEAD_DIM, NUM_HEADS, NUM_KV_HEADS, make_case
+    from bench.triton_kernel import reference as exact_attention
+    from minfer.attention.flashinfer_backend import flashinfer
+    from minfer.attention.triton_decode import paged_decode_attention
+
+    case = make_case(batch, context, torch.Generator().manual_seed(batch * 1000 + context))
+    ours = paged_decode_attention(
+        case["q"], case["cache"], case["table"], case["lengths"], splits=splits
+    ).float()
+    workspace = torch.zeros(64 * 1024 * 1024, dtype=torch.uint8, device="cuda")
+    wrapper = flashinfer.BatchDecodeWithPagedKVCacheWrapper(workspace, "NHD")
+    wrapper.plan(
+        case["indptr"],
+        case["indices"],
+        case["last_page_len"],
+        NUM_HEADS,
+        NUM_KV_HEADS,
+        HEAD_DIM,
+        BLOCK,
+        pos_encoding_mode="NONE",
+        q_data_type=torch.bfloat16,
+        kv_data_type=torch.bfloat16,
+    )
+    theirs = wrapper.run(case["q"], case["cache"]).float()
+    exact = exact_attention(case)
+    scale = exact.abs().mean().item()
+    # Tolerance: bf16 has 8 significant bits; outputs are averages of O(1) values.
+    assert (ours - theirs).abs().max().item() < 0.02
+    assert (ours - exact).abs().max().item() < 0.02
+    assert (ours - exact).abs().mean().item() < 0.01 * max(scale, 0.05)
+    assert (ours - exact).abs().mean().item() < 2.0 * (theirs - exact).abs().mean().item() + 1e-4
+
+
+def test_triton_decode_kernel_handles_ragged_lengths():
+    """Sequences of different lengths in one batch, including one shorter than a chunk."""
+    from bench.triton_kernel import BLOCK, make_case
+    from bench.triton_kernel import reference as exact_attention
+    from minfer.attention.triton_decode import paged_decode_attention
+
+    lengths = [1, 15, 16, 17, 333, 2000]
+    case = make_case(len(lengths), max(lengths), torch.Generator().manual_seed(7))
+    case["lengths"] = torch.tensor(lengths, dtype=torch.int32, device="cuda")
+    out = paged_decode_attention(case["q"], case["cache"], case["table"], case["lengths"], splits=8)
+    for row, length in enumerate(lengths):
+        single = {
+            "q": case["q"][row : row + 1],
+            "cache": case["cache"],
+            "table": case["table"][row : row + 1, : -(-length // BLOCK)],
+            "lengths": case["lengths"][row : row + 1],
+        }
+        expected = exact_attention(single)
+        assert (out[row : row + 1].float() - expected).abs().max().item() < 0.02, length
+
+
+def test_engine_with_triton_decode_kernel(reference, fixture, tokenizer):
+    engine = Engine.from_pretrained(
+        PRIMARY_MODEL, EngineConfig(num_blocks=8192, decode_kernel="triton")
+    )
+    report = teacher_forced(engine, reference, fixture)
+    positions = report["positions"]
+    assert report["minfer_bf16_vs_fp32_mean_abs_logit_error"] < 0.15
+    assert report["minfer_bf16_argmax_equals_fp32_argmax"] / positions > 0.97
+    for d in report["disagreements"]:
+        assert d["fp32_margin_between_them"] < NEAR_TIE_MARGIN, d
+    prompts = chat_prompts(tokenizer, 40)
+    params = mixed_params(40)
+    check_outputs(engine, engine.generate(prompts, params), params)
+    # The captured graphs replay the same kernel the eager path runs.
+    for eager, graph in _decode_both_ways(engine, 16, steps=20, seed=3):
+        assert torch.equal(eager, graph)

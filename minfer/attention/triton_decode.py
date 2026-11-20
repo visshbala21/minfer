@@ -13,6 +13,13 @@ the scores with one matmul, and folds them into a running softmax (the online
 max/sum/accumulator recurrence), so nothing proportional to the context length is ever
 materialized.
 
+**Split-KV.** A program reads its keys and values sequentially, so with few sequences
+and long contexts most of the GPU would sit idle. Each sequence is therefore cut into
+``SPLITS`` chunks handled by separate programs that write unnormalized partial results
+(running max, sum, accumulator); a second, tiny kernel merges them with the same
+recurrence. ``SPLITS`` is a function of the batch size alone, so the launch grid is static
+per batch bucket and the kernel can be captured in a CUDA graph with no per-step planning.
+
 **Shapes.** ``tl.dot`` needs both operands to have at least 16 rows/columns, so the query
 group is padded to 16 rows (masked on load and on store).
 """
@@ -44,15 +51,25 @@ def _paged_decode_kernel(
     stride_out_head,
     stride_table,
     scale,
+    max_ptr,
+    sum_ptr,
     GROUP: tl.constexpr,
     GROUP_ROWS: tl.constexpr,
     HEAD_DIM: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
     TOKENS_PER_ITER: tl.constexpr,
+    NUM_KV_HEADS: tl.constexpr,
+    SPLITS: tl.constexpr,
 ):
     batch = tl.program_id(0)
     kv_head = tl.program_id(1)
+    split = tl.program_id(2)
     seq_len = tl.load(seq_len_ptr + batch)
+    # This program's share of the sequence: SPLITS equal chunks, whole iterations each.
+    chunk = ((seq_len + SPLITS - 1) // SPLITS + TOKENS_PER_ITER - 1) // TOKENS_PER_ITER
+    chunk = chunk * TOKENS_PER_ITER
+    begin = split * chunk
+    end = tl.minimum(begin + chunk, seq_len)
 
     rows = tl.arange(0, GROUP_ROWS)
     dims = tl.arange(0, HEAD_DIM)
@@ -70,9 +87,9 @@ def _paged_decode_kernel(
 
     tokens = tl.arange(0, TOKENS_PER_ITER)
     table_row = block_table_ptr + batch * stride_table
-    for start in range(0, seq_len, TOKENS_PER_ITER):
+    for start in range(begin, end, TOKENS_PER_ITER):
         position = start + tokens
-        valid = position < seq_len
+        valid = position < end
         block = tl.load(table_row + position // BLOCK_SIZE, mask=valid, other=0)
         base = (
             block.to(tl.int64) * stride_kv_block
@@ -92,15 +109,78 @@ def _paged_decode_kernel(
         acc = acc * decay[:, None] + tl.dot(weights.to(v.dtype), v, out_dtype=tl.float32)
         running_max = new_max
 
-    out = acc / running_sum[:, None]
+    if SPLITS == 1:
+        out = acc / running_sum[:, None]
+        tl.store(
+            out_ptr
+            + batch * stride_out_batch
+            + (kv_head * GROUP + rows)[:, None] * stride_out_head
+            + dims[None, :],
+            out.to(q.dtype),
+            mask=row_mask[:, None],
+        )
+    else:
+        # Unnormalized partial result; `_merge_splits_kernel` combines the chunks.
+        slot = ((batch * NUM_KV_HEADS + kv_head) * SPLITS + split) * GROUP_ROWS
+        tl.store(max_ptr + slot + rows, running_max)
+        tl.store(sum_ptr + slot + rows, running_sum)
+        tl.store(out_ptr + (slot + rows)[:, None] * HEAD_DIM + dims[None, :], acc)
+
+
+@triton.jit
+def _merge_splits_kernel(
+    partial_ptr,
+    max_ptr,
+    sum_ptr,
+    out_ptr,
+    stride_out_batch,
+    stride_out_head,
+    GROUP: tl.constexpr,
+    GROUP_ROWS: tl.constexpr,
+    HEAD_DIM: tl.constexpr,
+    NUM_KV_HEADS: tl.constexpr,
+    SPLITS: tl.constexpr,
+):
+    batch = tl.program_id(0)
+    kv_head = tl.program_id(1)
+    rows = tl.arange(0, GROUP_ROWS)
+    dims = tl.arange(0, HEAD_DIM)
+    base = (batch * NUM_KV_HEADS + kv_head) * SPLITS * GROUP_ROWS
+    best = tl.full([GROUP_ROWS], float("-inf"), dtype=tl.float32)
+    for split in range(SPLITS):
+        best = tl.maximum(best, tl.load(max_ptr + base + split * GROUP_ROWS + rows))
+    total = tl.zeros([GROUP_ROWS], dtype=tl.float32)
+    acc = tl.zeros([GROUP_ROWS, HEAD_DIM], dtype=tl.float32)
+    for split in range(SPLITS):
+        slot = base + split * GROUP_ROWS + rows
+        # A chunk past the end of a short sequence has max = -inf and weight 0.
+        weight = tl.exp(tl.load(max_ptr + slot) - best)
+        total += tl.load(sum_ptr + slot) * weight
+        acc += tl.load(partial_ptr + slot[:, None] * HEAD_DIM + dims[None, :]) * weight[:, None]
+    out = acc / total[:, None]
     tl.store(
         out_ptr
         + batch * stride_out_batch
         + (kv_head * GROUP + rows)[:, None] * stride_out_head
         + dims[None, :],
-        out.to(q.dtype),
-        mask=row_mask[:, None],
+        out.to(out_ptr.dtype.element_ty),
+        mask=(rows < GROUP)[:, None],
     )
+
+
+def num_splits(
+    batch: int, num_kv_heads: int, target_programs: int = 256, max_splits: int = 16
+) -> int:
+    """How many chunks to cut each sequence into for a batch of this size.
+
+    A program walks its chunk sequentially, so a batch with few (sequence, head) pairs
+    leaves most of the GPU idle on long contexts. Splitting brings the grid up to about
+    ``target_programs`` programs, capped at ``max_splits`` because the merge kernel walks
+    a sequence's chunks serially (measured: 128 chunks cost a single sequence 30 µs per
+    layer in the merge alone). The result depends only on the batch size, never on the
+    contexts, so a CUDA graph captured for a batch bucket keeps a fixed grid.
+    """
+    return max(1, min(max_splits, target_programs // (batch * num_kv_heads)))
 
 
 def paged_decode_attention(
@@ -110,6 +190,7 @@ def paged_decode_attention(
     seq_lens: Tensor,
     out: Tensor | None = None,
     pages_per_iter: int = 4,
+    splits: int | None = None,
 ) -> Tensor:
     """Decode attention over a paged KV cache.
 
@@ -122,6 +203,7 @@ def paged_decode_attention(
         seq_lens: ``[batch]`` int32 number of cached positions per sequence (≥ 1).
         out: Optional ``[batch, num_heads, head_dim]`` output buffer.
         pages_per_iter: Blocks processed per loop iteration.
+        splits: Chunks per sequence (default: :func:`num_splits` of the batch size).
 
     Returns:
         ``[batch, num_heads, head_dim]`` attention outputs, in ``q``'s dtype.
@@ -136,10 +218,26 @@ def paged_decode_attention(
         raise ValueError("pages_per_iter * block_size must be at least 16")
     if out is None:
         out = torch.empty_like(q)
-    _paged_decode_kernel[(batch, num_kv_heads)](
+    if splits is None:
+        splits = num_splits(batch, num_kv_heads)
+    constants = {
+        "GROUP": group,
+        "GROUP_ROWS": _GROUP_ROWS,
+        "HEAD_DIM": head_dim,
+        "NUM_KV_HEADS": num_kv_heads,
+        "SPLITS": splits,
+    }
+    if splits == 1:
+        partial, maxima, sums = out, out, out  # unused by the single-chunk kernel
+    else:
+        slots = batch * num_kv_heads * splits * _GROUP_ROWS
+        partial = torch.empty((slots, head_dim), dtype=torch.float32, device=q.device)
+        maxima = torch.empty(slots, dtype=torch.float32, device=q.device)
+        sums = torch.empty(slots, dtype=torch.float32, device=q.device)
+    _paged_decode_kernel[(batch, num_kv_heads, splits)](
         q,
         paged_kv,
-        out,
+        partial,
         block_table,
         seq_lens,
         q.stride(0),
@@ -152,10 +250,14 @@ def paged_decode_attention(
         out.stride(1),
         block_table.stride(0),
         head_dim**-0.5,
-        GROUP=group,
-        GROUP_ROWS=_GROUP_ROWS,
-        HEAD_DIM=head_dim,
+        maxima,
+        sums,
         BLOCK_SIZE=block_size,
         TOKENS_PER_ITER=tokens_per_iter,
+        **constants,
     )
+    if splits > 1:
+        _merge_splits_kernel[(batch, num_kv_heads)](
+            partial, maxima, sums, out, out.stride(0), out.stride(1), **constants
+        )
     return out

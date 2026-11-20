@@ -217,6 +217,39 @@ def plot_chunked_prefill() -> None:
     )
 
 
+def plot_triton_kernel() -> None:
+    """Triton vs FlashInfer paged decode attention, per context length (Phase 8)."""
+    path = RESULTS / "triton_kernel.json"
+    if not path.exists():
+        return
+    rows = json.loads(path.read_text())["rows"]
+    contexts = sorted({r["context_tokens"] for r in rows})
+    fig, axes = plt.subplots(1, len(contexts), figsize=(3.6 * len(contexts), 4), squeeze=False)
+    for ax, context in zip(axes[0], contexts, strict=True):
+        subset = [r for r in rows if r["context_tokens"] == context]
+        xs = [str(r["batch_size"]) for r in subset]
+        micro = [
+            [r[key] * 1e3 for r in subset] for key in ("flashinfer_graph_ms", "triton_graph_ms")
+        ]
+        _line(ax, xs, micro[0], SERIES["vllm"], "FlashInfer decode kernel")
+        _line(ax, xs, micro[1], SERIES["minfer"], "minfer Triton kernel")
+        ax.set_title(f"{context:,}-token contexts (µs per layer)")
+        ax.set_xlabel("batch size")
+        ax.set_ylim(bottom=0)
+        ax.margins(x=0.14)
+    note = (
+        "One attention layer, 12 heads / 2 KV heads, bf16; GPU time per call when replayed "
+        "from a CUDA graph (bench/triton_kernel.py)."
+    )
+    _finish(
+        fig,
+        list(axes[0]),
+        "Paged decode attention: Triton vs FlashInfer",
+        note,
+        "triton_kernel.png",
+    )
+
+
 def main() -> None:
     argparse.ArgumentParser(description=__doc__.split("\n\n")[0]).parse_args()
     matrix = load_matrix()
@@ -232,6 +265,7 @@ def main() -> None:
     plot_workload(matrix, "sharegpt", "ShareGPT control workload", sharegpt_note)
     plot_decode_latency()
     plot_chunked_prefill()
+    plot_triton_kernel()
 
 
 if __name__ == "__main__":

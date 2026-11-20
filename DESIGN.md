@@ -991,3 +991,85 @@ every first divergence (single bf16 logits are up to ~1.2 off, M-002).
 sizes 1, 2, 3, 4, 6, 8, 16; Qwen2.5-0.5B has 14 heads over 2 KV heads (group 7) and failed
 with "Unsupported group_size: 7". The backend now selects FlashInfer's tensor-core decode
 path for other group sizes (`needs_tensor_cores`).
+
+---
+
+## Phase 8 — Custom Triton paged-attention decode kernel
+
+### D-032 Kernel design
+
+`minfer/attention/triton_decode.py`, a drop-in alternative to FlashInfer's decode kernel
+(`decode_kernel="triton"` / `--decode-kernel triton`); prefill stays on FlashInfer.
+
+- **Grid `(batch, kv_heads, splits)`; GQA handled inside a program.** The G = 6 query
+  heads that share a KV head are stacked into one 16-row matrix (padded: `tl.dot` needs
+  ≥ 16 rows), so each key/value block is read once and scored against all six queries
+  with one matmul. A program walks its part of the sequence four blocks (64 tokens) per
+  iteration: block ids from the block table, a gather of K and V, scores, and an online
+  softmax (running max / sum / accumulator), so nothing the size of the context is
+  materialized.
+- **Reads block tables directly.** The kernel takes a padded `[batch, max_pages]` table
+  and the cached lengths. There is no host-side planning step: FlashInfer needs a
+  `plan()` call per engine step (~0.07 ms measured), this needs two small buffer copies.
+- **Split-KV.** With few sequences a sequential walk leaves the GPU idle on long contexts
+  (first version, batch 1 × 16k context: 0.30 ms per layer vs FlashInfer's 0.02). Each
+  sequence is cut into `SPLITS` chunks run by separate programs that store unnormalized
+  partials; a tiny second kernel merges them with the same recurrence. `SPLITS` depends
+  only on the batch size (`256 / (batch · kv_heads)`, capped at 16), so the grid is static
+  per batch bucket and the kernel captures cleanly in the decode CUDA graphs.
+- **A measurement that changed the design.** With `SPLITS` uncapped (128 at batch 1), the
+  merge kernel — two programs looping serially over 128 chunks — cost 30 µs per layer by
+  itself, at every context length. Capping at 16 brought batch 1 from 0.37× to 1.6× of
+  FlashInfer at short contexts.
+
+### M-011 Triton kernel vs FlashInfer (Phase 8 acceptance)
+
+**Numerics** (`bench/triton_kernel.py`, `tests/test_engine_gpu.py`). Random bf16 queries and
+caches with shuffled block tables, 19 (batch, context) points: the largest absolute
+difference between the two kernels is 0.0039 on outputs of mean magnitude 0.01–0.11, and
+each kernel is equally far from a float32 PyTorch reference (max abs error: Triton
+0.0038, FlashInfer 0.0038). **Documented tolerance, asserted in the tests: max abs
+difference < 0.02 from FlashInfer and from float32**, i.e. bf16 rounding of O(1)
+quantities; ragged batches (lengths 1 to 2,000 in one batch, including shorter than a
+chunk) are checked row by row against float32. In the engine, the kernel passes the same
+teacher-forced check against the float32 model as FlashInfer (M-002), and graph replay is
+bit-identical to the eager call.
+
+**Microbenchmark** (`bench/results/triton_kernel.json`, plot `bench/plots/triton_kernel.png`):
+GPU time per layer in µs when 28 calls are replayed from a CUDA graph — the way the engine
+runs decode — as *Triton / FlashInfer (speed-up)*:
+
+| batch | ctx 128 | ctx 1,024 | ctx 4,096 | ctx 16,384 |
+|---|---|---|---|---|
+| 1 | 7.0 / 11.1 (1.59×) | 7.3 / 12.0 (1.65×) | 10.8 / 16.0 (1.48×) | 25.2 / 23.2 (0.92×) |
+| 8 | 8.0 / 11.3 (1.42×) | 9.2 / 15.9 (1.74×) | 14.8 / 27.3 (1.85×) | 55.5 / 75.1 (1.35×) |
+| 32 | 5.5 / 15.3 (2.76×) | 11.6 / 27.3 (2.35×) | 52.7 / 74.5 (1.41×) | 187.3 / 288.5 (1.54×) |
+| 64 | 6.0 / 15.9 (2.66×) | 29.3 / 42.1 (1.44×) | 96.6 / 150.2 (1.55×) | 366.6 / 575.1 (1.57×) |
+| 256 | 8.3 / 28.7 (3.46×) | 92.9 / 154.9 (1.67×) | 356.9 / 582.0 (1.63×) | — |
+
+The Triton kernel is faster at 18 of 19 points (1.35–3.46×) and slower at one (batch 1 with a
+16k-token context, 0.92×: sixteen chunks of 1,024 tokens each are still walked
+serially, while FlashInfer spreads one sequence over more of the GPU). The results file
+also has timings of the kernels called from Python; below ~0.05 ms those measure the
+launchers, not the kernels, and are not used here.
+
+**In the engine** (`bench/decode_latency.py`, same file as M-004, re-run for this phase):
+whole decode step, p50 ms, CUDA graphs on.
+
+| batch | ctx 256: FlashInfer | Triton | speedup | ctx 2048: FlashInfer | Triton | speedup |
+|---|---|---|---|---|---|---|
+| 1 | 3.73 | 3.53 | 1.06× | 3.83 | 3.61 | 1.06× |
+| 2 | 3.93 | 3.72 | 1.06× | 4.04 | 3.82 | 1.06× |
+| 4 | 4.00 | 3.82 | 1.05× | 4.11 | 3.94 | 1.04× |
+| 8 | 4.21 | 3.97 | 1.06× | 4.44 | 4.18 | 1.06× |
+| 16 | 4.33 | 4.07 | 1.07× | 4.96 | 4.46 | 1.11× |
+| 32 | 4.65 | 4.29 | 1.09× | 5.50 | 4.96 | 1.11× |
+| 64 | 5.10 | 4.65 | 1.10× | 6.93 | 5.99 | 1.16× |
+| 128 | 5.92 | 5.34 | 1.11× | 9.76 | 7.93 | 1.23× |
+| 256 | 7.51 | 6.68 | 1.12× | 15.75 | 12.29 | 1.28× |
+
+A 1.04–1.28× faster decode step: attention is one of ~45 kernels per layer, so a much faster
+attention kernel moves the step by single digits at small batch and by a quarter at
+batch 256 with long contexts, where attention dominates. (The M-004 table predates this
+re-run; the numbers in `decode_latency.json` are the current ones and agree with it to
+within 3%.)
