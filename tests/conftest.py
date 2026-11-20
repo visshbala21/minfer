@@ -12,7 +12,9 @@ from pathlib import Path
 import pytest
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+TESTS_DIR = Path(__file__).resolve().parent
+# `tiny`/`prompts` helpers live next to the tests; `bench` is importable from the repo root.
+sys.path[:0] = [str(TESTS_DIR), str(TESTS_DIR.parent)]
 
 PRIMARY_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
 

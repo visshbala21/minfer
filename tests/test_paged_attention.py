@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 import torch
+from tiny import make_tiny_model
 
 from minfer.attention import (
     DenseCausalAttention,
@@ -18,38 +19,9 @@ from minfer.attention import (
 )
 from minfer.cache import BlockManager
 from minfer.cache.kv_store import PagedKVStore
-from minfer.model import ModelConfig, Qwen2Model
+from minfer.model import Qwen2Model
 
 BLOCK = 4
-
-
-def make_tiny_model(seed: int = 0) -> Qwen2Model:
-    """A small randomly initialized Qwen2 (float32, CPU)."""
-    config = ModelConfig(
-        vocab_size=199,
-        hidden_size=64,
-        intermediate_size=160,
-        num_layers=3,
-        num_heads=4,
-        num_kv_heads=2,
-        rms_norm_eps=1e-6,
-        rope_theta=10000.0,
-        max_position_embeddings=256,
-        tie_word_embeddings=True,
-        eos_token_id=3,
-        torch_dtype=torch.float32,
-    )
-    model = Qwen2Model(config)
-    generator = torch.Generator().manual_seed(seed)
-    for name, param in model.named_parameters():
-        noise = torch.randn(param.shape, generator=generator)
-        if "norm" in name:
-            param.copy_(1.0 + 0.1 * noise)
-        elif "embed" in name:
-            param.copy_(noise)
-        else:
-            param.copy_(noise * 0.15)
-    return model.eval()
 
 
 def make_store(model: Qwen2Model, num_blocks: int) -> PagedKVStore:
