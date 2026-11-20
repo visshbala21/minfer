@@ -378,3 +378,112 @@ completes through preemption and recompute, and (c) with `max_batched_tokens=48`
 `max_num_seqs=3`, forcing multi-step prefill. On the CPU model the same scenarios are
 asserted to give outputs *identical* to the cache-free oracle (`tests/test_engine.py`),
 which the bf16 GPU path cannot promise (M-002).
+
+---
+
+## Phase 3 — CUDA graphs + chunked prefill
+
+### D-018 Decode passes replay CUDA graphs, one per batch-size bucket
+
+- **Decision.** `minfer/attention/decode_graphs.py` captures the whole decode pass (embedding
+  → 28 layers → final norm → unembedding) at batch sizes 1, 2, 4, …, 256. A batch of `n`
+  runs in the smallest bucket ≥ `n`; larger batches fall back to the eager path. Toggle:
+  `EngineConfig.cuda_graphs` / `--[no-]cuda-graphs`.
+- **How.** Each bucket owns static input buffers (token ids, positions, KV slots — the
+  slot-addressed store of D-010 exists for exactly this), a FlashInfer decode wrapper in
+  CUDA-graph mode with static page-table buffers, and a static logits output. Per step the
+  engine copies the inputs in, calls `plan()` (host-side; it rewrites the wrapper's
+  buffers), and replays. Padding rows are a one-token sequence at position 0 whose K/V goes
+  to slot 0 of the reserved block 0 (D-009).
+- **Memory.** Buckets are captured largest-first into one shared graph pool; they are never
+  replayed concurrently and each output is consumed before the next replay. Capturing all
+  nine takes ~0.6 s at start-up.
+- **Correctness.** At exact bucket sizes the replayed graph is *bit-identical* to the eager
+  pass over 36 consecutive steps with changing page tables
+  (`test_graph_decode_is_bit_identical_to_eager_at_bucket_sizes`, n = 1, 4, 16, 256). With
+  padding rows the logits differ by bf16 rounding only (max abs < 1.5, mean < 0.05 asserted;
+  measured max 0.37): padding changes the row count of every GEMM, and cuBLAS does not
+  round identically across shapes — the same effect as M-002, not a property of graphs.
+
+### M-004 Decode-step latency, CUDA graphs on vs off (Phase 3 acceptance)
+
+Script: `bench/decode_latency.py` → `bench/results/decode_latency.json`. Wall-clock time of
+`Engine.step()` in steady-state decode (scheduling + batch build + attention plan + forward
++ sampling + host sync), 200 steps per point, p50 in ms, NVIDIA H100 80GB HBM3.
+
+| batch | ctx 256: off | on | speedup | ctx 2048: off | on | speedup |
+|---|---|---|---|---|---|---|
+| 1 | 11.54 | 3.75 | 3.08× | 11.52 | 3.85 | 3.00× |
+| 2 | 11.61 | 3.93 | 2.95× | 11.58 | 4.04 | 2.87× |
+| 4 | 11.58 | 4.00 | 2.90× | 11.67 | 4.13 | 2.83× |
+| 8 | 11.68 | 4.20 | 2.78× | 11.70 | 4.46 | 2.62× |
+| 16 | 11.69 | 4.34 | 2.69× | 11.72 | 4.94 | 2.37× |
+| 32 | 11.78 | 4.65 | 2.53× | 11.84 | 5.52 | 2.15× |
+| 64 | 11.89 | 5.11 | 2.33× | 12.09 | 6.88 | 1.76× |
+| 128 | 12.10 | 5.87 | 2.06× | 12.51 | 9.65 | 1.30× |
+| 256 | 12.31 | 7.38 | 1.67× | 17.01 | 15.16 | 1.12× |
+
+- Eager decode costs ~11–12 ms regardless of batch size: it is bound by Python/PyTorch
+  dispatch of ~1,000 small kernels, not by the GPU. Graphs remove that floor
+  (3.1× at batch 1).
+- The gain shrinks as the GPU becomes the bottleneck: 1.1× at batch 256 with 2,048-token
+  contexts, where attention over 524k cached tokens dominates.
+- Remaining per-step cost at batch 1 is ~3.7 ms, of which the graph replay itself is the
+  GPU part; host-side work (scheduling, numpy batch build, `plan()`, sampling sync) is the
+  rest. Breaking that down is Phase 11.
+
+### D-019 Chunked prefill is a per-step prefill token budget
+
+- **Decision.** `EngineConfig.prefill_chunk_tokens` (`--prefill-chunk-tokens N` /
+  `--no-chunked-prefill`) caps the prefill tokens of a step *while at least one sequence is
+  decoding*. No new mechanism was needed: under the pending-token invariant (D-014) a
+  partially prefilled sequence is just a sequence with more than one pending token.
+- The cap is lifted when nothing is decoding: chunking protects the gap between decode
+  steps, and with no decoders small chunks would only multiply per-pass overhead.
+- The budget is shared FCFS among prefilling sequences, so one long prompt cannot starve
+  the prefill of short ones for more than its own chunks.
+
+### M-005 Chunked prefill on a mixed long/short workload (Phase 3 acceptance)
+
+Script: `bench/chunked_prefill.py` → `bench/results/chunked_prefill.json`. Engine-level
+(no HTTP), real-time replay of one seeded trace per setting: Poisson 12.0 req/s, prompt 32-256 tok, output 96-192 tok
+(346 requests) mixed with Poisson 1.5 req/s, prompt 4000-16000 tok, output 16-48 tok (55
+requests); 592,225 prompt tokens in 30 s. CUDA graphs on.
+All latencies in ms, measured on the **short** requests unless noted.
+
+| chunk | TPOT p50 | TPOT p99 | ITL p50 | ITL p99 | ITL max | TTFT short p50 / p99 | TTFT long p50 / p99 | out tok/s |
+|---|---|---|---|---|---|---|---|---|
+| off | 5.70 | 10.38 | 4.36 | 50.0 | 148 | 19 / 136 | 100 / 212 | 1681 |
+| 4096 | 5.70 | 10.57 | 4.36 | 41.5 | 52 | 18 / 147 | 115 / 258 | 1680 |
+| 2048 | 5.78 | 11.40 | 4.36 | 27.8 | 32 | 19 / 205 | 147 / 324 | 1677 |
+| 1024 | 6.16 | 13.11 | 4.39 | 20.0 | 105 | 19 / 429 | 210 / 537 | 1670 |
+| 512 | 7.52 | 16.14 | 4.73 | 17.5 | 22 | 111 / 1478 | 496 / 1696 | 1638 |
+| 256 | 15.99 | 16.42 | 15.88 | 16.9 | 95 | 4454 / 9512 | 4526 / 9503 | 1372 |
+
+*TPOT* is the per-request mean time per output token after the first (vLLM's definition);
+*ITL* is the gap between consecutive tokens, pooled over all tokens.
+
+**What chunking does, honestly:**
+
+- **It bounds stalls.** Per-token p99 latency falls from 50.0 ms to 27.8 ms at chunk 2048
+  and 20.0 ms at 1024; the worst stall falls from 148 ms to 32 ms at 2048.
+  This is the "p99 TPOT improvement" the phase asks for, read as time per output token
+  at the token level.
+- **It does not improve the per-request mean TPOT; it makes it worse.** p99 of
+  per-request TPOT goes from 10.38 ms (off) to 11.40 (2048) and 16.14 (512). Chunking does not
+  remove prefill work, it spreads it — a request's mean TPOT pays for all prefill that
+  overlaps its lifetime either way — and it *adds* work: each prefill pass is eager and
+  carries the ~11 ms dispatch floor of M-004, so a 16k-token prompt in 512-token chunks
+  pays that floor 32 times instead of once.
+- **It costs TTFT**, for both classes, because prefill throughput is capped at
+  chunk / step-time. At chunk 256 the cap (≈16k tokens/s) is at the workload's prefill
+  demand and the system saturates (TTFT in seconds, throughput down 18%).
+- **Default: 2048.** It removes most of the tail (ITL p99 −44%, max stall −78%) for +1% p50
+  TPOT, +10% p99 TPOT and ~50 ms of long-prompt TTFT. Smaller chunks buy little extra tail
+  and cost steeply.
+- **Open observation.** Isolated ITL maxima of 67–105 ms appear in single settings in two
+  runs of this benchmark (chunk 1024 and 256 above) although the chunk bound should prevent
+  them; p99 is unaffected. Not yet explained — to be chased with a profiler in Phase 11.
+- **Follow-up for Phase 11.** The eager prefill pass's fixed cost is the reason chunking is
+  expensive here; removing it (graph capture for bucketed prefill shapes, or fusing the
+  decode rows into the prefill pass) would change this table.
