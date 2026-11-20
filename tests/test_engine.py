@@ -27,7 +27,16 @@ def make_engine(model, **config) -> Engine:
     config.setdefault("block_size", 4)
     eos = config.pop("eos", None)
     engine_config = EngineConfig(attention_backend="reference", **config)
-    return Engine(model, engine_config, eos_token_ids=() if eos is None else (eos,))
+    calibration = None
+    if engine_config.kv_cache_dtype == "fp8":
+        rng = random.Random(99)
+        calibration = [[rng.randrange(4, 199) for _ in range(40)] for _ in range(4)]
+    return Engine(
+        model,
+        engine_config,
+        eos_token_ids=() if eos is None else (eos,),
+        calibration_prompts=calibration,
+    )
 
 
 def assert_all_released(engine: Engine) -> None:

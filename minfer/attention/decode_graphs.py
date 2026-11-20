@@ -21,8 +21,14 @@ from dataclasses import dataclass
 import torch
 from torch import Tensor
 
-from minfer.attention.flashinfer_backend import KernelContext, flashinfer
-from minfer.attention.paged import PagedBatch, SequenceSpan, build_paged_batch
+from minfer.attention.base import AttentionContext
+from minfer.attention.flashinfer_backend import KernelContext, TritonDecodeContext, flashinfer
+from minfer.attention.paged import (
+    PagedBatch,
+    SequenceSpan,
+    build_paged_batch,
+    dense_block_table,
+)
 from minfer.cache.kv_store import PagedKVStore
 from minfer.model.qwen2 import Qwen2Model
 
@@ -40,7 +46,9 @@ class _Bucket:
     token_ids: Tensor
     positions: Tensor
     slots: Tensor
-    wrapper: flashinfer.BatchDecodeWithPagedKVCacheWrapper
+    wrapper: flashinfer.BatchDecodeWithPagedKVCacheWrapper | None
+    block_table: Tensor | None = None
+    seq_lens: Tensor | None = None
     graph: torch.cuda.CUDAGraph | None = None
     logits: Tensor | None = None
 
@@ -64,13 +72,30 @@ class DecodeGraphs:
         workspace: Tensor,
         batch_sizes: Sequence[int] = DEFAULT_BATCH_SIZES,
         max_pages_per_sequence: int = 2048,
+        decode_kernel: str = "flashinfer",
     ) -> None:
         self.model = model
         self.store = store
         self.sizes = sorted(set(batch_sizes))
+        self.decode_kernel = decode_kernel
         device = model.device
         self._buckets: dict[int, _Bucket] = {}
         for size in self.sizes:
+            if decode_kernel == "triton":
+                # The Triton kernel reads the block table itself: no planning, just two
+                # more static buffers.
+                self._buckets[size] = _Bucket(
+                    size=size,
+                    token_ids=torch.zeros(size, dtype=torch.int64, device=device),
+                    positions=torch.zeros(size, dtype=torch.int64, device=device),
+                    slots=torch.zeros(size, dtype=torch.int64, device=device),
+                    wrapper=None,
+                    block_table=torch.zeros(
+                        (size, max_pages_per_sequence), dtype=torch.int32, device=device
+                    ),
+                    seq_lens=torch.ones(size, dtype=torch.int32, device=device),
+                )
+                continue
             wrapper = flashinfer.BatchDecodeWithPagedKVCacheWrapper(
                 workspace,
                 "NHD",
@@ -101,6 +126,12 @@ class DecodeGraphs:
         return self.sizes[index] if index < len(self.sizes) else None
 
     def _plan(self, bucket: _Bucket, batch: PagedBatch) -> None:
+        """Point the bucket's attention at ``batch``'s page tables (host-side work)."""
+        if bucket.wrapper is None:
+            table, lengths = dense_block_table(batch)
+            bucket.block_table[:, : table.shape[1]].copy_(table)
+            bucket.seq_lens.copy_(lengths)
+            return
         bucket.wrapper.plan(
             batch.kv_indptr,
             batch.kv_indices,
@@ -111,11 +142,17 @@ class DecodeGraphs:
             batch.block_size,
             pos_encoding_mode="NONE",
             q_data_type=self.model.dtype,
-            kv_data_type=self.model.dtype,
+            kv_data_type=self.store.data.dtype,
         )
 
     def _forward(self, bucket: _Bucket) -> Tensor:
-        context = KernelContext(self.store, bucket.slots, bucket.wrapper)
+        context: AttentionContext
+        if bucket.wrapper is None:
+            context = TritonDecodeContext(
+                self.store, bucket.slots, bucket.block_table, bucket.seq_lens
+            )
+        else:
+            context = KernelContext(self.store, bucket.slots, bucket.wrapper)
         hidden = self.model(bucket.token_ids, bucket.positions, context)
         return self.model.logits(hidden)
 

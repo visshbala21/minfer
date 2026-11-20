@@ -129,6 +129,19 @@ def build_paged_batch(
     )
 
 
+def dense_block_table(batch: PagedBatch) -> tuple[Tensor, Tensor]:
+    """The batch's page tables as a padded matrix, for kernels that index them directly.
+
+    Returns CPU tensors: ``[s, max_pages]`` int32 block ids (zero padded) and ``[s]`` int32
+    cached lengths (positions each sequence attends over, including this pass's tokens).
+    """
+    counts = np.diff(batch.kv_indptr.numpy())
+    table = np.zeros((len(counts), int(counts.max())), dtype=np.int32)
+    table[np.arange(table.shape[1])[None, :] < counts[:, None]] = batch.kv_indices.numpy()
+    lengths = (counts - 1) * batch.block_size + batch.kv_last_page_len.numpy()
+    return torch.from_numpy(table), torch.from_numpy(lengths.astype(np.int32))
+
+
 class PagedAttentionBackend(Protocol):
     """Factory for per-pass attention contexts over a :class:`PagedKVStore`."""
 

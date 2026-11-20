@@ -28,6 +28,24 @@ def add_engine_arguments(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--max-batched-tokens", type=int, default=defaults.max_batched_tokens)
     group.add_argument("--max-model-len", type=int, default=None)
     group.add_argument(
+        "--kv-cache-dtype",
+        choices=["auto", "fp8"],
+        default=defaults.kv_cache_dtype,
+        help="store the KV cache in FP8 (E4M3) with calibrated per-layer scales",
+    )
+    group.add_argument(
+        "--weight-dtype",
+        choices=["auto", "fp8"],
+        default=defaults.weight_dtype,
+        help="run the transformer's linear layers with FP8 weights and activations",
+    )
+    group.add_argument(
+        "--decode-kernel",
+        choices=["flashinfer", "triton"],
+        default=defaults.decode_kernel,
+        help="paged-attention kernel used for decode steps",
+    )
+    group.add_argument(
         "--cuda-graphs",
         action=argparse.BooleanOptionalAction,
         default=defaults.cuda_graphs,
@@ -80,6 +98,9 @@ def engine_config_from_args(args: argparse.Namespace) -> EngineConfig:
         max_num_seqs=args.max_num_seqs,
         max_batched_tokens=args.max_batched_tokens,
         max_model_len=args.max_model_len,
+        kv_cache_dtype=args.kv_cache_dtype,
+        weight_dtype=args.weight_dtype,
+        decode_kernel=args.decode_kernel,
         cuda_graphs=args.cuda_graphs,
         prefill_chunk_tokens=args.prefill_chunk_tokens,
         prefix_cache=args.prefix_cache,

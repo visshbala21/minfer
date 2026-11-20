@@ -22,6 +22,7 @@ from torch import Tensor, nn
 
 from minfer.attention.base import AttentionContext
 from minfer.model.config import ModelConfig
+from minfer.quant.fp8 import FP8Linear, quantize_activation
 
 
 @dataclass(frozen=True)
@@ -123,6 +124,8 @@ class Attention(nn.Module):
     ) -> Tensor:
         """Project to q/k/v, apply RoPE, attend through ``attn``, and project back."""
         n = x.shape[0]
+        if isinstance(self.q_proj, FP8Linear):
+            x = quantize_activation(x)  # one quantization shared by q, k and v
         q = self.q_proj(x).view(n, self.num_heads, self.head_dim)
         k = self.k_proj(x).view(n, self.num_kv_heads, self.head_dim)
         v = self.v_proj(x).view(n, self.num_kv_heads, self.head_dim)
@@ -146,6 +149,8 @@ class MLP(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         """Apply the feed-forward block."""
+        if isinstance(self.gate_proj, FP8Linear):
+            x = quantize_activation(x)  # shared by gate and up
         out = self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
         return self.reduce(out) if self.reduce else out
 

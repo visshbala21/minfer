@@ -119,3 +119,97 @@ def test_model_through_an_fp8_cache_stays_close_to_the_exact_model():
     spread = exact.std().item()
     assert error.max().item() < 0.5 * spread and error.mean().item() < 0.1 * spread
     assert quantized.argmax() == exact.argmax()
+
+
+# --------------------------------------------------------------------- FP8 linears
+
+
+def test_fp8_linear_matches_its_own_dequantized_weights():
+    from minfer.quant import FP8Linear
+
+    generator = torch.Generator().manual_seed(0)
+    linear = torch.nn.Linear(48, 32)
+    with torch.no_grad():
+        linear.weight.copy_(torch.randn(32, 48, generator=generator) * 0.1)
+    layer = FP8Linear.from_linear(linear)
+    assert layer.weight.dtype == FP8 and layer.weight.shape == (32, 48)
+    # Weight rounding error is bounded by the format: at most 1/16 relative.
+    error = (layer.dequantized_weight() - linear.weight).abs()
+    assert (error <= linear.weight.abs() / 16 + 1e-7).all()
+    x = torch.randn(5, 48, generator=generator)
+    out = layer(x)
+    assert out.dtype == x.dtype and out.shape == (5, 32)
+    exact = linear(x)
+    assert (out - exact).abs().max() < 0.1 * exact.abs().max()
+    assert torch.nn.functional.cosine_similarity(out.flatten(), exact.flatten(), dim=0) > 0.995
+
+
+def test_shared_activation_quantization_gives_the_same_result():
+    from minfer.quant import FP8Linear, quantize_activation
+
+    generator = torch.Generator().manual_seed(1)
+    layer = FP8Linear(torch.randn(16, 24, generator=generator), None)
+    x = torch.randn(7, 24, generator=generator)
+    assert torch.equal(layer(x), layer(quantize_activation(x)))
+
+
+def test_activation_quantization_survives_large_outliers():
+    from minfer.quant import quantize_activation
+
+    x = torch.full((4, 32), 0.37)
+    x[:, 5] = 2500.0  # a "massive activation" dimension, ~4 decades above the rest
+    q = quantize_activation(x)
+    restored = q.values.float() * q.scale
+    assert torch.allclose(restored, x, rtol=1 / 16)
+
+
+def test_quantize_linears_converts_everything_but_the_unembedding():
+    from minfer.quant import FP8Linear, quantize_linears
+
+    model = make_tiny_model()
+    reference = dense_logits(model, [5, 9, 44, 120, 7, 61])
+    converted = quantize_linears(model)
+    assert converted == model.config.num_layers * 7
+    assert isinstance(model.layers[0].self_attn.q_proj, FP8Linear)
+    assert isinstance(model.layers[0].mlp.down_proj, FP8Linear)
+    assert isinstance(model.lm_head, torch.nn.Linear)
+    quantized = dense_logits(model, [5, 9, 44, 120, 7, 61])
+    error = (quantized - reference).abs()
+    spread = reference.std().item()
+    assert error.mean().item() < 0.25 * spread
+    assert torch.nn.functional.cosine_similarity(quantized, reference, dim=0) > 0.97
+
+
+# ------------------------------------------------------------------- engine level
+
+
+def test_engine_with_fp8_kv_and_weights_tracks_the_exact_engine():
+    """Greedy generation under FP8 stays the same text wherever the model is confident."""
+    import random
+
+    from test_engine import assert_all_released, make_engine
+
+    from minfer.sampling import SamplingParams
+
+    model = make_tiny_model()
+    rng = random.Random(2)
+    prompts = [[rng.randrange(4, 199) for _ in range(rng.randint(4, 30))] for _ in range(12)]
+    params = SamplingParams(max_tokens=1)
+    exact = make_engine(model).generate(prompts, params)
+
+    kv_engine = make_engine(model, kv_cache_dtype="fp8")
+    assert kv_engine.store.quantized and kv_engine.store.k_scale.ne(1.0).all()
+    kv_out = kv_engine.generate(prompts, params)
+    assert_all_released(kv_engine)
+    # First tokens depend on FP8 keys/values of the whole prompt; most must be unchanged.
+    assert sum(a == b for a, b in zip(kv_out, exact, strict=True)) >= 10
+
+    # A longer run exercises decode, the prefix cache and block reuse over FP8 storage.
+    long_params = SamplingParams(max_tokens=24)
+    first = kv_engine.generate(prompts, long_params)
+    assert kv_engine.generate(prompts, long_params) == first  # cache hits: same K/V bytes
+    assert all(len(o) == 24 for o in first)
+
+    both = make_engine(make_tiny_model(), kv_cache_dtype="fp8", weight_dtype="fp8")
+    out = both.generate(prompts, params)
+    assert sum(a == b for a, b in zip(out, exact, strict=True)) >= 8

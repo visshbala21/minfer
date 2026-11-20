@@ -32,11 +32,13 @@ from minfer.cache.block_manager import (
     kv_bytes_per_block,
     plan_num_blocks,
 )
-from minfer.cache.kv_store import PagedKVStore
+from minfer.cache.kv_store import FP8, PagedKVStore
 from minfer.cache.radix_tree import PrefixCache
 from minfer.model.config import ModelConfig
 from minfer.model.loader import load_model, resolve_model_dir
 from minfer.model.qwen2 import Qwen2Model
+from minfer.quant.calibration import CALIBRATION_TEXTS
+from minfer.quant.fp8 import quantize_linears
 from minfer.sampling import SamplingParams
 from minfer.scheduler import Scheduler, SchedulerConfig, Sequence
 from minfer.spec.base import Draft, Drafter
@@ -59,6 +61,13 @@ class EngineConfig:
         max_model_len: Context limit; ``None`` uses the model's ``max_position_embeddings``.
         attention_backend: ``"flashinfer"`` (CUDA) or ``"reference"`` (plain PyTorch, any
             device and dtype; slow).
+        kv_cache_dtype: ``"fp8"`` stores keys and values in 8-bit E4M3 with per-layer
+            scales (half the memory per token, so twice the tokens in the same budget);
+            ``"auto"`` stores them in the model dtype.
+        weight_dtype: ``"fp8"`` converts the transformer's linear layers to FP8 weights
+            with dynamically quantized activations (:mod:`minfer.quant.fp8`).
+        decode_kernel: Decode attention kernel of the FlashInfer backend: FlashInfer's own
+            or the Triton kernel in :mod:`minfer.attention.triton_decode`.
         cuda_graphs: Replay captured CUDA graphs for decode passes (FlashInfer backend
             only). Batches larger than the largest captured size run eagerly.
         cuda_graph_batch_sizes: Decode batch sizes to capture; sizes above ``max_num_seqs``
@@ -91,6 +100,9 @@ class EngineConfig:
     watermark: float = 0.01
     max_model_len: int | None = None
     attention_backend: Literal["flashinfer", "reference"] = "flashinfer"
+    kv_cache_dtype: Literal["auto", "fp8"] = "auto"
+    weight_dtype: Literal["auto", "fp8"] = "auto"
+    decode_kernel: Literal["flashinfer", "triton"] = "flashinfer"
     cuda_graphs: bool = True
     cuda_graph_batch_sizes: tuple[int, ...] = (1, 2, 4, 8, 16, 32, 64, 128, 256)
     prefill_chunk_tokens: int | None = 2048
@@ -161,6 +173,7 @@ class Engine:
         model: Qwen2Model,
         config: EngineConfig | None = None,
         eos_token_ids: Seq[int] | None = None,
+        calibration_prompts: Seq[Seq[int]] | None = None,
     ) -> None:
         self.model = model
         self.config = config = config or EngineConfig()
@@ -173,6 +186,12 @@ class Engine:
             config.max_model_len or mc.max_position_embeddings, mc.max_position_embeddings
         )
 
+        fp8_kv = config.kv_cache_dtype == "fp8"
+        if fp8_kv and config.decode_kernel == "triton":
+            raise ValueError("the Triton decode kernel does not read an FP8 KV cache")
+        if config.weight_dtype == "fp8":
+            quantize_linears(model)
+        kv_itemsize = 1 if fp8_kv else model.dtype.itemsize
         num_blocks = config.num_blocks
         if num_blocks is None:
             if self.device.type != "cuda":
@@ -183,7 +202,7 @@ class Engine:
                 model.num_kv_heads,
                 mc.head_dim,
                 config.block_size,
-                model.dtype.itemsize,
+                kv_itemsize,
             )
             if config.speculation == "draft" and config.draft_num_blocks is None:
                 # The draft model's pool gets as many blocks as the target's: budget both.
@@ -205,26 +224,31 @@ class Engine:
             mc.head_dim,
             self.device,
             model.dtype,
+            FP8 if fp8_kv else None,
         )
         self.backend: PagedAttentionBackend
         self.decode_graphs = None
         if config.attention_backend == "flashinfer":
             from minfer.attention.flashinfer_backend import FlashInferBackend
 
-            self.backend = FlashInferBackend(self.store, model.num_heads)
-            if config.cuda_graphs:
-                from minfer.attention.decode_graphs import DecodeGraphs
-
-                sizes = {min(size, config.max_num_seqs) for size in config.cuda_graph_batch_sizes}
-                self.decode_graphs = DecodeGraphs(
-                    model,
-                    self.store,
-                    self.backend.workspace,
-                    batch_sizes=sorted(sizes),
-                    max_pages_per_sequence=self.blocks.blocks_for(self.max_model_len),
-                )
+            self.backend = FlashInferBackend(self.store, model.num_heads, config.decode_kernel)
         else:
             self.backend = ReferencePagedBackend(self.store)
+        if fp8_kv:
+            # Before any CUDA graph is captured: the scales are baked into the graphs.
+            self._calibrate_kv(calibration_prompts or ())
+        if config.attention_backend == "flashinfer" and config.cuda_graphs:
+            from minfer.attention.decode_graphs import DecodeGraphs
+
+            sizes = {min(size, config.max_num_seqs) for size in config.cuda_graph_batch_sizes}
+            self.decode_graphs = DecodeGraphs(
+                model,
+                self.store,
+                self.backend.workspace,
+                batch_sizes=sorted(sizes),
+                max_pages_per_sequence=self.blocks.blocks_for(self.max_model_len),
+                decode_kernel=config.decode_kernel,
+            )
         self.prefix_cache = PrefixCache(self.blocks) if config.prefix_cache else None
         self.scheduler = Scheduler(
             SchedulerConfig(
@@ -264,7 +288,33 @@ class Engine:
         model_dir = resolve_model_dir(name_or_path)
         model = load_model(model_dir, device=device, dtype=dtype)
         eos = read_eos_token_ids(model_dir, model.config.eos_token_id)
-        return cls(model, config, eos_token_ids=eos)
+        calibration = None
+        if config is not None and config.kv_cache_dtype == "fp8":
+            from tokenizers import Tokenizer
+
+            tokenizer = Tokenizer.from_file(str(model_dir / "tokenizer.json"))
+            calibration = [tokenizer.encode(text).ids for text in CALIBRATION_TEXTS]
+        return cls(model, config, eos_token_ids=eos, calibration_prompts=calibration)
+
+    @torch.inference_mode()
+    def _calibrate_kv(self, prompts: Seq[Seq[int]]) -> None:
+        """Set the FP8 KV scales from the keys and values of ``prompts``.
+
+        Each prompt is prefilled once with the store observing magnitudes; the blocks used
+        are released afterwards (what they hold was written with placeholder scales).
+        """
+        if not prompts:
+            raise ValueError("an FP8 KV cache needs calibration prompts")
+        self.store.observe()
+        size = self.config.block_size
+        for index, prompt in enumerate(prompts):
+            seq_id = ("calibration", index)
+            self.blocks.ensure_capacity(seq_id, len(prompt))
+            span = SequenceSpan(list(prompt), 0, self.blocks.table(seq_id))
+            batch = build_paged_batch([span], size, self.device)
+            self.model(batch.token_ids, batch.positions, self.backend.prefill(batch))
+            self.blocks.free(seq_id)
+        self.store.calibrate()
 
     # -------------------------------------------------------------- requests
 
