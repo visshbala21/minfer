@@ -101,14 +101,13 @@ class DecodeGraphs:
         return self.sizes[index] if index < len(self.sizes) else None
 
     def _plan(self, bucket: _Bucket, batch: PagedBatch) -> None:
-        config = self.model.config
         bucket.wrapper.plan(
             batch.kv_indptr,
             batch.kv_indices,
             batch.kv_last_page_len,
-            config.num_heads,
-            config.num_kv_heads,
-            config.head_dim,
+            self.model.num_heads,
+            self.model.num_kv_heads,
+            self.model.config.head_dim,
             batch.block_size,
             pos_encoding_mode="NONE",
             q_data_type=self.model.dtype,
