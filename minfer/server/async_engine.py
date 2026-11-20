@@ -20,6 +20,7 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from multiprocessing.connection import Connection
 from typing import Any
 
+from minfer.cache.retention import SessionHint
 from minfer.engine import Engine, StepOutput
 from minfer.sampling import SamplingParams
 
@@ -56,9 +57,9 @@ def engine_main(factory: Callable[[], Engine], commands: Connection, results: Co
                 command = commands.recv()
                 kind = command[0]
                 if kind == "add":
-                    _, request_id, prompt_ids, params = command
+                    _, request_id, prompt_ids, params, session = command
                     try:
-                        seq_id = engine.add_request(prompt_ids, params)
+                        seq_id = engine.add_request(prompt_ids, params, session)
                     except ValueError as error:
                         results.send(("error", request_id, str(error)))
                     else:
@@ -69,6 +70,8 @@ def engine_main(factory: Callable[[], Engine], commands: Connection, results: Co
                     if seq_id is not None:
                         del request_of[seq_id]
                         engine.abort(seq_id)
+                elif kind == "session":
+                    engine.note_session(*command[1:])
                 else:  # "stop"
                     return
             if not engine.has_work:
@@ -152,8 +155,16 @@ class AsyncEngine:
         """Whether the engine process is running and has not reported a failure."""
         return self.error is None and self._process is not None and self._process.is_alive()
 
+    def note_session(self, session_id: str, tools: Sequence[str] | None, final: bool) -> None:
+        """Tell the engine what a session went on to do (inferred from its response)."""
+        if self.healthy:
+            self._commands.send(("session", session_id, tools, final))
+
     async def generate(
-        self, prompt_ids: Sequence[int], params: SamplingParams
+        self,
+        prompt_ids: Sequence[int],
+        params: SamplingParams,
+        session: SessionHint | None = None,
     ) -> AsyncIterator[StepOutput]:
         """Submit a request and yield its tokens as the engine produces them.
 
@@ -172,7 +183,7 @@ class AsyncEngine:
         self._next_id += 1
         tokens: asyncio.Queue[StepOutput | BaseException] = asyncio.Queue()
         self._queues[request_id] = tokens
-        self._commands.send(("add", request_id, list(prompt_ids), params))
+        self._commands.send(("add", request_id, list(prompt_ids), params, session))
         try:
             while True:
                 item = await tokens.get()

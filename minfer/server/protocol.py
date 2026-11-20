@@ -11,6 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from minfer.cache.retention import SessionHint
 from minfer.sampling import SamplingParams
 
 
@@ -39,6 +40,10 @@ class _GenerationRequest(BaseModel):
     ignore_eos: bool = False
     stop_token_ids: list[int] = Field(default_factory=list)
     skip_special_tokens: bool = True
+    # minfer extensions: the agent session a request belongs to (KV retention policy).
+    session_id: str | None = None
+    session_tools: list[str] | None = None
+    session_final: bool | None = None
     # Accepted only at their neutral values.
     repetition_penalty: float = 1.0
     presence_penalty: float = 0.0
@@ -57,6 +62,19 @@ class _GenerationRequest(BaseModel):
         """``stop`` normalized to a list of non-empty strings."""
         stop = [self.stop] if isinstance(self.stop, str) else (self.stop or [])
         return [s for s in stop if s]
+
+    @property
+    def session(self) -> SessionHint | None:
+        """The request's session fields, if it names a session.
+
+        ``session_tools`` are the tools the client runs after this response and
+        ``session_final`` says the session ends with it; a client that sends neither
+        leaves it to the server to read the generated text.
+        """
+        if self.session_id is None:
+            return None
+        tools = None if self.session_tools is None else tuple(self.session_tools)
+        return SessionHint(self.session_id, tools, self.session_final)
 
     def sampling_params(self, max_tokens: int) -> SamplingParams:
         """The engine-level parameters for this request."""

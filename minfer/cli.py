@@ -90,6 +90,12 @@ def add_engine_arguments(parser: argparse.ArgumentParser) -> None:
     )
     group.add_argument("--starvation-seconds", type=float, default=defaults.starvation_seconds)
     group.add_argument(
+        "--eviction-policy",
+        choices=["lru", "session"],
+        default=defaults.eviction_policy,
+        help="cached KV to give up first: least recently used, or expected to be needed last",
+    )
+    group.add_argument(
         "--speculation",
         choices=["none", "ngram", "draft"],
         default=defaults.speculation or "none",
@@ -120,6 +126,7 @@ def engine_config_from_args(args: argparse.Namespace) -> EngineConfig:
         prefix_cache=args.prefix_cache,
         cache_aware_scheduling=args.cache_aware_scheduling,
         starvation_seconds=args.starvation_seconds,
+        eviction_policy=args.eviction_policy,
         speculation=None if args.speculation == "none" else args.speculation,
         num_draft_tokens=args.num_draft_tokens,
         ngram_size=args.ngram_size,

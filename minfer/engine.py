@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import random
 import time
+from collections.abc import Callable
 from collections.abc import Sequence as Seq
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,7 @@ from minfer.cache.block_manager import (
 )
 from minfer.cache.kv_store import FP8, PagedKVStore
 from minfer.cache.radix_tree import PrefixCache
+from minfer.cache.retention import SessionHint, SessionRetention
 from minfer.model.config import ModelConfig
 from minfer.model.loader import load_model, resolve_model_dir
 from minfer.model.qwen2 import Qwen2Model
@@ -95,6 +97,11 @@ class EngineConfig:
             first (needs ``prefix_cache``); off means first-come-first-served.
         starvation_seconds: A request that has waited this long is admitted in arrival
             order regardless of cache-aware preference.
+        eviction_policy: Which cached KV goes first under memory pressure: ``"session"``
+            evicts what is expected to be needed last (finished sessions first, then
+            sessions by expected remaining tool-call pause; see
+            :mod:`minfer.cache.retention`), ``"lru"`` the least recently used. Requests
+            that name no session are ordered by recency under both.
         speculation: Speculative decoding: ``"ngram"`` drafts by prompt lookup, ``"draft"``
             with a small draft model (``draft_model``); ``None`` disables it.
         num_draft_tokens: Maximum tokens drafted per sequence per step. Each request's
@@ -124,6 +131,7 @@ class EngineConfig:
     prefix_cache: bool = True
     cache_aware_scheduling: bool = True
     starvation_seconds: float = 1.0
+    eviction_policy: Literal["lru", "session"] = "session"
     speculation: Literal["ngram", "draft"] | None = None
     num_draft_tokens: int = 4
     ngram_size: int = 3
@@ -189,8 +197,10 @@ class Engine:
         config: EngineConfig | None = None,
         eos_token_ids: Seq[int] | None = None,
         calibration_prompts: Seq[Seq[int]] | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.model = model
+        self.clock = clock
         self.config = config = config or EngineConfig()
         self.device = model.device
         mc = model.config
@@ -279,7 +289,12 @@ class Engine:
                 self.backend.workspace,
                 max_pages_per_sequence=self.blocks.blocks_for(self.max_model_len),
             )
-        self.prefix_cache = PrefixCache(self.blocks) if config.prefix_cache else None
+        self.retention = None
+        if config.prefix_cache and config.eviction_policy == "session":
+            self.retention = SessionRetention(clock)
+        self.prefix_cache = (
+            PrefixCache(self.blocks, self.retention, clock) if config.prefix_cache else None
+        )
         self.scheduler = Scheduler(
             SchedulerConfig(
                 max_num_seqs=config.max_num_seqs,
@@ -368,8 +383,16 @@ class Engine:
 
     # -------------------------------------------------------------- requests
 
-    def add_request(self, prompt_ids: Seq[int], params: SamplingParams | None = None) -> int:
+    def add_request(
+        self,
+        prompt_ids: Seq[int],
+        params: SamplingParams | None = None,
+        session: SessionHint | None = None,
+    ) -> int:
         """Queue a generation request and return its id.
+
+        ``session`` ties the request to an agent session, which the retention policy uses
+        to decide whose cached KV to keep under memory pressure.
 
         Raises:
             ValueError: If the prompt is empty or leaves no room to generate within the
@@ -394,6 +417,9 @@ class Engine:
         )
         self._next_id += 1
         self.scheduler.add(seq)
+        if session is not None and self.retention is not None:
+            seq.session = self.retention.begin(session.session_id)
+            seq.hint = session
         self._sequences[seq.seq_id] = seq
         self.stats.requests_added += 1
         self.stats.prompt_tokens += len(prompt)
@@ -404,8 +430,28 @@ class Engine:
         seq = self._sequences.pop(seq_id, None)
         if seq is not None:
             self.scheduler.abort(seq)
+            self._end_session(seq)
             if self.drafter is not None:
                 self.drafter.release(seq_id)
+
+    def note_session(
+        self, session_id: str, tools: Seq[str] | None = None, final: bool | None = None
+    ) -> None:
+        """Tell the engine what a session is doing after its latest response.
+
+        For servers that learn it only from the generated text (a tool call, or none): the
+        request-time :class:`SessionHint` carries the same information up front.
+        """
+        if self.retention is not None and session_id in self.retention.sessions:
+            self.retention.describe(self.retention.sessions[session_id], tools, final)
+
+    def _end_session(self, seq: Sequence) -> None:
+        """A request finished: record the session's pause and mark its cached KV."""
+        state, hint = seq.session, seq.hint
+        if state is None:
+            return
+        self.retention.end(state, hint.tools, hint.final)
+        self.prefix_cache.tag(seq.tokens, state)
 
     @property
     def has_work(self) -> bool:
@@ -762,6 +808,7 @@ class Engine:
             reason = "length"
         if reason is not None:
             self.scheduler.finish(seq, reason)
+            self._end_session(seq)
             del self._sequences[seq.seq_id]
             self.stats.requests_finished += 1
             if self.drafter is not None:

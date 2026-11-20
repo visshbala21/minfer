@@ -22,11 +22,13 @@ tokens furthest from the root are the least likely to be shared.
 from __future__ import annotations
 
 import heapq
-from collections.abc import Hashable, Iterator, Sequence
+import time
+from collections.abc import Callable, Hashable, Iterator, Sequence
 from dataclasses import dataclass
 from itertools import count
 
 from minfer.cache.block_manager import BlockManager
+from minfer.cache.retention import SessionRetention, SessionState
 
 
 class RadixNode:
@@ -38,9 +40,11 @@ class RadixNode:
         children: Child nodes, keyed by the tokens of their edge's first block.
         parent: The parent node; ``None`` for the root and for nodes removed from the tree.
         last_access: Logical time the node was last matched or inserted.
+        last_used: Wall-clock time of the same event (for session-aware retention).
+        owner: The session whose request last finished on this node, if any.
     """
 
-    __slots__ = ("blocks", "children", "last_access", "parent", "tokens")
+    __slots__ = ("blocks", "children", "last_access", "last_used", "owner", "parent", "tokens")
 
     def __init__(self, tokens: tuple[int, ...], blocks: list[int], parent: RadixNode | None):
         self.tokens = tokens
@@ -48,6 +52,8 @@ class RadixNode:
         self.children: dict[tuple[int, ...], RadixNode] = {}
         self.parent = parent
         self.last_access = 0
+        self.last_used = 0.0
+        self.owner: SessionState | None = None
 
 
 @dataclass
@@ -80,16 +86,31 @@ class PrefixCacheStats:
 
 
 class PrefixCache:
-    """Radix tree over token sequences whose nodes hold shared KV blocks."""
+    """Radix tree over token sequences whose nodes hold shared KV blocks.
 
-    def __init__(self, blocks: BlockManager) -> None:
+    Args:
+        blocks: The block pool the cached KV lives in.
+        retention: Session-aware eviction order (:mod:`minfer.cache.retention`). Without
+            it, eviction is least-recently-used.
+        clock: Monotonic time source, used only with ``retention``.
+    """
+
+    def __init__(
+        self,
+        blocks: BlockManager,
+        retention: SessionRetention | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self.blocks = blocks
         self.block_size = blocks.block_size
+        self.retention = retention
+        self.clock = clock
         self.root = RadixNode((), [], None)
         self.num_nodes = 0
         self.num_blocks = 0
         self.stats = PrefixCacheStats()
         self._clock = 0
+        self._now = 0.0
         # Min-heap of (last_access, tiebreak, node) with lazy invalidation: an entry is
         # current only if the node is still a leaf of the tree with that access time.
         self._heap: list[tuple[int, int, RadixNode]] = []
@@ -160,6 +181,8 @@ class PrefixCache:
         size = self.block_size
         num_own = min(len(own_blocks), limit)
         self._clock += 1
+        if self.retention is not None:
+            self._now = self.clock()
         canonical: list[int] = []
         node, index = self.root, 0
         while index < limit:
@@ -243,6 +266,8 @@ class PrefixCache:
         for grandchild in tail.children.values():
             grandchild.parent = tail
         tail.last_access = node.last_access
+        tail.last_used = node.last_used
+        tail.owner = node.owner
         node.tokens = node.tokens[:cut]
         node.blocks = node.blocks[:num_blocks]
         node.children = {tail.tokens[: self.block_size]: tail}
@@ -253,6 +278,7 @@ class PrefixCache:
     def _touch(self, node: RadixNode) -> None:
         """Record a use of ``node``."""
         node.last_access = self._clock
+        node.last_used = self._now
         if not node.children:
             heapq.heappush(self._heap, (self._clock, next(self._tiebreak), node))
             if len(self._heap) > 64 + 8 * self.num_nodes:
@@ -289,14 +315,39 @@ class PrefixCache:
         self.blocks.adopt(seq_id, canonical)
         return max(num_cached, len(canonical) * size)
 
+    def tag(self, tokens: Sequence[int], owner: SessionState) -> None:
+        """Mark the cached path of ``tokens`` as belonging to ``owner``'s session.
+
+        Called when a request of the session completes. Every node on the path is marked,
+        so whichever of them is the leaf when memory runs short is scored by this session;
+        a node shared with other sessions carries the mark of the latest one, and is only
+        ever scored once all of their private tails are gone.
+        """
+        size = self.block_size
+        limit = len(tokens) // size
+        node, index = self.root, 0
+        while index < limit:
+            child = node.children.get(tuple(tokens[index * size : (index + 1) * size]))
+            if child is None:
+                return
+            matched = self._matching_blocks(child, tokens, index, limit - index)
+            if matched < len(child.blocks):
+                return
+            child.owner = owner
+            index += matched
+            node = child
+
     # -------------------------------------------------------------- eviction
 
     def evict(self, num_blocks: int) -> int:
-        """Free up to ``num_blocks`` blocks held only by the cache, least recently used first.
+        """Free up to ``num_blocks`` blocks held only by the cache.
 
-        Returns the number of blocks freed, which is less than requested when everything
-        left in the tree is in use by running sequences.
+        Least recently used first, or — with a retention policy — the KV expected to be
+        needed last first. Returns the number of blocks freed, which is less than requested
+        when everything left in the tree is in use by running sequences.
         """
+        if self.retention is not None:
+            return self._evict_by_score(num_blocks)
         blocks = self.blocks
         freed = 0
         in_use = []
@@ -324,6 +375,43 @@ class PrefixCache:
                 heapq.heappush(self._heap, (parent.last_access, next(self._tiebreak), parent))
         for entry in in_use:
             heapq.heappush(self._heap, entry)
+        self.num_blocks -= freed
+        self.stats.evicted_blocks += freed
+        return freed
+
+    def _evict_by_score(self, num_blocks: int) -> int:
+        """Eviction in the order of :meth:`SessionRetention.score`, leaves first.
+
+        A leaf is trimmed from its tail, exactly as under LRU. When every current leaf has
+        been tried and more is needed, the nodes they exposed are scored in a further round.
+        """
+        blocks, retention, size = self.blocks, self.retention, self.block_size
+        now = self.clock()
+        freed = 0
+        while freed < num_blocks:
+            leaves = [
+                node
+                for node in self.nodes()
+                if not node.children and blocks.ref_count(node.blocks[-1]) == 1
+            ]
+            if not leaves:
+                break
+            leaves.sort(
+                key=lambda n: (retention.score(n.owner, n.last_used, now), -n.last_access),
+                reverse=True,
+            )
+            for node in leaves:
+                key = node.tokens[:size]
+                while node.blocks and freed < num_blocks and blocks.ref_count(node.blocks[-1]) == 1:
+                    blocks.uncache_block(node.blocks.pop())
+                    freed += 1
+                node.tokens = node.tokens[: len(node.blocks) * size]
+                if not node.blocks:
+                    del node.parent.children[key]
+                    node.parent = None
+                    self.num_nodes -= 1
+                if freed >= num_blocks:
+                    break
         self.num_blocks -= freed
         self.stats.evicted_blocks += freed
         return freed

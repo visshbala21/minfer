@@ -8,6 +8,7 @@ vLLM-compatible ``/tokenize`` / ``/detokenize``. Streaming uses server-sent even
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
@@ -106,6 +107,18 @@ def _text_message(message: dict[str, Any]) -> dict[str, Any]:
             raise APIError(400, f"unsupported content part type {kind!r}; only text is supported")
         texts.append(part.get("text", ""))
     return {**message, "content": "".join(texts)}
+
+
+_TOOL_CALL = re.compile(r'<tool_call>\s*\{\s*"name"\s*:\s*"([^"]+)"')
+
+
+def called_tools(text: str) -> list[str]:
+    """Names of the tools a generated assistant message calls (Qwen's tool-call format).
+
+    An empty list means the message is a final answer: the agent has nothing to wait for,
+    and the session's next request, if any, comes from a human.
+    """
+    return _TOOL_CALL.findall(text)
 
 
 class BatchTokenizer:
@@ -268,10 +281,19 @@ class Server:
         decoder = DecodeStream(skip_special_tokens=request.skip_special_tokens)
         stops = StopStrings(request.stop_strings)
         tokenizer = self.fast_tokenizer
-        async for out in self.async_engine.generate(prompt_ids, params):
+        session = request.session
+        # A session that did not say what it does next: read it off the generated text.
+        infer = session is not None and session.tools is None and session.final is None
+        generated: list[str] = []
+        async for out in self.async_engine.generate(prompt_ids, params, session):
             usage.completion_tokens += 1
             piece = decoder.step(tokenizer, out.token_id) or ""
+            if infer:
+                generated.append(piece)
             text = stops.feed(piece)
+            if infer and (stops.stopped or out.finish_reason is not None):
+                tools = called_tools("".join(generated))
+                self.async_engine.note_session(session.session_id, tools, not tools)
             if stops.stopped:
                 yield text, "stop"
                 return

@@ -6,6 +6,7 @@ import enum
 import random
 from dataclasses import dataclass, field
 
+from minfer.cache.retention import SessionHint, SessionState
 from minfer.sampling import SamplingParams
 
 
@@ -46,6 +47,8 @@ class Sequence:
         draft_len: Current speculative draft length for this request (adapts to how many
             drafted tokens were accepted last time; 0 until the engine sets it).
         rng: The request's own random stream (seeded requests only).
+        session: The agent session the request belongs to, if it named one.
+        hint: What the request said the session does after this response.
     """
 
     seq_id: int
@@ -62,6 +65,8 @@ class Sequence:
     cache_hit_tokens: int = 0
     draft_len: int = 0
     rng: random.Random | None = field(default=None, repr=False)
+    session: SessionState | None = field(default=None, repr=False)
+    hint: SessionHint | None = field(default=None, repr=False)
 
     @property
     def num_pending(self) -> int:
