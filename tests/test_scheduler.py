@@ -219,3 +219,28 @@ def test_randomized_workload_completes_under_memory_pressure():
     assert finished == 60
     assert blocks.num_free == blocks.num_usable
     assert sched.num_preemptions > 0
+
+
+def test_prefill_chunk_budget_interleaves_long_prompts_with_decodes():
+    sched, _ = make(num_blocks=400, max_prefill_tokens=16)
+    short = seq(0, 3, max_new=50)
+    sched.add(short)
+    execute(sched.schedule())
+    long_a, long_b = seq(1, 40), seq(2, 20)
+    sched.add(long_a)
+    sched.add(long_b)
+    chunks = []
+    for _ in range(4):
+        plan = sched.schedule()
+        assert plan.decode[0] is short  # the short request decodes in every step
+        assert sum(count for _, count in plan.prefill) <= 16
+        chunks.append([(s.seq_id, count) for s, count in plan.prefill])
+        execute(plan)
+    assert chunks == [[(1, 16)], [(1, 16)], [(1, 8), (2, 8)], [(2, 12)]]
+
+
+def test_prefill_chunk_budget_does_not_apply_without_decoders():
+    sched, _ = make(num_blocks=400, max_prefill_tokens=16)
+    a = seq(0, 100)
+    sched.add(a)
+    assert sched.schedule().prefill == [(a, 100)]

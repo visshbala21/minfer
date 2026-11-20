@@ -26,17 +26,23 @@ class SchedulerConfig:
         max_batched_tokens: Maximum tokens one engine step may process (decode tokens plus
             prefill tokens). A prompt longer than the remaining budget is prefilled over
             several steps.
+        max_prefill_tokens: Maximum prefill tokens per step while any sequence is decoding
+            (chunked prefill). ``None`` leaves prefill bounded only by
+            ``max_batched_tokens``.
         watermark: Fraction of the block pool kept free at admission time, so that already
             running sequences can keep growing without immediately preempting a newcomer.
     """
 
     max_num_seqs: int = 256
     max_batched_tokens: int = 8192
+    max_prefill_tokens: int | None = None
     watermark: float = 0.01
 
     def __post_init__(self) -> None:
         if self.max_num_seqs < 1 or self.max_batched_tokens < 1:
             raise ValueError("max_num_seqs and max_batched_tokens must be positive")
+        if self.max_prefill_tokens is not None and self.max_prefill_tokens < 1:
+            raise ValueError("max_prefill_tokens must be positive")
         if not 0.0 <= self.watermark < 1.0:
             raise ValueError("watermark must be in [0, 1)")
 
@@ -182,6 +188,10 @@ class Scheduler:
         plan = StepPlan()
         num_decode = sum(1 for s in self.running if s.num_pending == 1)
         prefill_budget = max(self.config.max_batched_tokens - num_decode, 0)
+        # Chunking exists to bound the gap between decode steps; with nobody decoding
+        # there is no gap to protect, and small chunks would only add per-pass overhead.
+        if self.config.max_prefill_tokens is not None and num_decode:
+            prefill_budget = min(prefill_budget, self.config.max_prefill_tokens)
         index = 0
         while index < len(self.running):
             seq = self.running[index]
