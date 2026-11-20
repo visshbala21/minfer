@@ -99,7 +99,7 @@ def test_two_process_engine_matches_the_single_process_oracle(group):
     expected = [dense_greedy(model, p, 16) for p in prompts]
     engine = group.engine(tp_config())
     # The driver's KV store holds only its own kv heads: the cache is sharded.
-    assert engine.store.data.shape[4] == model.config.num_kv_heads // 2
+    assert engine.store.layer(0).shape[3] == model.config.num_kv_heads // 2
     assert engine.generate(prompts, SamplingParams(max_tokens=16)) == expected
     blocks = engine.blocks
     assert blocks.num_free + blocks.num_evictable == blocks.num_usable

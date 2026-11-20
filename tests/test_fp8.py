@@ -20,9 +20,34 @@ def make_store(kv_dtype=FP8, layers=2) -> PagedKVStore:
 def test_fp8_store_is_half_the_size_of_bf16_and_a_quarter_of_fp32():
     fp32 = make_store(None)
     assert make_store().nbytes * 4 == fp32.nbytes
-    assert make_store().data.dtype == FP8
+    assert make_store().layer(0).dtype == FP8
     with pytest.raises(ValueError):
         make_store(torch.int8)
+
+
+def test_mixed_precision_store_keeps_listed_layers_in_the_model_dtype():
+    store = PagedKVStore(4, 6, BLOCK, 2, 8, "cpu", torch.float32, FP8, high_precision_layers=[0, 2])
+    assert [store.layer_dtype(i) for i in range(4)] == [torch.float32, FP8, torch.float32, FP8]
+    assert store.layer_is_fp8 == [False, True, False, True] and store.quantized
+    full = PagedKVStore(4, 6, BLOCK, 2, 8, "cpu", torch.float32)
+    assert store.nbytes == full.nbytes * (2 * 4 + 2 * 1) // (4 * 4)
+    # Layers of both kinds round-trip; the high-precision ones exactly.
+    generator = torch.Generator().manual_seed(0)
+    k = torch.randn(3, 2, 8, generator=generator) * 300
+    v = torch.randn(3, 2, 8, generator=generator)
+    slots = torch.tensor([8, 9, 17])
+    store.set_scales(torch.full((4,), 2.0), torch.full((4,), 0.01))
+    for layer in range(4):
+        store.write(layer, slots, k, v)
+    exact_k, exact_v = store.read(2, slots)
+    assert torch.equal(exact_k, k) and torch.equal(exact_v, v)
+    rounded_k, rounded_v = store.read(3, slots)
+    assert not torch.equal(rounded_k, k)
+    assert torch.allclose(rounded_k, k, rtol=1 / 16, atol=2.0 * 2**-9)
+    assert torch.allclose(rounded_v, v, rtol=1 / 16, atol=0.01 * 2**-9)
+    # Without the FP8 dtype the list is ignored: nothing is quantized.
+    plain = PagedKVStore(4, 6, BLOCK, 2, 8, "cpu", torch.float32, None, high_precision_layers=[1])
+    assert not plain.quantized and plain.high_precision_layers == frozenset()
 
 
 def test_round_trip_error_is_bounded_by_the_format():
@@ -50,71 +75,92 @@ def test_scales_prevent_saturation_and_underflow():
     assert torch.all(k == FP8_MAX) and torch.all(v == 0)  # clipped, and flushed to zero
 
     scaled = make_store()
-    scaled.k_scale[0] = 3000.0 / FP8_MAX
-    scaled.v_scale[0] = 1e-4 / FP8_MAX
+    scaled.set_scales(torch.tensor([3000.0 / FP8_MAX, 1.0]), torch.tensor([1e-4 / FP8_MAX, 1.0]))
     scaled.write(0, slots, big, small)
     k, v = scaled.read(0, slots)
     assert torch.allclose(k, big, rtol=1 / 16) and torch.allclose(v, small, rtol=1 / 16)
+    assert scaled.scale_pairs[0] == pytest.approx((3000.0 / FP8_MAX, 1e-4 / FP8_MAX))
 
 
-def test_calibration_sets_per_layer_scales_from_observed_maxima():
-    store = make_store()
-    store.observe()
-    slots = torch.tensor([0, 1])
-    k0, v0 = torch.full((2, 2, 8), 20.0), torch.full((2, 2, 8), -0.5)
-    k1, v1 = torch.full((2, 2, 8), 0.25), torch.full((2, 2, 8), 900.0)
-    store.write(0, slots, k0, v0)
-    store.write(1, slots, k1, v1)
-    store.calibrate(headroom=1.0)
-    expected_k = torch.tensor([20.0, 0.25]) / FP8_MAX
-    expected_v = torch.tensor([0.5, 900.0]) / FP8_MAX
-    assert torch.allclose(store.k_scale, expected_k) and torch.allclose(store.v_scale, expected_v)
-    store.write(1, slots, k1, v1)
-    _, v = store.read(1, slots)
-    assert torch.allclose(v, v1, rtol=1 / 16)
-    with pytest.raises(RuntimeError):
-        store.calibrate()
+def test_calibration_finds_scales_and_the_layers_fp8_would_break():
+    """A layer with huge key and query components is flagged; ordinary layers are not."""
+    from minfer.quant.calibration import CalibrationContext, summarize
+
+    class Passthrough:
+        def attend(self, layer, q, k, v):
+            return q
+
+    generator = torch.Generator().manual_seed(0)
+    peaks, errors = torch.zeros(2, 2), torch.zeros(2)
+    context = CalibrationContext(Passthrough(), peaks, errors)
+    q = torch.randn(24, 4, 16, generator=generator)
+    k = torch.randn(24, 2, 16, generator=generator)
+    v = torch.randn(24, 2, 16, generator=generator) * 0.1
+    context.attend(0, q, k, v)  # an ordinary layer
+    spiky_q, spiky_k = q.clone(), k.clone()
+    spiky_q[..., 3] = 80.0
+    spiky_k[..., 3] = 300.0 + torch.randn(24, 2, generator=generator) * 20
+    context.attend(1, spiky_q, spiky_k, v)  # outlier dimension shared by keys and queries
+    result = summarize(peaks, errors, headroom=1.0)
+    assert result.high_precision_layers == (1,)
+    assert result.logit_error[0] < 0.2 < 1.0 < result.logit_error[1]
+    assert torch.allclose(
+        result.k_scale, torch.stack([k.abs().max(), spiky_k.abs().max()]) / FP8_MAX
+    )
+    assert torch.allclose(result.v_scale, torch.full((2,), v.abs().max().item()) / FP8_MAX)
 
 
 def test_model_through_an_fp8_cache_stays_close_to_the_exact_model():
     """Prefill + decode with FP8 KV: logits move by quantization noise, not more."""
+    from minfer.quant.calibration import CalibrationContext, summarize
+
     model = make_tiny_model()
     config = model.config
     tokens = [(7 * i + 3) % 190 + 4 for i in range(40)]
 
-    def run(kv_dtype, calibrate: bool) -> torch.Tensor:
-        store = PagedKVStore(
-            config.num_layers,
-            32,
-            BLOCK,
-            config.num_kv_heads,
-            config.head_dim,
-            "cpu",
-            model.dtype,
-            kv_dtype,
-        )
-        backend, manager = ReferencePagedBackend(store), BlockManager(32, BLOCK)
+    def run(kv_dtype) -> torch.Tensor:
+        def make(dtype, sensitive=()):
+            store = PagedKVStore(
+                config.num_layers,
+                32,
+                BLOCK,
+                config.num_kv_heads,
+                config.head_dim,
+                "cpu",
+                model.dtype,
+                dtype,
+                sensitive,
+            )
+            return store, ReferencePagedBackend(store)
+
+        manager = BlockManager(32, BLOCK)
         manager.ensure_capacity("s", len(tokens))
         table = manager.table("s")
 
-        def forward(start, stop):
+        def forward(backend, start, stop, wrap=None):
             batch = build_paged_batch(
                 [SequenceSpan(tokens[start:stop], start, table)], BLOCK, "cpu"
             )
-            return model(batch.token_ids, batch.positions, backend.prefill(batch))
+            context = backend.prefill(batch)
+            return model(batch.token_ids, batch.positions, wrap(context) if wrap else context)
 
         with torch.inference_mode():
-            if calibrate:
-                store.observe()
-                forward(0, len(tokens))
-                store.calibrate()
-            forward(0, 30)
-            hidden = torch.cat([forward(i, i + 1) for i in range(30, len(tokens))])
+            store, backend = make(kv_dtype)
+            if kv_dtype is not None:
+                _, scratch = make(None)
+                peaks = torch.zeros(config.num_layers, 2)
+                errors = torch.zeros(config.num_layers)
+                forward(scratch, 0, len(tokens), lambda c: CalibrationContext(c, peaks, errors))
+                found = summarize(peaks, errors)
+                store, backend = make(kv_dtype, found.high_precision_layers)
+                store.set_scales(found.k_scale, found.v_scale)
+            forward(backend, 0, 30)
+            hidden = torch.cat([forward(backend, i, i + 1) for i in range(30, len(tokens))])
             return model.logits(hidden[-1:])[0]
 
     exact = dense_logits(model, tokens)
-    assert torch.allclose(run(None, False), exact, atol=1e-4)
-    quantized = run(FP8, True)
+    assert torch.allclose(run(None), exact, atol=1e-4)
+    quantized = run(FP8)
     error = (quantized - exact).abs()
     spread = exact.std().item()
     assert error.max().item() < 0.5 * spread and error.mean().item() < 0.1 * spread
@@ -199,6 +245,7 @@ def test_engine_with_fp8_kv_and_weights_tracks_the_exact_engine():
 
     kv_engine = make_engine(model, kv_cache_dtype="fp8")
     assert kv_engine.store.quantized and kv_engine.store.k_scale.ne(1.0).all()
+    assert kv_engine.kv_calibration.logit_error.shape == (model.config.num_layers,)
     kv_out = kv_engine.generate(prompts, params)
     assert_all_released(kv_engine)
     # First tokens depend on FP8 keys/values of the whole prompt; most must be unchanged.

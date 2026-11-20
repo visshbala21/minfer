@@ -37,7 +37,12 @@ from minfer.cache.radix_tree import PrefixCache
 from minfer.model.config import ModelConfig
 from minfer.model.loader import load_model, resolve_model_dir
 from minfer.model.qwen2 import Qwen2Model
-from minfer.quant.calibration import CALIBRATION_TEXTS
+from minfer.quant.calibration import (
+    CALIBRATION_TEXTS,
+    CalibrationContext,
+    KVCalibration,
+    summarize,
+)
 from minfer.quant.fp8 import quantize_linears
 from minfer.sampling import SamplingParams
 from minfer.scheduler import Scheduler, SchedulerConfig, Sequence
@@ -61,9 +66,10 @@ class EngineConfig:
         max_model_len: Context limit; ``None`` uses the model's ``max_position_embeddings``.
         attention_backend: ``"flashinfer"`` (CUDA) or ``"reference"`` (plain PyTorch, any
             device and dtype; slow).
-        kv_cache_dtype: ``"fp8"`` stores keys and values in 8-bit E4M3 with per-layer
-            scales (half the memory per token, so twice the tokens in the same budget);
-            ``"auto"`` stores them in the model dtype.
+        kv_cache_dtype: ``"fp8"`` stores keys and values in 8-bit E4M3 with calibrated
+            per-layer scales, except in the layers calibration finds too sensitive, which
+            keep the model dtype (for Qwen2.5-1.5B: one layer of 28, so a token costs 52%
+            of its bf16 memory); ``"auto"`` stores everything in the model dtype.
         weight_dtype: ``"fp8"`` converts the transformer's linear layers to FP8 weights
             with dynamically quantized activations (:mod:`minfer.quant.fp8`).
         decode_kernel: Decode attention kernel of the FlashInfer backend: FlashInfer's own
@@ -191,18 +197,18 @@ class Engine:
             raise ValueError("the Triton decode kernel does not read an FP8 KV cache")
         if config.weight_dtype == "fp8":
             quantize_linears(model)
-        kv_itemsize = 1 if fp8_kv else model.dtype.itemsize
+        calibration = self._calibrate_kv(calibration_prompts or ()) if fp8_kv else None
+        self.kv_calibration = calibration
+        sensitive = calibration.high_precision_layers if calibration else ()
+        num_fp8_layers = mc.num_layers - len(sensitive) if fp8_kv else 0
         num_blocks = config.num_blocks
         if num_blocks is None:
             if self.device.type != "cuda":
                 raise ValueError("num_blocks must be given explicitly off-GPU")
             free_bytes, _ = torch.cuda.mem_get_info(self.device)
-            per_block = kv_bytes_per_block(
-                mc.num_layers,
-                model.num_kv_heads,
-                mc.head_dim,
-                config.block_size,
-                kv_itemsize,
+            shape = (model.num_kv_heads, mc.head_dim, config.block_size)
+            per_block = kv_bytes_per_block(num_fp8_layers, *shape, 1) + kv_bytes_per_block(
+                mc.num_layers - num_fp8_layers, *shape, model.dtype.itemsize
             )
             if config.speculation == "draft" and config.draft_num_blocks is None:
                 # The draft model's pool gets as many blocks as the target's: budget both.
@@ -225,18 +231,13 @@ class Engine:
             self.device,
             model.dtype,
             FP8 if fp8_kv else None,
+            sensitive,
         )
-        self.backend: PagedAttentionBackend
+        self.backend: PagedAttentionBackend = self._make_backend(self.store)
         self.decode_graphs = None
-        if config.attention_backend == "flashinfer":
-            from minfer.attention.flashinfer_backend import FlashInferBackend
-
-            self.backend = FlashInferBackend(self.store, model.num_heads, config.decode_kernel)
-        else:
-            self.backend = ReferencePagedBackend(self.store)
-        if fp8_kv:
+        if calibration is not None:
             # Before any CUDA graph is captured: the scales are baked into the graphs.
-            self._calibrate_kv(calibration_prompts or ())
+            self.store.set_scales(calibration.k_scale, calibration.v_scale)
         if config.attention_backend == "flashinfer" and config.cuda_graphs:
             from minfer.attention.decode_graphs import DecodeGraphs
 
@@ -297,24 +298,44 @@ class Engine:
         return cls(model, config, eos_token_ids=eos, calibration_prompts=calibration)
 
     @torch.inference_mode()
-    def _calibrate_kv(self, prompts: Seq[Seq[int]]) -> None:
-        """Set the FP8 KV scales from the keys and values of ``prompts``.
+    def _calibrate_kv(self, prompts: Seq[Seq[int]]) -> KVCalibration:
+        """Measure the model's keys and values on ``prompts`` (before the store exists).
 
-        Each prompt is prefilled once with the store observing magnitudes; the blocks used
-        are released afterwards (what they hold was written with placeholder scales).
+        Each prompt is prefilled once through a small scratch store in the model dtype,
+        with a context that records per-layer magnitudes and the attention-logit error
+        FP8 keys would cause.
         """
         if not prompts:
             raise ValueError("an FP8 KV cache needs calibration prompts")
-        self.store.observe()
-        size = self.config.block_size
-        for index, prompt in enumerate(prompts):
-            seq_id = ("calibration", index)
-            self.blocks.ensure_capacity(seq_id, len(prompt))
-            span = SequenceSpan(list(prompt), 0, self.blocks.table(seq_id))
-            batch = build_paged_batch([span], size, self.device)
-            self.model(batch.token_ids, batch.positions, self.backend.prefill(batch))
-            self.blocks.free(seq_id)
-        self.store.calibrate()
+        model, size = self.model, self.config.block_size
+        mc = model.config
+        pages = max(-(-len(prompt) // size) for prompt in prompts)
+        scratch = PagedKVStore(
+            mc.num_layers,
+            pages + 1,
+            size,
+            model.num_kv_heads,
+            mc.head_dim,
+            self.device,
+            model.dtype,
+        )
+        backend = self._make_backend(scratch)
+        peaks = torch.zeros(mc.num_layers, 2, device=self.device)
+        errors = torch.zeros(mc.num_layers, device=self.device)
+        for prompt in prompts:
+            table = list(range(1, 1 + -(-len(prompt) // size)))
+            batch = build_paged_batch([SequenceSpan(list(prompt), 0, table)], size, self.device)
+            context = CalibrationContext(backend.prefill(batch), peaks, errors)
+            model(batch.token_ids, batch.positions, context)
+        return summarize(peaks, errors)
+
+    def _make_backend(self, store: PagedKVStore) -> PagedAttentionBackend:
+        """The configured attention backend over ``store``."""
+        if self.config.attention_backend == "flashinfer":
+            from minfer.attention.flashinfer_backend import FlashInferBackend
+
+            return FlashInferBackend(store, self.model.num_heads, self.config.decode_kernel)
+        return ReferencePagedBackend(store)
 
     # -------------------------------------------------------------- requests
 

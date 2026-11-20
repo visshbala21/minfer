@@ -33,34 +33,35 @@ import flashinfer  # noqa: E402 - must follow the PATH fix above
 _WORKSPACE_BYTES = 256 * 1024 * 1024
 
 
+Wrapper = (
+    flashinfer.BatchPrefillWithPagedKVCacheWrapper | flashinfer.BatchDecodeWithPagedKVCacheWrapper
+)
+
+
 class KernelContext:
-    """Writes the pass's K/V into the store, then runs a planned FlashInfer kernel."""
+    """Writes the pass's K/V into the store, then runs a planned FlashInfer kernel.
+
+    ``wrappers`` maps a KV storage dtype to the wrapper planned for it: a mixed-precision
+    store has layers in two dtypes, and a FlashInfer kernel is specialized for one.
+    """
 
     def __init__(
-        self,
-        store: PagedKVStore,
-        slots: Tensor,
-        wrapper: flashinfer.BatchPrefillWithPagedKVCacheWrapper
-        | flashinfer.BatchDecodeWithPagedKVCacheWrapper,
+        self, store: PagedKVStore, slots: Tensor, wrappers: dict[torch.dtype, Wrapper]
     ) -> None:
         self.store = store
         self.slots = slots
-        self.wrapper = wrapper
-        # FP8 cache: the kernel multiplies the stored values back by these per-layer scales.
-        self.scales = (
-            list(zip(store.k_scale.tolist(), store.v_scale.tolist(), strict=True))
-            if store.quantized
-            else None
-        )
+        self.layer_wrappers = [wrappers[store.layer_dtype(i)] for i in range(store.num_layers)]
 
     def attend(self, layer: int, q: Tensor, k: Tensor, v: Tensor) -> Tensor:
         """See :meth:`minfer.attention.base.AttentionContext.attend`."""
         store = self.store
         store.write(layer, self.slots, k, v)
-        if self.scales is None:
-            return self.wrapper.run(q, store.layer(layer))
-        k_scale, v_scale = self.scales[layer]
-        return self.wrapper.run(q, store.layer(layer), k_scale=k_scale, v_scale=v_scale)
+        wrapper = self.layer_wrappers[layer]
+        if not store.layer_is_fp8[layer]:
+            return wrapper.run(q, store.layer(layer))
+        # FP8 layer: the kernel multiplies the stored values back by the layer's scales.
+        k_scale, v_scale = store.scale_pairs[layer]
+        return wrapper.run(q, store.layer(layer), k_scale=k_scale, v_scale=v_scale)
 
 
 def needs_tensor_cores(num_heads: int, num_kv_heads: int) -> bool:
@@ -106,57 +107,65 @@ class FlashInferBackend:
     def __init__(
         self, store: PagedKVStore, num_heads: int, decode_kernel: str = "flashinfer"
     ) -> None:
-        if not store.data.is_cuda:
+        if store.device.type != "cuda":
             raise ValueError("FlashInfer needs the KV store on a CUDA device")
         self.store = store
         self.decode_kernel = decode_kernel
         self.num_heads = num_heads
-        self.num_kv_heads = store.data.shape[4]
-        self.head_dim = store.data.shape[5]
+        self.num_kv_heads, self.head_dim = store.layer(0).shape[3:]
         self.dtype = store.compute_dtype
-        self.kv_dtype = store.data.dtype
-        self.workspace = torch.zeros(_WORKSPACE_BYTES, dtype=torch.uint8, device=store.data.device)
-        self._prefill = flashinfer.BatchPrefillWithPagedKVCacheWrapper(self.workspace, "NHD")
-        self._decode = flashinfer.BatchDecodeWithPagedKVCacheWrapper(
-            self.workspace, "NHD", use_tensor_cores=needs_tensor_cores(num_heads, self.num_kv_heads)
-        )
+        self.workspace = torch.zeros(_WORKSPACE_BYTES, dtype=torch.uint8, device=store.device)
+        tensor_cores = needs_tensor_cores(num_heads, self.num_kv_heads)
+        # One wrapper per KV storage dtype in the store (two when it is mixed-precision).
+        self._prefill = {
+            kv_dtype: flashinfer.BatchPrefillWithPagedKVCacheWrapper(self.workspace, "NHD")
+            for kv_dtype in store.tensors
+        }
+        self._decode = {
+            kv_dtype: flashinfer.BatchDecodeWithPagedKVCacheWrapper(
+                self.workspace, "NHD", use_tensor_cores=tensor_cores
+            )
+            for kv_dtype in store.tensors
+        }
 
     def prefill(self, batch: PagedBatch) -> AttentionContext:
         """See :meth:`PagedAttentionBackend.prefill`."""
-        self._prefill.plan(
-            batch.qo_indptr,
-            batch.kv_indptr,
-            batch.kv_indices,
-            batch.kv_last_page_len,
-            self.num_heads,
-            self.num_kv_heads,
-            self.head_dim,
-            batch.block_size,
-            causal=True,
-            pos_encoding_mode="NONE",
-            q_data_type=self.dtype,
-            kv_data_type=self.kv_dtype,
-        )
+        for kv_dtype, wrapper in self._prefill.items():
+            wrapper.plan(
+                batch.qo_indptr,
+                batch.kv_indptr,
+                batch.kv_indices,
+                batch.kv_last_page_len,
+                self.num_heads,
+                self.num_kv_heads,
+                self.head_dim,
+                batch.block_size,
+                causal=True,
+                pos_encoding_mode="NONE",
+                q_data_type=self.dtype,
+                kv_data_type=kv_dtype,
+            )
         return KernelContext(self.store, batch.slots, self._prefill)
 
     def decode(self, batch: PagedBatch) -> AttentionContext:
         """See :meth:`PagedAttentionBackend.decode`."""
         if self.decode_kernel == "triton":
             table, lengths = dense_block_table(batch)
-            device = self.store.data.device
+            device = self.store.device
             return TritonDecodeContext(
                 self.store, batch.slots, table.to(device), lengths.to(device)
             )
-        self._decode.plan(
-            batch.kv_indptr,
-            batch.kv_indices,
-            batch.kv_last_page_len,
-            self.num_heads,
-            self.num_kv_heads,
-            self.head_dim,
-            batch.block_size,
-            pos_encoding_mode="NONE",
-            q_data_type=self.dtype,
-            kv_data_type=self.kv_dtype,
-        )
+        for kv_dtype, wrapper in self._decode.items():
+            wrapper.plan(
+                batch.kv_indptr,
+                batch.kv_indices,
+                batch.kv_last_page_len,
+                self.num_heads,
+                self.num_kv_heads,
+                self.head_dim,
+                batch.block_size,
+                pos_encoding_mode="NONE",
+                q_data_type=self.dtype,
+                kv_data_type=kv_dtype,
+            )
         return KernelContext(self.store, batch.slots, self._decode)

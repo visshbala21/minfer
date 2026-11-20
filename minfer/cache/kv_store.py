@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import torch
 from torch import Tensor
 
@@ -13,9 +15,9 @@ FP8_MAX = 448.0
 class PagedKVStore:
     """Key/value storage for every layer, addressed by block.
 
-    One tensor of shape ``[num_layers, num_blocks, 2, block_size, num_kv_heads, head_dim]``;
-    index 0/1 on the third axis selects keys/values. ``layer(i)`` is the 5-D paged cache in
-    the "NHD" layout FlashInfer consumes.
+    Per layer, a tensor of shape ``[num_blocks, 2, block_size, num_kv_heads, head_dim]``;
+    index 0/1 on the second axis selects keys/values. ``layer(i)`` is the 5-D paged cache
+    in the "NHD" layout FlashInfer consumes.
 
     A token's *slot* is ``block * 2 * block_size + offset``: the row of its key in the
     layer's flattened ``[num_blocks * 2 * block_size, num_kv_heads, head_dim]`` view. Its
@@ -23,12 +25,16 @@ class PagedKVStore:
     ``index_copy_`` per tensor, with index tensors whose shape depends only on the number of
     tokens written (which is what CUDA-graph capture needs).
 
-    **FP8 storage.** With ``kv_dtype=torch.float8_e4m3fn`` each element takes one byte
-    instead of two. E4M3 has 3 mantissa bits (relative step 1/8) over the range
-    ``[2^-6, 448]``; values are divided by a per-layer scale before the cast so that the
-    layer's largest magnitude lands on 448 and nothing saturates, and multiplied back when
-    read (FlashInfer does that inside its kernels, given the same scales). Scales default
-    to 1 and are set by calibration (:meth:`observe` / :meth:`calibrate`).
+    **Mixed-precision FP8 storage.** With ``kv_dtype=torch.float8_e4m3fn`` a layer's
+    elements take one byte instead of two. E4M3 has 3 mantissa bits: a *relative* rounding
+    error of up to 1/16, whatever the scale. Values are divided by a per-layer scale before
+    the cast so the layer's largest magnitude lands on 448 and nothing saturates, and
+    multiplied back when read (FlashInfer does that inside its kernels, given the scales).
+    A scale cannot shrink a relative error, though, and a layer whose keys have very large
+    components turns 6% of those into attention-logit errors of many units. Such layers are
+    listed in ``high_precision_layers`` and keep the model dtype; the two groups live in
+    two tensors. Which layers those are, and the scales, come from calibration
+    (:mod:`minfer.quant.calibration`).
     """
 
     def __init__(
@@ -41,82 +47,92 @@ class PagedKVStore:
         device: torch.device | str,
         dtype: torch.dtype,
         kv_dtype: torch.dtype | None = None,
+        high_precision_layers: Iterable[int] = (),
     ) -> None:
+        if kv_dtype not in (None, dtype, FP8):
+            raise ValueError(f"unsupported KV dtype {kv_dtype}")
         self.num_layers = num_layers
         self.num_blocks = num_blocks
         self.block_size = block_size
         self.compute_dtype = dtype
-        self.quantized = kv_dtype == FP8
-        if kv_dtype not in (None, dtype, FP8):
-            raise ValueError(f"unsupported KV dtype {kv_dtype}")
-        # Zero-initialized so that slots nobody has written (padding rows read block 0)
-        # hold finite values.
-        self.data = torch.zeros(
-            (num_layers, num_blocks, 2, block_size, num_kv_heads, head_dim),
-            device=device,
-            dtype=kv_dtype or dtype,
-        )
-        shape = (num_layers, num_blocks * 2 * block_size, num_kv_heads, head_dim)
-        self._flat = self.data.view(shape)
-        # index_copy_/index_select are not implemented for FP8; the same bytes viewed as
-        # uint8 are.
-        self._flat_bytes = self._flat.view(torch.uint8) if self.quantized else None
+        fp8 = kv_dtype == FP8
+        self.high_precision_layers = frozenset(high_precision_layers) if fp8 else frozenset()
+        # Which layers are stored in FP8.
+        self.layer_is_fp8 = [fp8 and i not in self.high_precision_layers for i in range(num_layers)]
+        self.quantized = any(self.layer_is_fp8)
+
+        shape = (num_blocks, 2, block_size, num_kv_heads, head_dim)
+        flat_shape = (num_blocks * 2 * block_size, num_kv_heads, head_dim)
+        # One tensor per storage dtype, zero-initialized so that slots nobody has written
+        # (padding rows read block 0) hold finite values.
+        self.tensors: dict[torch.dtype, Tensor] = {}
+        for layer_dtype in (FP8, dtype):
+            count = sum(is_fp8 == (layer_dtype == FP8) for is_fp8 in self.layer_is_fp8)
+            if count:
+                self.tensors[layer_dtype] = torch.zeros(
+                    (count, *shape), device=device, dtype=layer_dtype
+                )
+        self._layers: list[Tensor] = []
+        self._flat: list[Tensor] = []
+        seen = {FP8: 0, dtype: 0}
+        for is_fp8 in self.layer_is_fp8:
+            layer_dtype = FP8 if is_fp8 else dtype
+            tensor = self.tensors[layer_dtype][seen[layer_dtype]]
+            seen[layer_dtype] += 1
+            self._layers.append(tensor)
+            flat = tensor.view(flat_shape)
+            # index_copy_/index_select are not implemented for FP8; the same bytes viewed
+            # as uint8 are.
+            self._flat.append(flat.view(torch.uint8) if is_fp8 else flat)
         self.k_scale = torch.ones(num_layers, device=device, dtype=torch.float32)
         self.v_scale = torch.ones(num_layers, device=device, dtype=torch.float32)
-        self._observed: Tensor | None = None
+        # The same scales as host floats (kernels take them as scalars). Reading device
+        # tensors per pass would sync, and cannot be done during CUDA-graph capture.
+        self.scale_pairs: list[tuple[float, float]] = [(1.0, 1.0)] * num_layers
 
     @property
     def nbytes(self) -> int:
         """Bytes of device memory held by the store."""
-        return self.data.numel() * self.data.element_size()
+        return sum(t.numel() * t.element_size() for t in self.tensors.values())
+
+    @property
+    def device(self) -> torch.device:
+        """Device the store lives on."""
+        return self._layers[0].device
 
     def layer(self, index: int) -> Tensor:
         """Layer ``index``'s cache, ``[num_blocks, 2, block_size, num_kv_heads, head_dim]``."""
-        return self.data[index]
+        return self._layers[index]
+
+    def layer_dtype(self, index: int) -> torch.dtype:
+        """Storage dtype of layer ``index``."""
+        return FP8 if self.layer_is_fp8[index] else self.compute_dtype
+
+    def set_scales(self, k_scale: Tensor, v_scale: Tensor) -> None:
+        """Install per-layer FP8 scales (``[num_layers]`` each).
+
+        Must be called before anything is written: stored values are only meaningful
+        together with the scales they were written with.
+        """
+        self.k_scale.copy_(k_scale)
+        self.v_scale.copy_(v_scale)
+        self.scale_pairs = list(zip(self.k_scale.tolist(), self.v_scale.tolist(), strict=True))
 
     def write(self, layer: int, slots: Tensor, k: Tensor, v: Tensor) -> None:
         """Store keys and values (``[n, num_kv_heads, head_dim]``) at ``slots`` (``[n]``)."""
-        if self._observed is not None:
-            self._observed[layer, 0] = torch.maximum(self._observed[layer, 0], k.abs().max())
-            self._observed[layer, 1] = torch.maximum(self._observed[layer, 1], v.abs().max())
-        if self.quantized:
-            flat = self._flat_bytes[layer]
+        flat = self._flat[layer]
+        if self.layer_is_fp8[layer]:
             k = (k.float() / self.k_scale[layer]).to(FP8).view(torch.uint8)
             v = (v.float() / self.v_scale[layer]).to(FP8).view(torch.uint8)
-        else:
-            flat = self._flat[layer]
         flat.index_copy_(0, slots, k)
         flat.index_copy_(0, slots + self.block_size, v)
 
     def read(self, layer: int, slots: Tensor) -> tuple[Tensor, Tensor]:
         """Gather the keys and values stored at ``slots`` (dequantized if stored as FP8)."""
-        if not self.quantized:
-            flat = self._flat[layer]
-            return flat.index_select(0, slots), flat.index_select(0, slots + self.block_size)
-        flat = self._flat_bytes[layer]
-        k = flat.index_select(0, slots).view(FP8).float() * self.k_scale[layer]
-        v = flat.index_select(0, slots + self.block_size).view(FP8).float() * self.v_scale[layer]
+        flat = self._flat[layer]
+        k, v = flat.index_select(0, slots), flat.index_select(0, slots + self.block_size)
+        if not self.layer_is_fp8[layer]:
+            return k, v
+        k = k.view(FP8).float() * self.k_scale[layer]
+        v = v.view(FP8).float() * self.v_scale[layer]
         return k.to(self.compute_dtype), v.to(self.compute_dtype)
-
-    # ------------------------------------------------------------ calibration
-
-    def observe(self) -> None:
-        """Start recording the largest key and value magnitude written to each layer."""
-        self._observed = torch.zeros(self.num_layers, 2, device=self.data.device)
-
-    def calibrate(self, headroom: float = 1.25) -> None:
-        """Set the FP8 scales from what was observed, and stop observing.
-
-        ``headroom`` leaves room above the calibration maximum before values saturate. The
-        cost of headroom is small: E4M3 keeps its relative precision for values down to
-        ``scale * 2^-6``, about four orders of magnitude below the largest.
-
-        Everything already in the store was written with the old scales and must be
-        discarded by the caller.
-        """
-        if self._observed is None:
-            raise RuntimeError("calibrate() without observe()")
-        peak = self._observed.clamp(min=1e-6) * headroom
-        self.k_scale.copy_(peak[:, 0] / FP8_MAX)
-        self.v_scale.copy_(peak[:, 1] / FP8_MAX)
-        self._observed = None

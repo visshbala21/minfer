@@ -1073,3 +1073,85 @@ attention kernel moves the step by single digits at small batch and by a quarter
 batch 256 with long contexts, where attention dominates. (The M-004 table predates this
 re-run; the numbers in `decode_latency.json` are the current ones and agree with it to
 within 3%.)
+
+---
+
+## Phase 9 — FP8
+
+### D-033 FP8 linear layers: static weight scale, dynamic activation scale
+
+`minfer/quant/fp8.py`, `--weight-dtype fp8`. Every linear layer of the transformer blocks
+(7 per layer; the tied unembedding stays bf16) holds its weight in E4M3 with one scale per
+tensor and quantizes its input on the fly with a scale from the batch's own largest
+magnitude; the product runs on the H100's FP8 tensor cores through `torch._scaled_mm`
+with a bf16 result. Layers that read the same input (q/k/v; gate/up) share one activation
+quantization. No calibration data is needed. One tensor-wide scale suffices because E4M3
+is a floating format: relative precision holds over four decades below the scale's
+maximum (unit-tested with a 2,500× outlier dimension).
+
+### D-034 FP8 KV cache is mixed precision, chosen by calibration
+
+`--kv-cache-dtype fp8`. Keys and values are divided by a calibrated per-layer scale
+(largest observed magnitude × 1.25 → 448) and stored as E4M3; FlashInfer's FP8 kernels
+multiply the scales back in. **Layers whose keys FP8 would break keep bf16**, in a second
+tensor; a FlashInfer wrapper per storage dtype is planned each pass. Which layers those
+are is measured, not configured: calibration (eight short passages through a scratch
+bf16 store, before the real store is sized) records for each layer the mean absolute
+change of the attention logits `q·k/√d` when its keys are rounded to E4M3, and layers
+above 1.0 stay bf16. For Qwen2.5-1.5B that is exactly layer 0.
+
+### B-005 An all-FP8 KV cache destroyed the model's output (fixed by D-034)
+
+- **Symptom.** First GSM8K run with the FP8 KV cache: accuracy **1%** (bf16: 64%), 143 of
+  200 answers running to the token limit, text degenerating into repetition ("is is a …
+  to to to to"). FP8 *weights* alone were fine (70%).
+- **Not the kernel.** A single-layer reproduction (random data, FlashInfer FP8 decode and
+  prefill with `k_scale`/`v_scale`) matched a float32 computation on the dequantized
+  values to 4e-3. Not the CUDA graphs either: the eager path at batch 1 was equally broken
+  (teacher-forced mean abs logit error 3.66, against 0.05 for bf16).
+- **Root cause.** Measured layer by layer on real keys: layer 0's keys have components of
+  magnitude ~320 against a median of 1.4, and its queries reach ~100 in the same
+  dimensions. E4M3's rounding error is *relative* (≤ 1/16), so those components are off by
+  up to ~20 in absolute terms, which the large queries turn into a mean attention-logit
+  error of **13–15** (max 465) in layer 0. Every other layer sits at 0.05–0.25. No choice
+  of scale helps: scaling moves the exponent, not the 3-bit mantissa.
+- **Fix.** Keep the offending layer in bf16 (D-034). Simulated before implementing
+  (float32 attention with keys/values rounded per layer): all layers FP8 → logit error
+  1.53; layer 0 in bf16 → 0.17; layers 0–1 → 0.16; values-only FP8 → 0.07. In the engine
+  after the fix: 0.19, GSM8K 69%.
+- **Cost.** One layer of 28 at 2 bytes: a token's KV is 14.5 KB instead of the 14.0 KB of
+  an all-FP8 cache (and 28.0 KB in bf16), so capacity grows 1.92× rather than 2×.
+
+### M-012 FP8: accuracy, capacity, speed (Phase 9 acceptance)
+
+Script: `bench/gsm8k.py` → `bench/results/gsm8k_fp8.json`. First 200 problems of the GSM8K
+test split, zero-shot chat prompt, greedy, max 512 tokens, all 200 submitted at once.
+"Same answer" counts problems whose final answer equals the bf16 run's. Decode step is
+p50 ms at batch 1 / 64 / 256 with 512-token contexts.
+
+| setting | GSM8K correct | same answer as bf16 | KV per token | KV capacity (tokens) | weights | decode step (ms) | eval out tok/s |
+|---|---|---|---|---|---|---|---|
+| bf16 (baseline) | 128/200 (64.0%) | 200/200 | 28.0 KB | 2.55 M (1.00×) | 2.89 GB | 3.76 / 5.41 / 8.60 | 18233 |
+| FP8 KV cache | 138/200 (69.0%) | 143/200 | 14.5 KB | 4.88 M (1.92×) | 2.89 GB | 4.15 / 6.03 / 10.79 | 15732 |
+| FP8 weights | 140/200 (70.0%) | 142/200 | 28.0 KB | 2.49 M (0.98×) | 1.67 GB | 4.65 / 7.50 / 10.76 | 13907 |
+| FP8 weights + KV | 142/200 (71.0%) | 138/200 | 14.5 KB | 4.79 M (1.88×) | 1.67 GB | 5.02 / 8.09 / 12.84 | 12302 |
+
+- **Accuracy: no measurable loss.** 64.0% (bf16) vs 69.0% / 70.0% / 71.0%. With 200 problems the
+  standard error of each figure is ±3.3 points, so the FP8 settings are indistinguishable
+  from bf16 and from each other; the differences (in FP8's favour) are noise, not a
+  benefit. About 70% of final answers are identical to the bf16 run's; the rest are
+  different reasoning paths after a near-tie flip, right about as often as wrong.
+- **KV capacity: 1.92×** (2.55 M → 4.88 M tokens in the same memory budget).
+- **Weights: 2.89 GB → 1.67 GB** (embeddings and the unembedding stay bf16).
+- **Throughput: FP8 is slower, not faster.** Decode steps take +10% to +26% longer with the FP8
+  KV cache, +24% to +39% with FP8 weights, and +33% to +49% with both. This engine's
+  decode step is bound by the number of kernels it launches (M-009), and FP8 adds kernels:
+  a cast and a divide for every K/V write, four activation quantizations per layer, and a
+  second attention plan for the bf16 layer. The FP8 matmuls themselves are not the
+  bottleneck for a 1.5B model at these batch sizes, so halving the bytes they read buys
+  nothing here. A larger model, or a decode path with far fewer kernels, would change the
+  balance; neither was measured.
+- **What FP8 is good for in this engine:** memory. Twice the KV in the same GPU means
+  twice the cached prefixes before eviction and twice the concurrent context — which is
+  the resource the agent workload consumes — at a 10–50% cost in per-token latency.
+  It is therefore off by default.

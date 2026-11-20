@@ -51,7 +51,7 @@ class _Bucket:
     token_ids: Tensor
     positions: Tensor
     slots: Tensor
-    wrapper: flashinfer.BatchDecodeWithPagedKVCacheWrapper | None
+    wrappers: dict[torch.dtype, flashinfer.BatchDecodeWithPagedKVCacheWrapper] | None
     block_table: Tensor | None = None
     seq_lens: Tensor | None = None
     graph: torch.cuda.CUDAGraph | None = None
@@ -94,30 +94,37 @@ class DecodeGraphs:
                     token_ids=torch.zeros(size, dtype=torch.int64, device=device),
                     positions=torch.zeros(size, dtype=torch.int64, device=device),
                     slots=torch.zeros(size, dtype=torch.int64, device=device),
-                    wrapper=None,
+                    wrappers=None,
                     block_table=torch.zeros(
                         (size, max_pages_per_sequence), dtype=torch.int32, device=device
                     ),
                     seq_lens=torch.ones(size, dtype=torch.int32, device=device),
                 )
                 continue
-            wrapper = flashinfer.BatchDecodeWithPagedKVCacheWrapper(
-                workspace,
-                "NHD",
-                use_cuda_graph=True,
-                use_tensor_cores=needs_tensor_cores(model.num_heads, model.num_kv_heads),
-                paged_kv_indptr_buffer=torch.zeros(size + 1, dtype=torch.int32, device=device),
-                paged_kv_indices_buffer=torch.zeros(
-                    size * max_pages_per_sequence, dtype=torch.int32, device=device
-                ),
-                paged_kv_last_page_len_buffer=torch.zeros(size, dtype=torch.int32, device=device),
-            )
+            # One graph-mode wrapper per KV storage dtype (two for a mixed-precision store),
+            # each with its own static page-table buffers.
+            wrappers = {
+                kv_dtype: flashinfer.BatchDecodeWithPagedKVCacheWrapper(
+                    workspace,
+                    "NHD",
+                    use_cuda_graph=True,
+                    use_tensor_cores=needs_tensor_cores(model.num_heads, model.num_kv_heads),
+                    paged_kv_indptr_buffer=torch.zeros(size + 1, dtype=torch.int32, device=device),
+                    paged_kv_indices_buffer=torch.zeros(
+                        size * max_pages_per_sequence, dtype=torch.int32, device=device
+                    ),
+                    paged_kv_last_page_len_buffer=torch.zeros(
+                        size, dtype=torch.int32, device=device
+                    ),
+                )
+                for kv_dtype in store.tensors
+            }
             self._buckets[size] = _Bucket(
                 size=size,
                 token_ids=torch.zeros(size, dtype=torch.int64, device=device),
                 positions=torch.zeros(size, dtype=torch.int64, device=device),
                 slots=torch.zeros(size, dtype=torch.int64, device=device),
-                wrapper=wrapper,
+                wrappers=wrappers,
             )
         self._capture_all()
 
@@ -133,32 +140,33 @@ class DecodeGraphs:
 
     def _plan(self, bucket: _Bucket, batch: PagedBatch) -> None:
         """Point the bucket's attention at ``batch``'s page tables (host-side work)."""
-        if bucket.wrapper is None:
+        if bucket.wrappers is None:
             table, lengths = dense_block_table(batch)
             bucket.block_table[:, : table.shape[1]].copy_(table)
             bucket.seq_lens.copy_(lengths)
             return
-        bucket.wrapper.plan(
-            batch.kv_indptr,
-            batch.kv_indices,
-            batch.kv_last_page_len,
-            self.model.num_heads,
-            self.model.num_kv_heads,
-            self.model.config.head_dim,
-            batch.block_size,
-            pos_encoding_mode="NONE",
-            q_data_type=self.model.dtype,
-            kv_data_type=self.store.data.dtype,
-        )
+        for kv_dtype, wrapper in bucket.wrappers.items():
+            wrapper.plan(
+                batch.kv_indptr,
+                batch.kv_indices,
+                batch.kv_last_page_len,
+                self.model.num_heads,
+                self.model.num_kv_heads,
+                self.model.config.head_dim,
+                batch.block_size,
+                pos_encoding_mode="NONE",
+                q_data_type=self.model.dtype,
+                kv_data_type=kv_dtype,
+            )
 
     def _forward(self, bucket: _Bucket) -> Tensor:
         context: AttentionContext
-        if bucket.wrapper is None:
+        if bucket.wrappers is None:
             context = TritonDecodeContext(
                 self.store, bucket.slots, bucket.block_table, bucket.seq_lens
             )
         else:
-            context = KernelContext(self.store, bucket.slots, bucket.wrapper)
+            context = KernelContext(self.store, bucket.slots, bucket.wrappers)
         hidden = self.model(bucket.token_ids, bucket.positions, context)
         return self.model.logits(hidden)
 

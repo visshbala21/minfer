@@ -391,3 +391,39 @@ def test_engine_with_triton_decode_kernel(reference, fixture, tokenizer):
     # The captured graphs replay the same kernel the eager path runs.
     for eager, graph in _decode_both_ways(engine, 16, steps=20, seed=3):
         assert torch.equal(eager, graph)
+
+
+# ------------------------------------------------------------------------ Phase 9: FP8
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"kv_cache_dtype": "fp8"},
+        {"weight_dtype": "fp8"},
+        {"kv_cache_dtype": "fp8", "weight_dtype": "fp8"},
+    ],
+    ids=["fp8-kv", "fp8-weights", "fp8-both"],
+)
+def test_fp8_engine_tracks_the_float32_model(reference, fixture, tokenizer, overrides):
+    """FP8 moves logits by quantization noise only (it once did far more: DESIGN.md B-005)."""
+    engine = Engine.from_pretrained(PRIMARY_MODEL, EngineConfig(num_blocks=8192, **overrides))
+    report = teacher_forced(engine, reference, fixture)
+    positions = report["positions"]
+    # Measured: 0.19 (KV), 0.26 (weights), 0.33 (both), against 0.05 for bf16.
+    assert report["minfer_bf16_vs_fp32_mean_abs_logit_error"] < 0.5
+    assert report["minfer_bf16_argmax_equals_fp32_argmax"] / positions > 0.93
+    if "kv_cache_dtype" in overrides:
+        calibration = engine.kv_calibration
+        # Layer 0's keys cannot take FP8 (logit error ~15); every other layer can.
+        assert calibration.high_precision_layers == (0,)
+        assert calibration.logit_error[0] > 5 and calibration.logit_error[1:].max() < 1
+        assert engine.store.layer(0).dtype == torch.bfloat16
+        assert engine.store.layer(1).dtype == torch.float8_e4m3fn
+        plain_bytes = 28 * 2
+        assert engine.store.nbytes * plain_bytes == (2 + 27) * (
+            engine.store.layer(0).numel() * 28 * 2
+        )
+    prompts = chat_prompts(tokenizer, 24)
+    params = mixed_params(24)
+    check_outputs(engine, engine.generate(prompts, params), params)

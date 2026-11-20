@@ -89,14 +89,20 @@ def evaluate(
 
     torch.cuda.empty_cache()
     free_before, _ = torch.cuda.mem_get_info()
-    engine = Engine.from_pretrained(MODEL, EngineConfig(**overrides))
-    weights_bytes = sum(p.numel() * p.element_size() for p in engine.model.parameters())
+    # Chunked prefill off, as in bench/decode_latency.py (steady-state decode is timed).
+    engine = Engine.from_pretrained(MODEL, EngineConfig(prefill_chunk_tokens=None, **overrides))
+    tensors = [*engine.model.parameters(), *engine.model.buffers()]
+    weights_bytes = sum(t.numel() * t.element_size() for t in tensors)
     params = SamplingParams(max_tokens=MAX_TOKENS)
     engine.generate(prompts[:8], params)  # warm-up
     start = time.perf_counter()
     outputs = engine.generate(prompts, params)
     seconds = time.perf_counter() - start
     texts = [tokenizer.decode(o, skip_special_tokens=True) for o in outputs]
+    # Steady-state decode-step latency at fixed batch sizes (512-token contexts).
+    from bench.decode_latency import measure
+
+    decode = [measure(engine, batch, 512, steps=100, warmup=10) for batch in (1, 64, 256)]
     generated = sum(map(len, outputs))
     result = {
         "setting": name,
@@ -106,6 +112,7 @@ def evaluate(
         "wall_seconds": seconds,
         "output_tokens_per_second": generated / seconds,
         "truncated_at_max_tokens": sum(len(o) == MAX_TOKENS for o in outputs),
+        "decode_step": decode,
         "weight_bytes": weights_bytes,
         "kv_blocks": engine.blocks.num_usable,
         "kv_capacity_tokens": engine.blocks.num_usable * engine.config.block_size,
