@@ -1,0 +1,86 @@
+{
+ "model": "Qwen/Qwen2.5-1.5B-Instruct",
+ "gpu": "NVIDIA H100 80GB HBM3",
+ "what": "one cold single-sequence prefill pass, p50 ms over repeats",
+ "repeats": 30,
+ "runs": {
+  "eager_unfused": [
+   {
+    "tokens": 16,
+    "pass_ms_p50": 10.828021506313235
+   },
+   {
+    "tokens": 64,
+    "pass_ms_p50": 11.262957486906089
+   },
+   {
+    "tokens": 256,
+    "pass_ms_p50": 11.084532001405023
+   },
+   {
+    "tokens": 512,
+    "pass_ms_p50": 10.81396448716987
+   },
+   {
+    "tokens": 1024,
+    "pass_ms_p50": 11.427636505686678
+   },
+   {
+    "tokens": 2048,
+    "pass_ms_p50": 17.770007994840853
+   }
+  ],
+  "eager_fused": [
+   {
+    "tokens": 16,
+    "pass_ms_p50": 6.886887000291608
+   },
+   {
+    "tokens": 64,
+    "pass_ms_p50": 6.958628000575118
+   },
+   {
+    "tokens": 256,
+    "pass_ms_p50": 6.980146994465031
+   },
+   {
+    "tokens": 512,
+    "pass_ms_p50": 6.993054994381964
+   },
+   {
+    "tokens": 1024,
+    "pass_ms_p50": 7.22720600606408
+   },
+   {
+    "tokens": 2048,
+    "pass_ms_p50": 12.362623994704336
+   }
+  ],
+  "graph_fused": [
+   {
+    "tokens": 16,
+    "pass_ms_p50": 2.382885999395512
+   },
+   {
+    "tokens": 64,
+    "pass_ms_p50": 2.59314248978626
+   },
+   {
+    "tokens": 256,
+    "pass_ms_p50": 3.5047580022364855
+   },
+   {
+    "tokens": 512,
+    "pass_ms_p50": 4.474008484976366
+   },
+   {
+    "tokens": 1024,
+    "pass_ms_p50": 7.111187500413507
+   },
+   {
+    "tokens": 2048,
+    "pass_ms_p50": 12.346763513050973
+   }
+  ]
+ }
+}

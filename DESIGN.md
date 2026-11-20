@@ -1155,3 +1155,116 @@ p50 ms at batch 1 / 64 / 256 with 512-token contexts.
   twice the cached prefixes before eviction and twice the concurrent context — which is
   the resource the agent workload consumes — at a 10–50% cost in per-token latency.
   It is therefore off by default.
+
+---
+
+## Phase 11 — Profiling + optimization
+
+### M-013 Profile: the decode step is bound by kernel count
+
+Script: `bench/profile_engine.py` (torch.profiler, CPU + CUDA activities) →
+`bench/results/profiles/before/` and `after/`: a Chrome trace per scenario plus
+`summary.json`. "Before" is the engine as benchmarked in Phase 6 (`--no-fused-kernels
+--decode-kernel flashinfer`, no prefill graphs).
+
+- A batch-1 decode step launches **1219 CUDA kernels** and the GPU is busy for 3.63 ms of
+  them — essentially the whole step. The matmuls (cuBLAS `nvjet_*`) and attention account
+  for under half; the rest is several hundred element-wise kernels a few microseconds
+  each: the eight operators of every RMSNorm, the dozen of every RoPE application, casts,
+  residual adds.
+- The count is the same at batch 64 (1219): the step's cost is per *kernel*, not per
+  token, until the batch is large. That is the 2× TPOT gap to vLLM and SGLang (M-009),
+  which both fuse these stages.
+- The eager prefill pass launches the same kernels from Python: ~11 ms of dispatch for a
+  pass whether it holds 16 tokens or 1,024 (M-004, and `prefill_latency.json` below).
+
+### D-035 Fix 1: merged projections and fused Triton kernels (`Qwen2Model.fuse`)
+
+- q/k/v projections merged into one matmul, gate/up into another (weights concatenated at
+  load; the originals are released).
+- Three Triton kernels (`minfer/model/fused.py`): **add + RMSNorm** (residual add and the
+  next norm in one launch, float32 statistics, weight applied after the cast, as the
+  reference does), **RoPE over the merged projection** (splits q/k/v and rotates q and k,
+  reading the cos/sin tables by position), and **SiLU·mul** over the merged gate/up
+  output.
+- A layer is now 3 matmuls + 4 fused kernels + the K/V write and attention:
+  398 kernels per step instead of 1219.
+- **Numerics.** In bf16 the norm and activation kernels are bit-identical to the PyTorch
+  modules (they round where the modules round); the rotation rounds once instead of three
+  times and differs by rounding only. In float32 everything matches to ~1e-6, and the
+  whole fused model matches the unfused one to 5e-5 in logits
+  (`test_fused_kernels_match_the_reference_modules`, `test_fused_model_matches_...`).
+  The reference (unfused) path stays as the CPU / float32 / tensor-parallel / FP8-weights
+  implementation and as the oracle.
+- On by default on CUDA (`--no-fused-kernels` to disable).
+
+### D-036 Fix 2: Triton decode attention by default
+
+`decode_kernel="auto"` selects the Phase 8 kernel (M-011) unless the KV cache is FP8.
+
+### D-037 Fix 3: CUDA graphs for small prefill passes
+
+`minfer/attention/prefill_graphs.py`: prefill passes are captured at bucketed
+`(spans, tokens)` shapes — spans ∈ {2, 4, 8, 16, 32}, tokens ∈ {32 … 1,024} in steps of
+≤ 25% — and replayed with FlashInfer's prefill wrapper in graph mode. A batch is padded to
+its bucket with spans that live in the reserved block 0; logits are computed only for the
+last row of each completing span. 55 graphs, captured in ~2 s at start-up.
+
+- **Why only up to 1,024 tokens.** An eager pass overlaps its Python dispatch with GPU
+  execution, so it costs max(dispatch, compute). A graph removes the dispatch but pays for
+  the padding. First version (buckets to 4,096, powers of two): a 1,024-token pass took
+  8.8 ms from the graph against 7.4 ms eagerly, and 2,048 tokens 16.2 vs 12.3 ms. Passes
+  above 1,024 tokens now run eagerly.
+- Speculative verification spans are not captured (they need logits for every row);
+  speculation therefore still pays the eager pass (M-010).
+
+### M-014 Before / after (Phase 11 acceptance)
+
+**Profile** (`bench/results/profiles/{before,after}/summary.json`):
+
+| scenario | kernels/step before | after | GPU kernel ms/step before | after |
+|---|---|---|---|---|
+| decode graph batch1 | 1219 | 398 | 3.63 | 2.02 |
+| decode graph batch64 | 1219 | 399 | 5.11 | 2.59 |
+| decode eager batch1 | 1219 | 398 | 3.75 | 2.04 |
+| prefill 2048 tokens | 1248 | 399 | 15.56 | 11.03 |
+
+**Decode step, p50 ms** (`bench/decode_latency.py` → `bench/results/decode_latency.json`,
+which now measures the four stages in one run; plot `bench/plots/decode_latency.png`):
+
+| batch | context | eager | + CUDA graphs (Phase 3) | + Triton decode (Phase 8) | + fused kernels (default) | Phase 3 → default |
+|---|---|---|---|---|---|---|
+| 1 | 256 | 11.35 | 3.74 | 3.53 | 2.18 | 1.72× |
+| 8 | 256 | 11.42 | 4.21 | 3.96 | 2.33 | 1.81× |
+| 64 | 256 | 11.66 | 5.10 | 4.65 | 2.81 | 1.82× |
+| 256 | 256 | 12.13 | 7.56 | 6.69 | 4.55 | 1.66× |
+| 1 | 2048 | 11.32 | 3.84 | 3.62 | 2.27 | 1.69× |
+| 8 | 2048 | 11.42 | 4.45 | 4.17 | 2.52 | 1.77× |
+| 64 | 2048 | 11.86 | 6.96 | 6.00 | 4.08 | 1.71× |
+| 256 | 2048 | 17.73 | 15.89 | 12.35 | 10.18 | 1.56× |
+
+The default engine's decode step is **1.56–1.85× faster than the Phase 3 engine** at every
+batch size and context measured, and 5.2× faster than eager at batch 1.
+
+**One prefill pass, p50 ms** (`bench/prefill_latency.py` → `bench/results/prefill_latency.json`):
+
+| prompt tokens | eager, unfused (before) | eager, fused | default (graph ≤ 1,024 tokens) |
+|---|---|---|---|
+| 16 | 10.83 | 6.89 | 2.38 |
+| 64 | 11.26 | 6.96 | 2.59 |
+| 256 | 11.08 | 6.98 | 3.50 |
+| 512 | 10.81 | 6.99 | 4.47 |
+| 1024 | 11.43 | 7.23 | 7.11 |
+| 2048 | 17.77 | 12.36 | 12.35 |
+
+**End to end**, the saturated agent workload driven in-process (64 sessions, the "max"
+trace; development measurement with a scratch script, not a committed result): 2,600 →
+4,300 output tok/s and TTFT p50 28 → 17 ms. The committed end-to-end numbers are the
+Phase 12 re-run of the full matrix.
+
+**What is left in the step.** After the fixes a saturated step is mostly GPU time (about
+9 of 11.7 s in that run were spent waiting on the device). Remaining known costs, in
+order: two passes per step when a step has both prefill and decode work (D-013) where
+vLLM runs one; ~400 kernels where a compiled graph would have fewer (the K/V write and
+the unmerged o_proj/down_proj tail); and ~0.2 ms of host work per step in the scheduler
+and the radix tree.

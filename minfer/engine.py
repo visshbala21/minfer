@@ -81,6 +81,8 @@ class EngineConfig:
             which only FlashInfer's kernels read.
         cuda_graphs: Replay captured CUDA graphs for decode passes (FlashInfer backend
             only). Batches larger than the largest captured size run eagerly.
+        prefill_graphs: Also replay captured graphs for prefill passes whose shape fits a
+            (sequences, tokens) bucket (needs ``cuda_graphs``; not with an FP8 KV cache).
         cuda_graph_batch_sizes: Decode batch sizes to capture; sizes above ``max_num_seqs``
             are rounded down to it.
         prefill_chunk_tokens: Chunked prefill: while any sequence is decoding, at most this
@@ -116,6 +118,7 @@ class EngineConfig:
     fused_kernels: bool = True
     decode_kernel: Literal["auto", "flashinfer", "triton"] = "auto"
     cuda_graphs: bool = True
+    prefill_graphs: bool = True
     cuda_graph_batch_sizes: tuple[int, ...] = (1, 2, 4, 8, 16, 32, 64, 128, 256)
     prefill_chunk_tokens: int | None = 2048
     prefix_cache: bool = True
@@ -260,6 +263,21 @@ class Engine:
                 batch_sizes=sorted(sizes),
                 max_pages_per_sequence=self.blocks.blocks_for(self.max_model_len),
                 decode_kernel=self.decode_kernel,
+            )
+        self.prefill_graphs = None
+        if (
+            config.attention_backend == "flashinfer"
+            and config.cuda_graphs
+            and config.prefill_graphs
+            and not fp8_kv
+        ):
+            from minfer.attention.prefill_graphs import PrefillGraphs
+
+            self.prefill_graphs = PrefillGraphs(
+                model,
+                self.store,
+                self.backend.workspace,
+                max_pages_per_sequence=self.blocks.blocks_for(self.max_model_len),
             )
         self.prefix_cache = PrefixCache(self.blocks) if config.prefix_cache else None
         self.scheduler = Scheduler(
@@ -509,6 +527,14 @@ class Engine:
             spans.append(SequenceSpan([seq.tokens[-1], *draft.tokens], seq.num_cached, table))
             offset += 1 + len(draft.tokens)
         self.stats.verify_tokens += offset - verify_start
+        graphs = self.prefill_graphs
+        if graphs is not None and not verify:
+            key = graphs.bucket(len(spans), offset)
+            if key is not None:
+                logits = graphs.run(key, spans, last_rows)
+                if last_rows:
+                    rows.append(logits)
+                return None
         batch = build_paged_batch(spans, self.config.block_size, self.device)
         hidden = self.model(batch.token_ids, batch.positions, self.backend.prefill(batch))
         if last_rows:

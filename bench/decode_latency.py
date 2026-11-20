@@ -1,4 +1,4 @@
-"""Decode-step latency: CUDA graphs on vs off (Phase 3), Triton vs FlashInfer decode (Phase 8).
+"""Decode-step latency, one optimization at a time: CUDA graphs, Triton decode, fused kernels.
 
     .venv/bin/python -m bench.decode_latency
 
@@ -78,20 +78,21 @@ def main() -> None:
         "steps_per_point": args.steps,
         "runs": {},
     }
+    # Each run adds one optimization to the previous one; the last is the default engine.
     runs = (
-        ("cuda_graphs_off", False, "flashinfer"),
-        ("cuda_graphs_on", True, "flashinfer"),
-        ("cuda_graphs_on_triton_decode", True, "triton"),
+        (
+            "cuda_graphs_off",
+            {"cuda_graphs": False, "fused_kernels": False, "decode_kernel": "flashinfer"},
+        ),
+        ("cuda_graphs_on", {"fused_kernels": False, "decode_kernel": "flashinfer"}),
+        ("cuda_graphs_on_triton_decode", {"fused_kernels": False, "decode_kernel": "triton"}),
+        ("cuda_graphs_on_triton_decode_fused", {"fused_kernels": True, "decode_kernel": "triton"}),
     )
-    for label, graphs, kernel in runs:
+    for label, overrides in runs:
         # Chunked prefill off: only steady-state decode is timed, and the prefill of the
         # large batches should not outlast the first sequences' token budget.
         config = EngineConfig(
-            num_blocks=40_000,
-            cuda_graphs=graphs,
-            decode_kernel=kernel,
-            max_batched_tokens=65_536,
-            prefill_chunk_tokens=None,
+            num_blocks=40_000, max_batched_tokens=65_536, prefill_chunk_tokens=None, **overrides
         )
         engine = Engine.from_pretrained(MODEL, config)
         rows = []
@@ -103,28 +104,32 @@ def main() -> None:
         results["runs"][label] = rows
         del engine
         torch.cuda.empty_cache()
-    off, on = results["runs"]["cuda_graphs_off"], results["runs"]["cuda_graphs_on"]
-    results["speedup_p50"] = [
-        {
-            "batch_size": a["batch_size"],
-            "context_tokens": a["context_tokens"],
-            "off_ms": a["step_ms_p50"],
-            "on_ms": b["step_ms_p50"],
-            "speedup": a["step_ms_p50"] / b["step_ms_p50"],
-        }
-        for a, b in zip(off, on, strict=True)
-    ]
-    triton = results["runs"]["cuda_graphs_on_triton_decode"]
-    results["triton_vs_flashinfer_p50"] = [
-        {
-            "batch_size": a["batch_size"],
-            "context_tokens": a["context_tokens"],
-            "flashinfer_ms": a["step_ms_p50"],
-            "triton_ms": b["step_ms_p50"],
-            "speedup": a["step_ms_p50"] / b["step_ms_p50"],
-        }
-        for a, b in zip(on, triton, strict=True)
-    ]
+
+    def compare(before: str, after: str, before_key: str, after_key: str) -> list[dict]:
+        return [
+            {
+                "batch_size": a["batch_size"],
+                "context_tokens": a["context_tokens"],
+                before_key: a["step_ms_p50"],
+                after_key: b["step_ms_p50"],
+                "speedup": a["step_ms_p50"] / b["step_ms_p50"],
+            }
+            for a, b in zip(results["runs"][before], results["runs"][after], strict=True)
+        ]
+
+    results["speedup_p50"] = compare("cuda_graphs_off", "cuda_graphs_on", "off_ms", "on_ms")
+    results["triton_vs_flashinfer_p50"] = compare(
+        "cuda_graphs_on", "cuda_graphs_on_triton_decode", "flashinfer_ms", "triton_ms"
+    )
+    results["fused_vs_unfused_p50"] = compare(
+        "cuda_graphs_on_triton_decode",
+        "cuda_graphs_on_triton_decode_fused",
+        "unfused_ms",
+        "fused_ms",
+    )
+    results["default_vs_phase3_p50"] = compare(
+        "cuda_graphs_on", "cuda_graphs_on_triton_decode_fused", "phase3_ms", "default_ms"
+    )
     args.out.write_text(json.dumps(results, indent=1) + "\n")
 
 

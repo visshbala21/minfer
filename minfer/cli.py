@@ -58,6 +58,12 @@ def add_engine_arguments(parser: argparse.ArgumentParser) -> None:
         help="replay captured CUDA graphs for decode steps",
     )
     group.add_argument(
+        "--prefill-graphs",
+        action=argparse.BooleanOptionalAction,
+        default=defaults.prefill_graphs,
+        help="replay captured CUDA graphs for prefill passes that fit a bucket",
+    )
+    group.add_argument(
         "--prefill-chunk-tokens",
         type=int,
         default=defaults.prefill_chunk_tokens,
@@ -109,6 +115,7 @@ def engine_config_from_args(args: argparse.Namespace) -> EngineConfig:
         fused_kernels=args.fused_kernels,
         decode_kernel=args.decode_kernel,
         cuda_graphs=args.cuda_graphs,
+        prefill_graphs=args.prefill_graphs,
         prefill_chunk_tokens=args.prefill_chunk_tokens,
         prefix_cache=args.prefix_cache,
         cache_aware_scheduling=args.cache_aware_scheduling,

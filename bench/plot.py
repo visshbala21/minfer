@@ -171,24 +171,37 @@ def plot_agent_hit_rate(matrix: dict[str, dict[str, Any]]) -> None:
 
 
 def plot_decode_latency() -> None:
-    """Decode-step latency with CUDA graphs off vs on (Phase 3)."""
+    """Decode-step latency as optimizations are added (Phases 3, 8, 11)."""
     path = RESULTS / "decode_latency.json"
     if not path.exists():
         return
-    rows = json.loads(path.read_text())["speedup_p50"]
-    contexts = sorted({r["context_tokens"] for r in rows})
-    fig, axes = plt.subplots(1, len(contexts), figsize=(6.2 * len(contexts), 4), squeeze=False)
+    runs = json.loads(path.read_text())["runs"]
+    stages = [
+        ("cuda_graphs_off", "eager", MUTED),
+        ("cuda_graphs_on", "+ CUDA graphs", SERIES["sglang"]),
+        ("cuda_graphs_on_triton_decode", "+ Triton decode", SERIES["vllm"]),
+        ("cuda_graphs_on_triton_decode_fused", "+ fused kernels (default)", SERIES["minfer"]),
+    ]
+    stages = [stage for stage in stages if stage[0] in runs]
+    contexts = sorted({r["context_tokens"] for r in runs[stages[0][0]]})
+    fig, axes = plt.subplots(1, len(contexts), figsize=(6.2 * len(contexts), 4.2), squeeze=False)
     for ax, context in zip(axes[0], contexts, strict=True):
-        subset = [r for r in rows if r["context_tokens"] == context]
-        xs = [str(r["batch_size"]) for r in subset]
-        _line(ax, xs, [r["off_ms"] for r in subset], OFF_ON["off"], "CUDA graphs off")
-        _line(ax, xs, [r["on_ms"] for r in subset], OFF_ON["on"], "CUDA graphs on")
+        for key, label, color in stages:
+            subset = [r for r in runs[key] if r["context_tokens"] == context]
+            xs = [str(r["batch_size"]) for r in subset]
+            _line(ax, xs, [r["step_ms_p50"] for r in subset], color, label)
         ax.set_title(f"Decode step p50 (ms), {context}-token contexts")
         ax.set_xlabel("batch size")
         ax.set_ylim(bottom=0)
         ax.margins(x=0.1)
     note = "Wall-clock time of one engine step in steady-state decode (bench/decode_latency.py)."
-    _finish(fig, list(axes[0]), "CUDA graphs: decode-step latency", note, "decode_latency.png")
+    _finish(
+        fig,
+        list(axes[0]),
+        "Decode-step latency, one optimization at a time",
+        note,
+        "decode_latency.png",
+    )
 
 
 def plot_chunked_prefill() -> None:

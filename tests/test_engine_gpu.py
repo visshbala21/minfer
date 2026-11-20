@@ -505,3 +505,72 @@ def test_fused_model_matches_the_unfused_model(tokenizer):
         assert (after.argmax(-1) == before.argmax(-1)).float().mean().item() > 0.95
         assert not hasattr(model.layers[0].self_attn, "q_proj")  # merged weights replaced them
         del model
+
+
+# ------------------------------------------------------------ Phase 11: prefill graphs
+
+
+def test_prefill_graph_buckets_cover_what_they_claim(engine):
+    graphs = engine.prefill_graphs
+    assert graphs is not None
+    assert graphs.bucket(1, 5) == (2, 32)
+    assert graphs.bucket(3, 137) == (4, 192)
+    assert graphs.bucket(2, 1024) == (2, 1024)  # an exact fit needs no padding
+    # One spare token cannot be shared out among the padding spans of (4, 768).
+    assert graphs.bucket(2, 767) == (4, 896)
+    assert graphs.bucket(2, 766) == (4, 768)
+    assert graphs.bucket(1, 1025) is None  # large passes run eagerly
+    assert graphs.bucket(40, 100) is None and graphs.bucket(1, 5000) is None
+    for seqs, tokens in graphs._buckets:
+        assert tokens >= seqs
+
+
+@pytest.mark.parametrize(
+    "shape", [[5], [100, 30, 7], [150] * 6, [1000], [33] * 20, [1, 1, 1], [600, 400]]
+)
+def test_prefill_graph_matches_the_eager_pass(engine, shape):
+    """Same logits as the eager prefill pass (up to bf16 noise from the padded batch shape)."""
+    from minfer.attention import SequenceSpan, build_paged_batch
+
+    rng = random.Random(sum(shape) + len(shape))
+    model, blocks, graphs = engine.model, engine.blocks, engine.prefill_graphs
+    ids = [("prefill-graph", i) for i in range(len(shape))]
+
+    def tokens(count):
+        return [rng.randrange(1000, 100_000) for _ in range(count)]
+
+    try:
+        with torch.inference_mode():
+            spans, rows, offset = [], [], 0
+            for seq_id, new in zip(ids, shape, strict=True):
+                cached = rng.randint(0, 600)
+                blocks.ensure_capacity(seq_id, cached + new)
+                table = blocks.table(seq_id)
+                if cached:  # give the span a cached context to attend to
+                    batch = build_paged_batch([SequenceSpan(tokens(cached), 0, table)], 16, "cuda")
+                    model(batch.token_ids, batch.positions, engine.backend.prefill(batch))
+                spans.append(SequenceSpan(tokens(new), cached, table))
+                offset += new
+                rows.append(offset - 1)
+            batch = build_paged_batch(spans, 16, "cuda")
+            hidden = model(batch.token_ids, batch.positions, engine.backend.prefill(batch))
+            index = torch.tensor(rows, device="cuda")
+            eager = model.logits(hidden.index_select(0, index)).float()
+            key = graphs.bucket(len(spans), offset)
+            assert key is not None
+            graph = graphs.run(key, spans, rows).float()
+        difference = (graph - eager).abs()
+        assert difference.max().item() < 1.5 and difference.mean().item() < 0.06
+    finally:
+        for seq_id in ids:
+            blocks.free(seq_id)
+
+
+def test_engine_without_prefill_graphs(tokenizer):
+    eager = Engine.from_pretrained(
+        PRIMARY_MODEL, EngineConfig(num_blocks=2048, prefill_graphs=False)
+    )
+    assert eager.prefill_graphs is None and eager.decode_graphs is not None
+    prompts = chat_prompts(tokenizer, 8)
+    params = mixed_params(8)
+    check_outputs(eager, eager.generate(prompts, params), params)
