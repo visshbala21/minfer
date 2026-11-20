@@ -26,13 +26,21 @@ from minfer.attention.paged import (
     SequenceSpan,
     build_paged_batch,
 )
-from minfer.cache.block_manager import BlockManager, kv_bytes_per_block, plan_num_blocks
+from minfer.cache.block_manager import (
+    BlockManager,
+    OutOfBlocks,
+    kv_bytes_per_block,
+    plan_num_blocks,
+)
 from minfer.cache.kv_store import PagedKVStore
 from minfer.cache.radix_tree import PrefixCache
+from minfer.model.config import ModelConfig
 from minfer.model.loader import load_model, resolve_model_dir
 from minfer.model.qwen2 import Qwen2Model
 from minfer.sampling import SamplingParams
-from minfer.scheduler import Scheduler, SchedulerConfig, Sequence, StepPlan
+from minfer.scheduler import Scheduler, SchedulerConfig, Sequence
+from minfer.spec.base import Draft, Drafter
+from minfer.spec.ngram import PromptLookupDrafter
 
 
 @dataclass(frozen=True)
@@ -65,6 +73,13 @@ class EngineConfig:
             first (needs ``prefix_cache``); off means first-come-first-served.
         starvation_seconds: A request that has waited this long is admitted in arrival
             order regardless of cache-aware preference.
+        speculation: Speculative decoding: ``"ngram"`` drafts by prompt lookup, ``"draft"``
+            with a small draft model (``draft_model``); ``None`` disables it.
+        num_draft_tokens: Maximum tokens drafted per sequence per step. Each request's
+            draft length adapts between 1 and this value to its recent acceptance.
+        ngram_size: Context length matched by prompt-lookup drafting.
+        draft_model: Local directory or Hub id of the draft model.
+        draft_num_blocks: KV pool size of the draft model.
         seed: Seed of the engine-level random stream used by unseeded sampling requests.
     """
 
@@ -82,6 +97,11 @@ class EngineConfig:
     prefix_cache: bool = True
     cache_aware_scheduling: bool = True
     starvation_seconds: float = 1.0
+    speculation: Literal["ngram", "draft"] | None = None
+    num_draft_tokens: int = 4
+    ngram_size: int = 3
+    draft_model: str = "Qwen/Qwen2.5-0.5B-Instruct"
+    draft_num_blocks: int | None = None
     seed: int = 0
 
 
@@ -113,7 +133,11 @@ class EngineStats:
     prompt_tokens: int = 0
     prefill_tokens: int = 0
     decode_tokens: int = 0
+    verify_tokens: int = 0
     generated_tokens: int = 0
+    spec_rounds: int = 0
+    spec_proposed: int = 0
+    spec_accepted: int = 0
     step_seconds: float = 0.0
 
 
@@ -155,15 +179,29 @@ class Engine:
                 raise ValueError("num_blocks must be given explicitly off-GPU")
             free_bytes, _ = torch.cuda.mem_get_info(self.device)
             per_block = kv_bytes_per_block(
-                mc.num_layers, mc.num_kv_heads, mc.head_dim, config.block_size, model.dtype.itemsize
+                mc.num_layers,
+                model.num_kv_heads,
+                mc.head_dim,
+                config.block_size,
+                model.dtype.itemsize,
             )
+            if config.speculation == "draft" and config.draft_num_blocks is None:
+                # The draft model's pool gets as many blocks as the target's: budget both.
+                dc = ModelConfig.from_pretrained(resolve_model_dir(config.draft_model))
+                per_block += kv_bytes_per_block(
+                    dc.num_layers,
+                    dc.num_kv_heads,
+                    dc.head_dim,
+                    config.block_size,
+                    model.dtype.itemsize,
+                )
             num_blocks = plan_num_blocks(free_bytes, per_block, config.kv_memory_fraction)
         self.blocks = BlockManager(num_blocks, config.block_size)
         self.store = PagedKVStore(
             mc.num_layers,
             num_blocks,
             config.block_size,
-            mc.num_kv_heads,
+            model.num_kv_heads,
             mc.head_dim,
             self.device,
             model.dtype,
@@ -173,7 +211,7 @@ class Engine:
         if config.attention_backend == "flashinfer":
             from minfer.attention.flashinfer_backend import FlashInferBackend
 
-            self.backend = FlashInferBackend(self.store, mc.num_heads)
+            self.backend = FlashInferBackend(self.store, model.num_heads)
             if config.cuda_graphs:
                 from minfer.attention.decode_graphs import DecodeGraphs
 
@@ -201,6 +239,15 @@ class Engine:
             self.prefix_cache,
         )
         self.stats = EngineStats()
+        self.drafter: Drafter | None = None
+        if config.speculation == "ngram":
+            self.drafter = PromptLookupDrafter(config.ngram_size)
+        elif config.speculation == "draft":
+            from minfer.spec.draft_model import DraftModelDrafter
+
+            self.drafter = DraftModelDrafter.from_pretrained(
+                config.draft_model, self, config.draft_num_blocks
+            )
         self._sequences: dict[int, Sequence] = {}
         self._next_id = 0
         self._rng = random.Random(config.seed)
@@ -257,6 +304,8 @@ class Engine:
         seq = self._sequences.pop(seq_id, None)
         if seq is not None:
             self.scheduler.abort(seq)
+            if self.drafter is not None:
+                self.drafter.release(seq_id)
 
     @property
     def has_work(self) -> bool:
@@ -275,6 +324,10 @@ class Engine:
             "generation_tokens_total": stats.generated_tokens,
             "prefill_tokens_total": stats.prefill_tokens,
             "decode_tokens_total": stats.decode_tokens,
+            "verify_tokens_total": stats.verify_tokens,
+            "spec_rounds_total": stats.spec_rounds,
+            "spec_proposed_tokens_total": stats.spec_proposed,
+            "spec_accepted_tokens_total": stats.spec_accepted,
             "engine_steps_total": stats.steps,
             "engine_step_seconds_total": stats.step_seconds,
             "preemptions_total": scheduler.num_preemptions,
@@ -308,57 +361,85 @@ class Engine:
         plan = self.scheduler.schedule()
         if plan.empty:
             return []
+        decode = plan.decode
+        verify: list[tuple[Sequence, Draft]] = []
+        if self.drafter is not None and decode:
+            decode, verify = self._draft(decode)
         sampled: list[Sequence] = []
         rows: list[Tensor] = []
-        if plan.prefill:
-            self._run_prefill(plan, sampled, rows)
-        if plan.decode:
-            self._run_decode(plan, sampled, rows)
+        verify_logits = None
+        if plan.prefill or verify:
+            verify_logits = self._run_prefill(plan.prefill, verify, sampled, rows)
+        if decode:
+            self._run_decode(decode, sampled, rows)
+        emitted: list[tuple[Sequence, list[int]]] = []
         if sampled:
             logits = rows[0] if len(rows) == 1 else torch.cat(rows, dim=0)
             tokens = self._sample(logits, sampled).tolist()
             for seq, token in zip(sampled, tokens, strict=True):
                 seq.tokens.append(token)
-        else:
-            tokens = []
+                emitted.append((seq, [token]))
+        if verify:
+            emitted += self._accept(verify, verify_logits)
         # Publish newly filled blocks to the prefix cache before any sequence finishes and
         # gives up its table.
         self.scheduler.commit(plan.decode)
         self.scheduler.commit(seq for seq, _ in plan.prefill)
-        outputs = [self._emit(seq, token) for seq, token in zip(sampled, tokens, strict=True)]
+        outputs: list[StepOutput] = []
+        for seq, tokens in emitted:
+            outputs += [StepOutput(seq.seq_id, token, None) for token in tokens[:-1]]
+            outputs.append(self._emit(seq, tokens[-1]))
         self.stats.generated_tokens += len(outputs)
         self.stats.steps += 1
         self.stats.step_seconds += time.perf_counter() - started
         return outputs
 
-    def _run_prefill(self, plan: StepPlan, sampled: list[Sequence], rows: list[Tensor]) -> None:
-        """Prefill pass; collects logits for the spans that reach their sequence's end."""
+    def _run_prefill(
+        self,
+        prefill: list[tuple[Sequence, int]],
+        verify: list[tuple[Sequence, Draft]],
+        sampled: list[Sequence],
+        rows: list[Tensor],
+    ) -> Tensor | None:
+        """One ragged pass over prefill chunks and speculative verification spans.
+
+        Collects next-token logits for the prefill spans that reach their sequence's end,
+        and returns the logits of every row of the verification spans (``None`` without
+        any): a span of the pending token plus ``k`` drafted tokens yields ``k + 1`` rows,
+        row ``i`` being the model's prediction after ``i`` drafted tokens.
+        """
         spans = []
         last_rows = []
         offset = 0
-        for seq, count in plan.prefill:
+        for seq, count in prefill:
             start = seq.num_cached
-            spans.append(
-                SequenceSpan(
-                    seq.tokens[start : start + count], start, self.blocks.table(seq.seq_id)
-                )
-            )
+            table = self.blocks.table(seq.seq_id)
+            spans.append(SequenceSpan(seq.tokens[start : start + count], start, table))
             offset += count
             if count == seq.num_pending:
                 sampled.append(seq)
                 last_rows.append(offset - 1)
             seq.num_cached = start + count
+        self.stats.prefill_tokens += offset
+        verify_start = offset
+        for seq, draft in verify:
+            table = self.blocks.table(seq.seq_id)
+            spans.append(SequenceSpan([seq.tokens[-1], *draft.tokens], seq.num_cached, table))
+            offset += 1 + len(draft.tokens)
+        self.stats.verify_tokens += offset - verify_start
         batch = build_paged_batch(spans, self.config.block_size, self.device)
         hidden = self.model(batch.token_ids, batch.positions, self.backend.prefill(batch))
-        self.stats.prefill_tokens += batch.num_tokens
         if last_rows:
             index = torch.tensor(last_rows, device=self.device)
             rows.append(self.model.logits(hidden.index_select(0, index)))
+        return self.model.logits(hidden[verify_start:]) if verify else None
 
-    def _run_decode(self, plan: StepPlan, sampled: list[Sequence], rows: list[Tensor]) -> None:
+    def _run_decode(
+        self, decode: list[Sequence], sampled: list[Sequence], rows: list[Tensor]
+    ) -> None:
         """Decode pass: one token per sequence, logits for every row."""
         spans = []
-        for seq in plan.decode:
+        for seq in decode:
             spans.append(
                 SequenceSpan(seq.tokens[-1:], seq.num_cached, self.blocks.table(seq.seq_id))
             )
@@ -371,15 +452,182 @@ class Engine:
             hidden = self.model(batch.token_ids, batch.positions, self.backend.decode(batch))
             logits = self.model.logits(hidden)
         self.stats.decode_tokens += len(spans)
-        sampled.extend(plan.decode)
+        sampled.extend(decode)
         rows.append(logits)
+
+    # ------------------------------------------------------------ speculation
+
+    def _draft(self, decode: list[Sequence]) -> tuple[list[Sequence], list[tuple[Sequence, Draft]]]:
+        """Ask the drafter for continuations; split ``decode`` into plain and speculative.
+
+        A sequence is verified speculatively only if it got a non-empty draft and its block
+        table can be grown to hold it; otherwise it takes the ordinary decode pass.
+        """
+        maximum = self.config.num_draft_tokens
+        limits = []
+        for seq in decode:
+            if seq.draft_len == 0:
+                seq.draft_len = maximum
+            # Leave room for the token the target model contributes after the draft.
+            budget = min(
+                seq.max_new_tokens - seq.num_generated - 1,
+                self.max_model_len - len(seq.tokens) - 1,
+            )
+            limits.append(max(0, min(seq.draft_len, budget)))
+        drafts = self.drafter.propose(decode, limits)
+        plain, verify = [], []
+        for seq, draft in zip(decode, drafts, strict=True):
+            if draft.tokens and self._reserve_draft(seq, len(draft.tokens)):
+                verify.append((seq, draft))
+            else:
+                plain.append(seq)
+        return plain, verify
+
+    def _reserve_draft(self, seq: Sequence, num_draft: int) -> bool:
+        """Grow ``seq``'s table for a draft, without evicting or preempting for it."""
+        try:
+            self.blocks.ensure_capacity(seq.seq_id, seq.num_cached + 1 + num_draft)
+        except OutOfBlocks:
+            return False
+        return True
+
+    def _accept(
+        self, verify: list[tuple[Sequence, Draft]], logits: Tensor
+    ) -> list[tuple[Sequence, list[int]]]:
+        """Decide how much of each draft stands and append the resulting tokens.
+
+        Greedy requests accept a drafted token iff it is the target's argmax, so their
+        output is exactly what non-speculative decoding produces. Sampling requests use
+        speculative sampling (accept with probability ``min(1, p/q)``, otherwise resample
+        from the normalized residual ``max(p - q, 0)``), which leaves the output
+        distribution equal to the target model's.
+
+        "Rolling back" rejected tokens is logical: their K/V was written past the end of
+        what ``num_cached`` now covers and is overwritten by the next pass.
+        """
+        starts, offset = [], 0
+        for _, draft in verify:
+            starts.append(offset)
+            offset += 1 + len(draft.tokens)
+        greedy_pick = sampling.greedy(logits).tolist()
+        stochastic = [i for i, (seq, _) in enumerate(verify) if not seq.params.greedy]
+        resolved = self._accept_sampled(verify, starts, logits, stochastic) if stochastic else {}
+
+        stats = self.stats
+        emitted = []
+        for index, (seq, draft) in enumerate(verify):
+            drafted = draft.tokens
+            if index in resolved:
+                accepted, bonus = resolved[index]
+            else:
+                start = starts[index]
+                accepted = 0
+                while (
+                    accepted < len(drafted) and greedy_pick[start + accepted] == drafted[accepted]
+                ):
+                    accepted += 1
+                bonus = greedy_pick[start + accepted]
+            stats.spec_rounds += 1
+            stats.spec_proposed += len(drafted)
+            stats.spec_accepted += accepted
+            maximum = self.config.num_draft_tokens
+            seq.draft_len = (
+                min(maximum, 2 * seq.draft_len)
+                if accepted == len(drafted)
+                else max(1, accepted + 1)
+            )
+
+            tokens = [*drafted[:accepted], bonus]
+            # Cut at the first stop token: nothing after it may be emitted.
+            stops = self.eos_token_ids if not seq.params.ignore_eos else frozenset()
+            for position, token in enumerate(tokens):
+                if token in stops or token in seq.params.stop_token_ids:
+                    tokens = tokens[: position + 1]
+                    break
+            # K/V is valid for the pending token and for each accepted draft token; the
+            # last appended token always stays pending.
+            seq.num_cached += 1 + min(accepted, len(tokens) - 1)
+            seq.tokens.extend(tokens)
+            emitted.append((seq, tokens))
+        return emitted
+
+    def _accept_sampled(
+        self,
+        verify: list[tuple[Sequence, Draft]],
+        starts: list[int],
+        logits: Tensor,
+        stochastic: list[int],
+    ) -> dict[int, tuple[int, int]]:
+        """Speculative sampling for the non-greedy sequences: ``index -> (accepted, bonus)``."""
+        device = logits.device
+        row_index, temperature, top_k, top_p = [], [], [], []
+        for index in stochastic:
+            seq, draft = verify[index]
+            count = 1 + len(draft.tokens)
+            row_index += range(starts[index], starts[index] + count)
+            temperature += [seq.params.temperature] * count
+            top_k += [seq.params.top_k] * count
+            top_p += [seq.params.top_p] * count
+        target = sampling.warped_probs(
+            logits.index_select(0, torch.tensor(row_index, device=device)),
+            torch.tensor(temperature, device=device, dtype=torch.float32),
+            torch.tensor(top_k, device=device),
+            torch.tensor(top_p, device=device, dtype=torch.float32),
+        )
+        # Probability the target assigns to each drafted token, and the draft's own.
+        local, rows, columns, draft_prob = 0, [], [], []
+        local_start = {}
+        for index in stochastic:
+            _, draft = verify[index]
+            local_start[index] = local
+            for i, token in enumerate(draft.tokens):
+                rows.append(local + i)
+                columns.append(token)
+            if draft.probs is None:
+                draft_prob += [1.0] * len(draft.tokens)
+            else:
+                picked = torch.tensor(draft.tokens, device=device)
+                draft_prob += draft.probs.gather(-1, picked[:, None]).squeeze(-1).tolist()
+            local += 1 + len(draft.tokens)
+        target_prob = target[rows, columns].tolist() if rows else []
+
+        final_rows, final_uniforms, plan = [], [], []
+        cursor = 0
+        for index in stochastic:
+            seq, draft = verify[index]
+            rng = seq.rng or self._rng
+            accepted = 0
+            for _ in draft.tokens:
+                ratio = target_prob[cursor + accepted] / draft_prob[cursor + accepted]
+                if rng.random() >= ratio:
+                    break
+                accepted += 1
+            cursor += len(draft.tokens)
+            row = local_start[index] + accepted
+            if accepted < len(draft.tokens):
+                # Rejected: resample from the part of the target the draft under-covers.
+                rejected = draft.tokens[accepted]
+                if draft.probs is None:
+                    target[row, rejected] = 0.0
+                else:
+                    target[row] = (target[row] - draft.probs[accepted]).clamp_(min=0.0)
+            final_rows.append(row)
+            final_uniforms.append(rng.random())
+            plan.append((index, accepted))
+        bonus = sampling.sample_from_probs(
+            target.index_select(0, torch.tensor(final_rows, device=device)),
+            torch.tensor(final_uniforms, device=device, dtype=torch.float64),
+        ).tolist()
+        return {
+            index: (accepted, token) for (index, accepted), token in zip(plan, bonus, strict=True)
+        }
 
     def _sample(self, logits: Tensor, seqs: list[Sequence]) -> Tensor:
         """Pick the next token for each row according to its request's parameters."""
         stochastic = [i for i, seq in enumerate(seqs) if not seq.params.greedy]
-        if not stochastic:
-            return sampling.greedy(logits)
         tokens = sampling.greedy(logits)
+        if not stochastic:
+            return tokens
         params = [seqs[i].params for i in stochastic]
         uniforms = [(seqs[i].rng or self._rng).random() for i in stochastic]
         device = logits.device
@@ -395,7 +643,7 @@ class Engine:
         return tokens
 
     def _emit(self, seq: Sequence, token: int) -> StepOutput:
-        """Report a token already appended to ``seq``; finish it on a stop condition."""
+        """Report the last token appended to ``seq``; finish it on a stop condition."""
         params = seq.params
         reason = None
         if (token in self.eos_token_ids and not params.ignore_eos) or (
@@ -408,6 +656,8 @@ class Engine:
             self.scheduler.finish(seq, reason)
             del self._sequences[seq.seq_id]
             self.stats.requests_finished += 1
+            if self.drafter is not None:
+                self.drafter.release(seq.seq_id)
             return StepOutput(seq.seq_id, token, reason, seq.cache_hit_tokens)
         return StepOutput(seq.seq_id, token, None)
 

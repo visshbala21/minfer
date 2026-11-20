@@ -57,23 +57,14 @@ def greedy(logits: Tensor) -> Tensor:
     return logits.argmax(dim=-1)
 
 
-def sample(
-    logits: Tensor, temperature: Tensor, top_k: Tensor, top_p: Tensor, uniforms: Tensor
-) -> Tensor:
-    """Draw one token per row.
+def _filtered_sorted_probs(
+    logits: Tensor, temperature: Tensor, top_k: Tensor, top_p: Tensor
+) -> tuple[Tensor, Tensor]:
+    """Each row's sampling distribution in descending order, and the sort order.
 
     Filters are applied in the order temperature → top-k → top-p (the order transformers
-    and vLLM use): top-p is measured on the distribution that survives top-k.
-
-    Args:
-        logits: ``[b, vocab]`` unnormalized scores.
-        temperature: ``[b]`` strictly positive temperatures.
-        top_k: ``[b]`` int64; ``0`` (or anything ≥ vocab) keeps every token.
-        top_p: ``[b]`` nucleus mass in ``(0, 1]``.
-        uniforms: ``[b]`` uniform draws in ``[0, 1)``.
-
-    Returns:
-        ``[b]`` int64 token ids.
+    and vLLM use): top-p is measured on the distribution that survives top-k. The returned
+    probabilities are zero for filtered tokens and sum to one.
     """
     vocab = logits.shape[-1]
     scaled = logits.float() / temperature[:, None]
@@ -89,11 +80,48 @@ def sample(
     # token that crosses the threshold is kept and the head of the list always survives.
     mass_before = probs.cumsum(dim=-1) - probs
     probs = probs.masked_fill(mass_before >= top_p[:, None], 0.0)
+    return probs / probs.sum(dim=-1, keepdim=True), order
 
+
+def _inverse_cdf(probs: Tensor, uniforms: Tensor) -> Tensor:
+    """Index drawn from each row of ``probs`` (rows sum to ~1) by its uniform in [0, 1)."""
     cdf = probs.cumsum(dim=-1)
     target = uniforms.to(cdf.dtype)[:, None] * cdf[:, -1:]
-    index = torch.searchsorted(cdf, target, right=True).clamp_(max=vocab - 1)
-    # Guard against landing on a zero-probability rank through rounding at the tail.
-    kept = (probs > 0).sum(dim=-1, keepdim=True)
-    index = torch.minimum(index, kept - 1)
-    return order.gather(-1, index).squeeze(-1)
+    index = torch.searchsorted(cdf, target, right=True).clamp_(max=probs.shape[-1] - 1)
+    # Rounding at the tail can land past the last token with nonzero probability.
+    last = probs.shape[-1] - 1 - (probs > 0).flip(-1).int().argmax(dim=-1, keepdim=True)
+    return torch.minimum(index, last)
+
+
+def sample(
+    logits: Tensor, temperature: Tensor, top_k: Tensor, top_p: Tensor, uniforms: Tensor
+) -> Tensor:
+    """Draw one token per row.
+
+    Args:
+        logits: ``[b, vocab]`` unnormalized scores.
+        temperature: ``[b]`` strictly positive temperatures.
+        top_k: ``[b]`` int64; ``0`` (or anything ≥ vocab) keeps every token.
+        top_p: ``[b]`` nucleus mass in ``(0, 1]``.
+        uniforms: ``[b]`` uniform draws in ``[0, 1)``.
+
+    Returns:
+        ``[b]`` int64 token ids.
+    """
+    probs, order = _filtered_sorted_probs(logits, temperature, top_k, top_p)
+    return order.gather(-1, _inverse_cdf(probs, uniforms)).squeeze(-1)
+
+
+def warped_probs(logits: Tensor, temperature: Tensor, top_k: Tensor, top_p: Tensor) -> Tensor:
+    """Each row's sampling distribution, indexed by token id (``[b, vocab]``).
+
+    The same distribution :func:`sample` draws from; speculative decoding needs it
+    explicitly to accept or reject drafted tokens.
+    """
+    probs, order = _filtered_sorted_probs(logits, temperature, top_k, top_p)
+    return torch.zeros_like(probs).scatter_(-1, order, probs)
+
+
+def sample_from_probs(probs: Tensor, uniforms: Tensor) -> Tensor:
+    """Draw one token per row of an explicit distribution (``[b, vocab]``, token order)."""
+    return _inverse_cdf(probs, uniforms).squeeze(-1)

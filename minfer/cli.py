@@ -59,6 +59,15 @@ def add_engine_arguments(parser: argparse.ArgumentParser) -> None:
         help="admit the waiting request with the longest cached prefix first",
     )
     group.add_argument("--starvation-seconds", type=float, default=defaults.starvation_seconds)
+    group.add_argument(
+        "--speculation",
+        choices=["none", "ngram", "draft"],
+        default=defaults.speculation or "none",
+        help="speculative decoding: prompt-lookup n-grams or a draft model",
+    )
+    group.add_argument("--num-draft-tokens", type=int, default=defaults.num_draft_tokens)
+    group.add_argument("--ngram-size", type=int, default=defaults.ngram_size)
+    group.add_argument("--draft-model", default=defaults.draft_model)
     group.add_argument("--seed", type=int, default=defaults.seed)
 
 
@@ -76,6 +85,10 @@ def engine_config_from_args(args: argparse.Namespace) -> EngineConfig:
         prefix_cache=args.prefix_cache,
         cache_aware_scheduling=args.cache_aware_scheduling,
         starvation_seconds=args.starvation_seconds,
+        speculation=None if args.speculation == "none" else args.speculation,
+        num_draft_tokens=args.num_draft_tokens,
+        ngram_size=args.ngram_size,
+        draft_model=args.draft_model,
         seed=args.seed,
     )
 

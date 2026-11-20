@@ -43,6 +43,8 @@ class Sequence:
         num_preemptions: Times the sequence lost its KV and had to recompute.
         synced_blocks: Leading full blocks already shared through the prefix cache.
         cache_hit_tokens: Tokens taken from the prefix cache at the first admission.
+        draft_len: Current speculative draft length for this request (adapts to how many
+            drafted tokens were accepted last time; 0 until the engine sets it).
         rng: The request's own random stream (seeded requests only).
     """
 
@@ -58,6 +60,7 @@ class Sequence:
     num_preemptions: int = 0
     synced_blocks: int = 0
     cache_hit_tokens: int = 0
+    draft_len: int = 0
     rng: random.Random | None = field(default=None, repr=False)
 
     @property

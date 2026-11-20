@@ -115,14 +115,16 @@ def test_start_failure_is_reported():
 def test_engine_process_death_fails_in_flight_requests():
     async def scenario():
         engine = await started()
-        task = asyncio.ensure_future(
-            collect(engine, [31, 32, 33], max_tokens=10_000, ignore_eos=True)
-        )
-        await asyncio.sleep(0.5)
+        params = SamplingParams(max_tokens=10_000, ignore_eos=True)
+        stream = engine.generate([31, 32, 33], params)
+        await stream.__anext__()  # the request is running
         engine._process.kill()
         with pytest.raises(EngineDeadError):
-            await asyncio.wait_for(task, timeout=10)
+            async for _ in stream:
+                pass
         assert not engine.healthy
+        with pytest.raises(EngineDeadError):
+            await collect(engine, [1, 2], max_tokens=2)
 
     run(scenario())
 

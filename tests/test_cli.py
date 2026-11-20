@@ -29,6 +29,13 @@ def test_prefix_cache_toggles():
     assert parse("--starvation-seconds", "0.25").starvation_seconds == 0.25
 
 
+def test_speculation_flags():
+    assert parse().speculation is None
+    config = parse("--speculation", "ngram", "--num-draft-tokens", "6", "--ngram-size", "2")
+    assert (config.speculation, config.num_draft_tokens, config.ngram_size) == ("ngram", 6, 2)
+    assert parse("--speculation", "draft", "--draft-model", "x/y").draft_model == "x/y"
+
+
 def test_limits():
     config = parse("--max-num-seqs", "8", "--num-blocks", "100", "--block-size", "32")
     assert (config.max_num_seqs, config.num_blocks, config.block_size) == (8, 100, 32)
