@@ -17,6 +17,13 @@ not a wrapper around another serving engine.
 ## Headline result
 
 <!-- BEGIN headline -->
+_Not measured yet._
+<!-- END headline -->
+
+The same comparison on the model the engine was developed on (Qwen2.5-1.5B, measured before the
+[fairness audit](#fairness-audit) gave the baselines their tuning flags):
+
+<!-- BEGIN headline-1.5b -->
 On the multi-turn agent workload at 1–16 req/s (Qwen2.5-1.5B-Instruct, bf16, one H100, greedy, identical traces):
 
 | | minfer | vLLM | SGLang |
@@ -30,7 +37,7 @@ On the multi-turn agent workload at 1–16 req/s (Qwen2.5-1.5B-Instruct, bf16, o
 | TPOT p50 relative to vLLM | 1.06–1.24× | 1.00× | 0.94–1.07× |
 | saturated tok/s relative to vLLM | 0.83× | 1.00× | 0.99× |
 | saturated TTFT p50 / p99 (ms) | 83 / 241 | 144 / 570 | 119 / 460 |
-<!-- END headline -->
+<!-- END headline-1.5b -->
 
 **minfer answers first.** It has the lowest time-to-first-token of the three engines at
 every request rate on the agent workload, at the median and at the 99th percentile, and
@@ -137,6 +144,14 @@ SGLang 0.5.23, PyTorch 2.14, FlashInfer 0.7.3.
 
 ### Agent workload: minfer vs vLLM vs SGLang
 
+**Qwen2.5-7B-Instruct** (baselines with the flags the fairness audit selected):
+
+<!-- BEGIN agent-results -->
+_Not measured yet._
+<!-- END agent-results -->
+
+**Qwen2.5-1.5B-Instruct:**
+
 Multi-turn agent sessions ([`bench/agent_workload.py`](bench/agent_workload.py): three
 agent types, ~4k-token system prompts with JSON tool schemas, 5–15 turns, tool results
 appended every turn; prompts of 4k–14k tokens, outputs of 33–240 tokens), replayed from
@@ -146,7 +161,7 @@ prefix caching on (the baselines' tuning flags were measured afterwards: see
 [Fairness audit](#fairness-audit)). Rate is the nominal request rate; "max" starts 64 sessions at once with
 no think time. A value is bold when it is the best of the three at the printed precision.
 
-<!-- BEGIN agent-results -->
+<!-- BEGIN agent-results-1.5b -->
 | rate (req/s) | engine | out tok/s | TTFT p50 (ms) | TTFT p99 (ms) | TPOT p50 (ms) | TPOT p99 (ms) | E2E p50 (ms) | E2E p99 (ms) | prefix hit rate | failed |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 1 | minfer | 89 | **39.4** | **71.3** | 2.54 | 2.98 | 191 | 615 | 93.6% | 0 |
@@ -167,18 +182,26 @@ no think time. A value is bold when it is the best of the three at the printed p
 | max | minfer | 4219 | **83.1** | **240.9** | 10.71 | 12.59 | 705 | 2345 | 92.8% | 0 |
 |  | vLLM | **5106** | 144.2 | 569.7 | **7.40** | **9.88** | **635** | 1739 | 92.5% | 0 |
 |  | SGLang | 5049 | 119.2 | 459.9 | 8.08 | 10.81 | 646 | **1651** | **92.9%** | 0 |
-<!-- END agent-results -->
+<!-- END agent-results-1.5b -->
 
-![Agent workload](bench/plots/agent_vs_rate.png)
+![Agent workload, 1.5B](bench/plots/agent_vs_rate_1.5b.png)
 
 ### ShareGPT (control workload)
+
+**Qwen2.5-7B-Instruct:**
+
+<!-- BEGIN sharegpt-results -->
+_Not measured yet._
+<!-- END sharegpt-results -->
+
+**Qwen2.5-1.5B-Instruct:**
 
 Single-turn chat requests with little shared prefix, driven by vLLM's own benchmark client
 (`vllm bench serve`). This workload does not play to minfer's design; it shows what the
 engine does when there is nothing to reuse, measured by a client this repository did not
 write.
 
-<!-- BEGIN sharegpt-results -->
+<!-- BEGIN sharegpt-results-1.5b -->
 | rate (req/s) | engine | out tok/s | TTFT p50 (ms) | TTFT p99 (ms) | TPOT p50 (ms) | TPOT p99 (ms) | E2E p50 (ms) | E2E p99 (ms) | failed |
 |---|---|---|---|---|---|---|---|---|---|
 | 1 | minfer | 215 | **10.7** | **20.5** | 2.24 | 2.52 | **370** | 1720 | 0 |
@@ -199,9 +222,9 @@ write.
 | max | minfer | **24607** | 2764.3 | 5502.4 | **6.68** | **8.76** | **4246** | **7637** | 0 |
 |  | vLLM | 22248 | **1505.2** | 4245.6 | 24.40 | 62.67 | 5682 | 9039 | 0 |
 |  | SGLang | 16102 | 2233.2 | **2571.0** | 35.33 | 197.03 | 7417 | 12464 | 0 |
-<!-- END sharegpt-results -->
+<!-- END sharegpt-results-1.5b -->
 
-![ShareGPT](bench/plots/sharegpt_vs_rate.png)
+![ShareGPT, 1.5B](bench/plots/sharegpt_vs_rate_1.5b.png)
 
 ### Fairness audit
 

@@ -1661,3 +1661,23 @@ contains timings, token counts and character counts but **no prompt text or toke
 five agent harnesses including Claude Code; no timestamps) supplies content and turn
 structure, and TraceLab supplies tool-call pause durations, sampled per tool name.
 `nebius/SWE-rebench-openhands-trajectories` is a single 2.1 GB parquet with no timings.
+
+---
+
+## Phase 14 — Qwen2.5-7B-Instruct
+
+### B-006 CPU-heavy work ran next to a benchmark and corrupted a baseline's numbers (process bug)
+
+- **What happened.** The first 7B matrix run was started, and while it ran the CPU test
+  suite (five minutes of multi-threaded PyTorch) and two tokenization passes over the real
+  traces were run on the same machine. The container has a quota of 13.6 CPU cores. vLLM's
+  agent run at 2 req/s came out at TPOT p50 24.9 ms and TTFT p50 300 ms, against 6.4 ms and
+  84 ms at 1 req/s minutes earlier: the servers and the replay client were starved of CPU.
+- **Why it matters more than B-004.** The contention was not symmetric: the heavy part
+  overlapped vLLM's run, not minfer's, so the comparison would have been biased in
+  minfer's favour by my own background work.
+- **Fix.** The run was stopped and its partial results discarded (kept outside the
+  repository's results directory, not committed), and the whole matrix was restarted on an
+  idle machine. Rule adopted, extending B-004: **while a benchmark is running, nothing else
+  runs — no tests, no tokenization, no downloads — only editing.** Results now also record
+  the commit they ran on (`code` in each results file).
