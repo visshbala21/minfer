@@ -433,6 +433,47 @@ def headline() -> str:
     return "\n".join(lines)
 
 
+def reproduction_table() -> str:
+    """Headline metrics of the README run next to an independent rerun."""
+    report = _load("reproduction.json")
+    if not report:
+        return MISSING
+    agent = report["comparison"]["agent"]
+    rows = []
+    for label, metric, fmt, rates in (
+        ("TTFT p50, 1–16 req/s (ms)", "ttft_p50_ms", ".0f", None),
+        ("TTFT p99, 1–16 req/s (ms)", "ttft_p99_ms", ".0f", None),
+        ("TPOT p50, 1–16 req/s (ms)", "tpot_p50_ms", ".2f", None),
+        ('TTFT p50, "max" (ms)', "ttft_p50_ms", ".0f", ["max"]),
+        ('TPOT p50, "max" (ms)', "tpot_p50_ms", ".2f", ["max"]),
+        ('output tok/s, "max"', "output_tokens_per_second", ".0f", ["max"]),
+    ):
+        for index, (engine, name) in enumerate(ENGINES.items()):
+            cells = [
+                agent[engine][r][metric] for r in rates or agent[engine] if rates or r != "max"
+            ]
+            rows.append(
+                [
+                    label if index == 0 else "",
+                    name,
+                    _span([c["reference"] for c in cells], fmt),
+                    _span([c["rerun"] for c in cells], fmt),
+                    _span([c["ratio"] for c in cells], ".2f") + "×",
+                ]
+            )
+    table = _table(["agent workload", "engine", "README run", "rerun", "rerun / README run"], rows)
+    held = [
+        f"- {text}: {'holds in both runs' if v['reference'] and v['rerun'] else '**differs**'}"
+        + (
+            ""
+            if v["reference"] and v["rerun"]
+            else f" (README run: {v['reference']}, rerun: {v['rerun']})"
+        )
+        for text, v in report["claims"].items()
+    ]
+    return "\n".join([table, "", *held])
+
+
 SECTIONS: dict[str, Callable[[], str]] = {
     "headline": headline,
     "agent-results": agent_table,
@@ -446,6 +487,7 @@ SECTIONS: dict[str, Callable[[], str]] = {
     "triton": triton_table,
     "equivalence": equivalence_table,
     "profile": profile_table,
+    "reproduction": reproduction_table,
 }
 
 

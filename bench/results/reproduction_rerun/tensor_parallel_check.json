@@ -1,0 +1,42 @@
+{
+ "what": "CPU-only correctness and accounting check; NOT a performance measurement",
+ "model": "random-weight Qwen2, 4 layers, hidden 256, 8 heads / 4 kv heads, float32",
+ "world_size": 2,
+ "dist_backend": "gloo",
+ "requests": 16,
+ "generated_tokens": 768,
+ "outputs_identical_to_single_process": true,
+ "single_process_matches_cache_free_forward": true,
+ "kv_store_bytes_single_process": 33554432,
+ "kv_store_bytes_per_rank": 16777216,
+ "tiny_model_communication": {
+  "all_reduces_per_token": 8,
+  "bytes_all_reduced_per_token": 8192
+ },
+ "cpu_wall_seconds_not_a_benchmark": {
+  "single_process": 2.103048449003836,
+  "two_processes_gloo": 39.98350724199554
+ },
+ "target_models": {
+  "Qwen/Qwen2.5-1.5B-Instruct": {
+   "kv_bytes_per_token_single_device": 28672,
+   "kv_bytes_per_token_per_rank_world_size_2": 14336,
+   "valid_world_sizes": [
+    2
+   ],
+   "all_reduces_per_token": 56,
+   "bytes_all_reduced_per_token": 172032
+  },
+  "Qwen/Qwen2.5-14B-Instruct": {
+   "kv_bytes_per_token_single_device": 196608,
+   "kv_bytes_per_token_per_rank_world_size_2": 98304,
+   "valid_world_sizes": [
+    2,
+    4,
+    8
+   ],
+   "all_reduces_per_token": 96,
+   "bytes_all_reduced_per_token": 983040
+  }
+ }
+}

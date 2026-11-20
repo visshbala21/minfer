@@ -470,8 +470,9 @@ In the prefix-cache run the cache served 74.7% of prompt tokens and cut the toke
 - **Modal.** `bench/modal_bench.py` and `deploy/modal_app.py` are written against the
   pinned Modal SDK and import cleanly, but were never run: no credentials. There is no
   hosted endpoint.
-- **A fresh-clone reproduction on a second machine was not performed.** `make bench` is the
-  command that produced every number here, on the development machine.
+- **Reproduction on a second machine was not performed.** A fresh clone on the *same*
+  machine, with empty caches and re-downloaded weights, was: see
+  [Reproduction check](#reproduction-check).
 - **Speculative decoding** is correct but slower than not speculating (above).
 - **One model family** (Qwen2/2.5), text only, no tool-call parsing on the response side,
   no `n > 1`, no penalties, no logprobs.
@@ -486,10 +487,59 @@ make bench                     # every benchmark above, the plots, and the table
 ```
 
 `make bench` needs one H100-class GPU, nvcc on `PATH` (FlashInfer compiles its kernels on
-first use) and about two hours; it runs one server at a time. Individual pieces:
+first use) and about three hours; it runs one server at a time. Individual pieces:
 `make bench-micro`, `make bench-agent`, `make bench-ablations`, `make plots`. To run it on
 a fresh H100 without a local GPU: `modal run bench/modal_bench.py` (written but not
 executed from the development machine, which has no Modal credentials).
+
+### Reproduction check
+
+The commands above were run once more from a fresh `git clone` in a new directory, with an
+empty `HOME` (no JIT caches for FlashInfer, Triton, vLLM or SGLang) and an empty `HF_HOME`
+(weights and datasets downloaded again): the three environments built from the lock files,
+`make test` passed (272 tests) and `make bench` ran to completion. It was the same physical
+H100, so this checks that the repository is self-contained and how far the numbers move
+between two complete runs — not that they carry over to another machine. The tables above
+are from the original run; `bench/reproduction.py` compares the two
+(`bench/results/reproduction.json`, rerun results in `bench/results/reproduction_rerun/`).
+
+<!-- BEGIN reproduction -->
+| agent workload | engine | README run | rerun | rerun / README run |
+|---|---|---|---|---|
+| TTFT p50, 1–16 req/s (ms) | minfer | 38–41 | 37–41 | 0.94–1.01× |
+|  | vLLM | 59–63 | 55–67 | 0.93–1.09× |
+|  | SGLang | 44–47 | 47–51 | 1.03–1.10× |
+| TTFT p99, 1–16 req/s (ms) | minfer | 68–82 | 65–82 | 0.92–1.06× |
+|  | vLLM | 95–122 | 97–140 | 0.95–1.14× |
+|  | SGLang | 78–114 | 84–114 | 0.99–1.09× |
+| TPOT p50, 1–16 req/s (ms) | minfer | 2.54–2.99 | 2.55–3.02 | 1.00–1.01× |
+|  | vLLM | 2.25–2.40 | 2.26–2.39 | 0.98–1.01× |
+|  | SGLang | 2.25–2.57 | 2.25–2.57 | 0.99–1.00× |
+| TTFT p50, "max" (ms) | minfer | 83 | 79 | 0.95× |
+|  | vLLM | 144 | 139 | 0.96× |
+|  | SGLang | 119 | 122 | 1.03× |
+| TPOT p50, "max" (ms) | minfer | 10.71 | 11.15 | 1.04× |
+|  | vLLM | 7.40 | 7.60 | 1.03× |
+|  | SGLang | 8.08 | 8.26 | 1.02× |
+| output tok/s, "max" | minfer | 4219 | 4215 | 1.00× |
+|  | vLLM | 5106 | 5031 | 0.99× |
+|  | SGLang | 5049 | 4995 | 0.99× |
+
+- minfer has the lowest TTFT p50 at every rate from 1 to 16 req/s: holds in both runs
+- minfer has the lowest TTFT p99 at every rate from 1 to 16 req/s: holds in both runs
+- minfer has the lowest TTFT p50 and p99 at saturation: holds in both runs
+- minfer's TPOT p50 is higher than vLLM's at every rate: holds in both runs
+- minfer's saturated throughput is below vLLM's and SGLang's: holds in both runs
+- no request failed for any engine on either workload: **differs** (README run: True, rerun: False)
+<!-- END reproduction -->
+
+The one difference in kind: in the rerun SGLang dropped one connection out of 120 in its
+ShareGPT run at 1 req/s (the first request of that run took 15 s; nothing in its server
+log explains it), where the original run had no failed request for any engine. The
+saturated ShareGPT run ("max", 1,000 requests at once) is the least repeatable
+measurement here, for the baselines in particular: vLLM's median TTFT was 1.5 s in the
+original run and 4.0 s in the rerun, SGLang's throughput 16.1k and 13.6k tok/s; minfer's
+moved by 6% and 4%. Treat that row as an order of magnitude.
 
 The agent traces are deterministic: `python -m bench.agent_workload generate --sessions 96
 --rate 16 --seed 4 --out trace.jsonl` writes the trace used at 16 req/s, and

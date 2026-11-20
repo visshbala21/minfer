@@ -1,0 +1,628 @@
+{
+ "model": "Qwen/Qwen2.5-1.5B-Instruct",
+ "vllm_version": "0.34.0",
+ "dtype": "bfloat16",
+ "max_tokens": 128,
+ "num_prompts": 20,
+ "one_at_a_time": {
+  "identical": 11,
+  "diverged": 9,
+  "tokens_compared": 2001,
+  "max_fp32_margin_at_divergence": 0.21325111389160156,
+  "cases": [
+   {
+    "prompt": "Explain how a hash map handles collisions.",
+    "vllm_tokens": 128,
+    "minfer_tokens": 128,
+    "identical": false,
+    "first_divergence": 36,
+    "minfer_token": 2711,
+    "vllm_token": 18615,
+    "fp32_top2_tokens": [
+     18615,
+     2711
+    ],
+    "fp32_top2_margin": 0.012643814086914062,
+    "fp32_logit_minfer_token": 29.64603614807129,
+    "fp32_logit_vllm_token": 29.658679962158203,
+    "both_in_fp32_top2": true
+   },
+   {
+    "prompt": "Write a Python function that checks whether a string is a palindrome.",
+    "vllm_tokens": 128,
+    "minfer_tokens": 128,
+    "identical": true
+   },
+   {
+    "prompt": "What were the main causes of the First World War?",
+    "vllm_tokens": 128,
+    "minfer_tokens": 128,
+    "identical": false,
+    "first_divergence": 63,
+    "minfer_token": 1447,
+    "vllm_token": 315,
+    "fp32_top2_tokens": [
+     1447,
+     315
+    ],
+    "fp32_top2_margin": 0.21325111389160156,
+    "fp32_logit_minfer_token": 29.583656311035156,
+    "fp32_logit_vllm_token": 29.370405197143555,
+    "both_in_fp32_top2": true
+   },
+   {
+    "prompt": "Translate into French: 'The train to Lyon leaves at half past seven tomorrow morning.'",
+    "vllm_tokens": 19,
+    "minfer_tokens": 19,
+    "identical": true
+   },
+   {
+    "prompt": "用中文简要解释什么是量子纠缠。",
+    "vllm_tokens": 76,
+    "minfer_tokens": 76,
+    "identical": true
+   },
+   {
+    "prompt": "Give me a recipe for a simple tomato soup.",
+    "vllm_tokens": 128,
+    "minfer_tokens": 128,
+    "identical": false,
+    "first_divergence": 57,
+    "minfer_token": 41284,
+    "vllm_token": 37920,
+    "fp32_top2_tokens": [
+     41284,
+     37920
+    ],
+    "fp32_top2_margin": 0.11468887329101562,
+    "fp32_logit_minfer_token": 21.95379638671875,
+    "fp32_logit_vllm_token": 21.839107513427734,
+    "both_in_fp32_top2": true
+   },
+   {
+    "prompt": "Summarize the plot of Romeo and Juliet in three sentences.",
+    "vllm_tokens": 50,
+    "minfer_tokens": 50,
+    "identical": true
+   },
+   {
+    "prompt": "What is the derivative of x^3 * sin(x)? Show the steps.",
+    "vllm_tokens": 128,
+    "minfer_tokens": 128,
+    "identical": true
+   },
+   {
+    "prompt": "Write a SQL query that returns the top five customers by total order value.",
+    "vllm_tokens": 128,
+    "minfer_tokens": 128,
+    "identical": false,
+    "first_divergence": 55,
+    "minfer_token": 382,
+    "vllm_token": 13,
+    "fp32_top2_tokens": [
+     382,
+     13
+    ],
+    "fp32_top2_margin": 0.04852104187011719,
+    "fp32_logit_minfer_token": 31.700000762939453,
+    "fp32_logit_vllm_token": 31.651479721069336,
+    "both_in_fp32_top2": true
+   },
+   {
+    "prompt": "Describe the difference between TCP and UDP.",
+    "vllm_tokens": 128,
+    "minfer_tokens": 128,
+    "identical": true
+   },
+   {
+    "prompt": "Return a JSON object with the keys \"name\", \"age\" and \"city\" for a fictional person.",
+    "vllm_tokens": 30,
+    "minfer_tokens": 30,
+    "identical": true
+   },
+   {
+    "prompt": "Why is the sky blue?",
+    "vllm_tokens": 128,
+    "minfer_tokens": 97,
+    "identical": false,
+    "first_divergence": 72,
+    "minfer_token": 13,
+    "vllm_token": 624,
+    "fp32_top2_tokens": [
+     624,
+     13
+    ],
+    "fp32_top2_margin": 0.06534194946289062,
+    "fp32_logit_minfer_token": 29.272747039794922,
+    "fp32_logit_vllm_token": 29.338088989257812,
+    "both_in_fp32_top2": true
+   },
+   {
+    "prompt": "Write a limerick about a programmer who loves coffee.",
+    "vllm_tokens": 35,
+    "minfer_tokens": 35,
+    "identical": true
+   },
+   {
+    "prompt": "List the planets of the solar system in order from the sun, one per line.",
+    "vllm_tokens": 24,
+    "minfer_tokens": 24,
+    "identical": true
+   },
+   {
+    "prompt": "Explain the rules of chess castling.",
+    "vllm_tokens": 128,
+    "minfer_tokens": 128,
+    "identical": false,
+    "first_divergence": 64,
+    "minfer_token": 11477,
+    "vllm_token": 2781,
+    "fp32_top2_tokens": [
+     11477,
+     2781
+    ],
+    "fp32_top2_margin": 0.022050857543945312,
+    "fp32_logit_minfer_token": 19.198413848876953,
+    "fp32_logit_vllm_token": 19.176362991333008,
+    "both_in_fp32_top2": true
+   },
+   {
+    "prompt": "A store sells apples at 3 for $2. How much do 18 apples cost? Explain.",
+    "vllm_tokens": 128,
+    "minfer_tokens": 128,
+    "identical": true
+   },
+   {
+    "prompt": "Write a bash one-liner that counts the lines in every .py file under the current directory.",
+    "vllm_tokens": 128,
+    "minfer_tokens": 128,
+    "identical": true
+   },
+   {
+    "prompt": "What is the capital of Australia, and why was it chosen?",
+    "vllm_tokens": 113,
+    "minfer_tokens": 107,
+    "identical": false,
+    "first_divergence": 13,
+    "minfer_token": 3283,
+    "vllm_token": 315,
+    "fp32_top2_tokens": [
+     3283,
+     315
+    ],
+    "fp32_top2_margin": 0.08890533447265625,
+    "fp32_logit_minfer_token": 28.980234146118164,
+    "fp32_logit_vllm_token": 28.891328811645508,
+    "both_in_fp32_top2": true
+   },
+   {
+    "prompt": "Explain what a mutex is to a five-year-old.",
+    "vllm_tokens": 118,
+    "minfer_tokens": 126,
+    "identical": false,
+    "first_divergence": 8,
+    "minfer_token": 13598,
+    "vllm_token": 8609,
+    "fp32_top2_tokens": [
+     8609,
+     13598
+    ],
+    "fp32_top2_margin": 0.019304275512695312,
+    "fp32_logit_minfer_token": 25.135379791259766,
+    "fp32_logit_vllm_token": 25.15468406677246,
+    "both_in_fp32_top2": true
+   },
+   {
+    "prompt": "Draft a short, polite email asking a colleague to review a pull request.",
+    "vllm_tokens": 128,
+    "minfer_tokens": 128,
+    "identical": false,
+    "first_divergence": 73,
+    "minfer_token": 358,
+    "vllm_token": 4354,
+    "fp32_top2_tokens": [
+     4354,
+     358
+    ],
+    "fp32_top2_margin": 0.13388633728027344,
+    "fp32_logit_minfer_token": 26.110214233398438,
+    "fp32_logit_vllm_token": 26.24410057067871,
+    "both_in_fp32_top2": true
+   }
+  ]
+ },
+ "batched_20": {
+  "identical": 10,
+  "diverged": 10,
+  "tokens_compared": 2001,
+  "max_fp32_margin_at_divergence": 0.21325111389160156,
+  "cases": [
+   {
+    "prompt": "Explain how a hash map handles collisions.",
+    "vllm_tokens": 128,
+    "minfer_tokens": 128,
+    "identical": false,
+    "first_divergence": 36,
+    "minfer_token": 2711,
+    "vllm_token": 18615,
+    "fp32_top2_tokens": [
+     18615,
+     2711
+    ],
+    "fp32_top2_margin": 0.012643814086914062,
+    "fp32_logit_minfer_token": 29.64603614807129,
+    "fp32_logit_vllm_token": 29.658679962158203,
+    "both_in_fp32_top2": true
+   },
+   {
+    "prompt": "Write a Python function that checks whether a string is a palindrome.",
+    "vllm_tokens": 128,
+    "minfer_tokens": 128,
+    "identical": true
+   },
+   {
+    "prompt": "What were the main causes of the First World War?",
+    "vllm_tokens": 128,
+    "minfer_tokens": 128,
+    "identical": false,
+    "first_divergence": 63,
+    "minfer_token": 1447,
+    "vllm_token": 315,
+    "fp32_top2_tokens": [
+     1447,
+     315
+    ],
+    "fp32_top2_margin": 0.21325111389160156,
+    "fp32_logit_minfer_token": 29.583656311035156,
+    "fp32_logit_vllm_token": 29.370405197143555,
+    "both_in_fp32_top2": true
+   },
+   {
+    "prompt": "Translate into French: 'The train to Lyon leaves at half past seven tomorrow morning.'",
+    "vllm_tokens": 19,
+    "minfer_tokens": 19,
+    "identical": true
+   },
+   {
+    "prompt": "用中文简要解释什么是量子纠缠。",
+    "vllm_tokens": 76,
+    "minfer_tokens": 76,
+    "identical": true
+   },
+   {
+    "prompt": "Give me a recipe for a simple tomato soup.",
+    "vllm_tokens": 128,
+    "minfer_tokens": 128,
+    "identical": false,
+    "first_divergence": 57,
+    "minfer_token": 41284,
+    "vllm_token": 37920,
+    "fp32_top2_tokens": [
+     41284,
+     37920
+    ],
+    "fp32_top2_margin": 0.11468887329101562,
+    "fp32_logit_minfer_token": 21.95379638671875,
+    "fp32_logit_vllm_token": 21.839107513427734,
+    "both_in_fp32_top2": true
+   },
+   {
+    "prompt": "Summarize the plot of Romeo and Juliet in three sentences.",
+    "vllm_tokens": 50,
+    "minfer_tokens": 50,
+    "identical": true
+   },
+   {
+    "prompt": "What is the derivative of x^3 * sin(x)? Show the steps.",
+    "vllm_tokens": 128,
+    "minfer_tokens": 128,
+    "identical": true
+   },
+   {
+    "prompt": "Write a SQL query that returns the top five customers by total order value.",
+    "vllm_tokens": 128,
+    "minfer_tokens": 128,
+    "identical": false,
+    "first_divergence": 55,
+    "minfer_token": 382,
+    "vllm_token": 13,
+    "fp32_top2_tokens": [
+     382,
+     13
+    ],
+    "fp32_top2_margin": 0.04852104187011719,
+    "fp32_logit_minfer_token": 31.700000762939453,
+    "fp32_logit_vllm_token": 31.651479721069336,
+    "both_in_fp32_top2": true
+   },
+   {
+    "prompt": "Describe the difference between TCP and UDP.",
+    "vllm_tokens": 128,
+    "minfer_tokens": 128,
+    "identical": true
+   },
+   {
+    "prompt": "Return a JSON object with the keys \"name\", \"age\" and \"city\" for a fictional person.",
+    "vllm_tokens": 30,
+    "minfer_tokens": 31,
+    "identical": false,
+    "first_divergence": 9,
+    "minfer_token": 13079,
+    "vllm_token": 61686,
+    "fp32_top2_tokens": [
+     61686,
+     13079
+    ],
+    "fp32_top2_margin": 0.1871337890625,
+    "fp32_logit_minfer_token": 24.35015869140625,
+    "fp32_logit_vllm_token": 24.53729248046875,
+    "both_in_fp32_top2": true
+   },
+   {
+    "prompt": "Why is the sky blue?",
+    "vllm_tokens": 128,
+    "minfer_tokens": 97,
+    "identical": false,
+    "first_divergence": 72,
+    "minfer_token": 13,
+    "vllm_token": 624,
+    "fp32_top2_tokens": [
+     624,
+     13
+    ],
+    "fp32_top2_margin": 0.06534194946289062,
+    "fp32_logit_minfer_token": 29.272747039794922,
+    "fp32_logit_vllm_token": 29.338088989257812,
+    "both_in_fp32_top2": true
+   },
+   {
+    "prompt": "Write a limerick about a programmer who loves coffee.",
+    "vllm_tokens": 35,
+    "minfer_tokens": 35,
+    "identical": true
+   },
+   {
+    "prompt": "List the planets of the solar system in order from the sun, one per line.",
+    "vllm_tokens": 24,
+    "minfer_tokens": 24,
+    "identical": true
+   },
+   {
+    "prompt": "Explain the rules of chess castling.",
+    "vllm_tokens": 128,
+    "minfer_tokens": 128,
+    "identical": false,
+    "first_divergence": 64,
+    "minfer_token": 11477,
+    "vllm_token": 2781,
+    "fp32_top2_tokens": [
+     11477,
+     2781
+    ],
+    "fp32_top2_margin": 0.022050857543945312,
+    "fp32_logit_minfer_token": 19.198413848876953,
+    "fp32_logit_vllm_token": 19.176362991333008,
+    "both_in_fp32_top2": true
+   },
+   {
+    "prompt": "A store sells apples at 3 for $2. How much do 18 apples cost? Explain.",
+    "vllm_tokens": 128,
+    "minfer_tokens": 128,
+    "identical": true
+   },
+   {
+    "prompt": "Write a bash one-liner that counts the lines in every .py file under the current directory.",
+    "vllm_tokens": 128,
+    "minfer_tokens": 128,
+    "identical": true
+   },
+   {
+    "prompt": "What is the capital of Australia, and why was it chosen?",
+    "vllm_tokens": 113,
+    "minfer_tokens": 107,
+    "identical": false,
+    "first_divergence": 13,
+    "minfer_token": 3283,
+    "vllm_token": 315,
+    "fp32_top2_tokens": [
+     3283,
+     315
+    ],
+    "fp32_top2_margin": 0.08890533447265625,
+    "fp32_logit_minfer_token": 28.980234146118164,
+    "fp32_logit_vllm_token": 28.891328811645508,
+    "both_in_fp32_top2": true
+   },
+   {
+    "prompt": "Explain what a mutex is to a five-year-old.",
+    "vllm_tokens": 118,
+    "minfer_tokens": 126,
+    "identical": false,
+    "first_divergence": 8,
+    "minfer_token": 13598,
+    "vllm_token": 8609,
+    "fp32_top2_tokens": [
+     8609,
+     13598
+    ],
+    "fp32_top2_margin": 0.019304275512695312,
+    "fp32_logit_minfer_token": 25.135379791259766,
+    "fp32_logit_vllm_token": 25.15468406677246,
+    "both_in_fp32_top2": true
+   },
+   {
+    "prompt": "Draft a short, polite email asking a colleague to review a pull request.",
+    "vllm_tokens": 128,
+    "minfer_tokens": 128,
+    "identical": false,
+    "first_divergence": 73,
+    "minfer_token": 358,
+    "vllm_token": 4354,
+    "fp32_top2_tokens": [
+     4354,
+     358
+    ],
+    "fp32_top2_margin": 0.13388633728027344,
+    "fp32_logit_minfer_token": 26.110214233398438,
+    "fp32_logit_vllm_token": 26.24410057067871,
+    "both_in_fp32_top2": true
+   }
+  ]
+ },
+ "vllm_one_at_a_time_vs_vllm_batched_identical": 9,
+ "teacher_forced": {
+  "positions": 2001,
+  "minfer_bf16_argmax_equals_vllm_token": 1985,
+  "fp32_reference_argmax_equals_vllm_token": 1985,
+  "minfer_bf16_argmax_equals_fp32_argmax": 1983,
+  "minfer_bf16_vs_fp32_mean_abs_logit_error": 0.04741566253268439,
+  "minfer_bf16_vs_fp32_max_abs_logit_error": 1.1791810989379883,
+  "max_fp32_margin_at_disagreement": 0.3040733337402344,
+  "disagreements": [
+   {
+    "case": 0,
+    "position": 36,
+    "minfer_token": 2711,
+    "vllm_token": 18615,
+    "fp32_margin_between_them": 0.012643814086914062,
+    "both_in_fp32_top2": true,
+    "fp32_prefers": "vllm"
+   },
+   {
+    "case": 0,
+    "position": 64,
+    "minfer_token": 5264,
+    "vllm_token": 3070,
+    "fp32_margin_between_them": 0.3040733337402344,
+    "both_in_fp32_top2": true,
+    "fp32_prefers": "vllm"
+   },
+   {
+    "case": 2,
+    "position": 63,
+    "minfer_token": 1447,
+    "vllm_token": 315,
+    "fp32_margin_between_them": 0.21316909790039062,
+    "both_in_fp32_top2": true,
+    "fp32_prefers": "minfer"
+   },
+   {
+    "case": 2,
+    "position": 79,
+    "minfer_token": 1657,
+    "vllm_token": 4505,
+    "fp32_margin_between_them": 0.09839439392089844,
+    "both_in_fp32_top2": true,
+    "fp32_prefers": "vllm"
+   },
+   {
+    "case": 5,
+    "position": 57,
+    "minfer_token": 41284,
+    "vllm_token": 37920,
+    "fp32_margin_between_them": 0.11468124389648438,
+    "both_in_fp32_top2": true,
+    "fp32_prefers": "minfer"
+   },
+   {
+    "case": 8,
+    "position": 55,
+    "minfer_token": 382,
+    "vllm_token": 13,
+    "fp32_margin_between_them": 0.04852294921875,
+    "both_in_fp32_top2": true,
+    "fp32_prefers": "minfer"
+   },
+   {
+    "case": 11,
+    "position": 72,
+    "minfer_token": 13,
+    "vllm_token": 624,
+    "fp32_margin_between_them": 0.06533241271972656,
+    "both_in_fp32_top2": true,
+    "fp32_prefers": "vllm"
+   },
+   {
+    "case": 11,
+    "position": 106,
+    "minfer_token": 1576,
+    "vllm_token": 11,
+    "fp32_margin_between_them": 0.1258525848388672,
+    "both_in_fp32_top2": true,
+    "fp32_prefers": "minfer"
+   },
+   {
+    "case": 11,
+    "position": 126,
+    "minfer_token": 714,
+    "vllm_token": 1496,
+    "fp32_margin_between_them": 0.03877067565917969,
+    "both_in_fp32_top2": true,
+    "fp32_prefers": "vllm"
+   },
+   {
+    "case": 14,
+    "position": 64,
+    "minfer_token": 11477,
+    "vllm_token": 2781,
+    "fp32_margin_between_them": 0.022062301635742188,
+    "both_in_fp32_top2": true,
+    "fp32_prefers": "minfer"
+   },
+   {
+    "case": 17,
+    "position": 13,
+    "minfer_token": 3283,
+    "vllm_token": 315,
+    "fp32_margin_between_them": 0.08892631530761719,
+    "both_in_fp32_top2": true,
+    "fp32_prefers": "minfer"
+   },
+   {
+    "case": 17,
+    "position": 24,
+    "minfer_token": 4013,
+    "vllm_token": 1293,
+    "fp32_margin_between_them": 0.0001430511474609375,
+    "both_in_fp32_top2": true,
+    "fp32_prefers": "minfer"
+   },
+   {
+    "case": 18,
+    "position": 8,
+    "minfer_token": 13598,
+    "vllm_token": 8609,
+    "fp32_margin_between_them": 0.019300460815429688,
+    "both_in_fp32_top2": true,
+    "fp32_prefers": "vllm"
+   },
+   {
+    "case": 19,
+    "position": 73,
+    "minfer_token": 358,
+    "vllm_token": 4354,
+    "fp32_margin_between_them": 0.1338653564453125,
+    "both_in_fp32_top2": true,
+    "fp32_prefers": "vllm"
+   },
+   {
+    "case": 19,
+    "position": 107,
+    "minfer_token": 4623,
+    "vllm_token": 5107,
+    "fp32_margin_between_them": 0.056751251220703125,
+    "both_in_fp32_top2": true,
+    "fp32_prefers": "vllm"
+   },
+   {
+    "case": 19,
+    "position": 122,
+    "minfer_token": 1184,
+    "vllm_token": 1373,
+    "fp32_margin_between_them": 0.08032608032226562,
+    "both_in_fp32_top2": true,
+    "fp32_prefers": "vllm"
+   }
+  ]
+ }
+}

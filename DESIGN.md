@@ -1411,6 +1411,41 @@ Numbers that moved enough to change a statement made earlier in this file:
 "A fresh clone on a fresh H100 reproduces the headline numbers with `make bench`."
 `make bench` is the command that produced every number in the README, run once end to end
 on the development machine after `make test`. **A fresh clone on a second machine was not
-tried** (there is no second machine, and no Modal credentials to run
+tried** (a fresh clone on the same machine was, later: M-018) (there is no second machine, and no Modal credentials to run
 `bench/modal_bench.py`), so reproduction elsewhere is untested; the environments are
 pinned by lock files and built by `scripts/setup_envs.sh`.
+
+### M-018 Fresh-clone reproduction on the development machine
+
+Script: `bench/reproduction.py` → `bench/results/reproduction.json`; the rerun's own result
+files are in `bench/results/reproduction_rerun/` (profiler traces omitted).
+
+- **What was done.** `git clone` of commit 5227474 into a new directory; `HOME` pointed at
+  an empty directory (so no FlashInfer, Triton, vLLM or SGLang JIT caches) and `HF_HOME` at
+  an empty directory (weights and datasets downloaded again); `scripts/setup_envs.sh all`
+  with the environments built in place (3 min with a warm uv cache); `make test`
+  (272 passed in 21 min); `make bench` (2 h 49 min, exit status 0 — the README's "about two
+  hours" was an underestimate and now says three).
+- **What it is not.** The same physical H100, driver and system CUDA toolkit. The plan's
+  acceptance test asks for a fresh H100; that still needs a second machine or Modal
+  credentials.
+- **Result, agent workload.** Every qualitative claim of the README holds in both runs
+  (minfer lowest TTFT p50 and p99 at every rate and at saturation; higher TPOT p50 than
+  vLLM at every rate; lower saturated throughput than both). minfer's rerun / original
+  ratios: TTFT p50 0.94–1.01, TTFT p99 0.92–1.06, TPOT p50 1.00–1.04, saturated throughput
+  1.00 (4219 → 4215 tok/s). The baselines moved by similar amounts (TTFT p50 0.93–1.10,
+  TTFT p99 up to 1.14 for vLLM). Trace hashes are identical in both runs.
+- **Ablations.** Saturated throughput of all 18 configurations is within 0.98–1.03 of the
+  original run. One statement in M-016 does not survive: "with the KV cache cut to 8% the
+  bf16 engine loses 4% of its throughput" (4208 → 4054) was run-to-run noise — in the rerun
+  the small-cache configuration is at 4195 against 4163 for the full system.
+- **What did not reproduce.**
+  - SGLang, ShareGPT at 1 req/s: 119 of 120 requests completed; one connection was dropped
+    (`ServerDisconnectedError` in vLLM's client), and the first request of that run took
+    15 s. SGLang's server log shows nothing at that time; cause not determined. The
+    original run had 0 failures everywhere.
+  - ShareGPT "max" for the baselines: vLLM's median TTFT 1505 → 4006 ms and median TPOT
+    24.4 → 13.4 ms; SGLang's throughput 16102 → 13589 tok/s. minfer: TTFT 2764 → 2596 ms,
+    throughput 24607 → 25627 tok/s. With 1,000 requests arriving at once the outcome
+    depends on how each server's admission happens to interleave with tokenization, and
+    one run of it is not a stable measurement. The README says so.

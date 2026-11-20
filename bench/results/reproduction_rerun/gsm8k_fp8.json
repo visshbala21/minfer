@@ -1,0 +1,203 @@
+{
+ "model": "Qwen/Qwen2.5-1.5B-Instruct",
+ "dataset": "openai/gsm8k (main), test split, first 200 problems",
+ "decoding": "greedy, max_tokens=512, zero-shot chat prompt",
+ "instruction": "Solve the following math problem. Reason step by step, then give the final numeric answer on the last line in the form '#### <number>'.",
+ "settings": {
+  "bf16": {
+   "setting": "bf16",
+   "engine_overrides": {},
+   "generated_tokens": 58508,
+   "wall_seconds": 1.8302841130062006,
+   "output_tokens_per_second": 31966.621785238534,
+   "truncated_at_max_tokens": 12,
+   "decode_step": [
+    {
+     "batch_size": 1,
+     "context_tokens": 512,
+     "steps": 100,
+     "step_ms_p50": 2.157105482183397,
+     "step_ms_p99": 2.281086945731661,
+     "step_ms_mean": 2.1670969505794346,
+     "tokens_per_second": 463.58419106506176
+    },
+    {
+     "batch_size": 64,
+     "context_tokens": 512,
+     "steps": 100,
+     "step_ms_p50": 2.9414585151243955,
+     "step_ms_p99": 3.3038001088425584,
+     "step_ms_mean": 3.0089939309982583,
+     "tokens_per_second": 21757.9135217868
+    },
+    {
+     "batch_size": 256,
+     "context_tokens": 512,
+     "steps": 100,
+     "step_ms_p50": 5.292893998557702,
+     "step_ms_p99": 6.210898768331392,
+     "step_ms_mean": 5.340918269357644,
+     "tokens_per_second": 48366.734733353675
+    }
+   ],
+   "weight_bytes": 3104205824,
+   "kv_blocks": 156066,
+   "kv_capacity_tokens": 2497056,
+   "kv_store_bytes": 71596048384,
+   "kv_bytes_per_token": 28672.0,
+   "gpu_free_bytes_before_load": 84467187712,
+   "correct": 138,
+   "accuracy": 0.69,
+   "no_answer_extracted": 0,
+   "same_final_answer_as_first_setting": 200
+  },
+  "fp8_kv": {
+   "setting": "fp8_kv",
+   "engine_overrides": {
+    "kv_cache_dtype": "fp8"
+   },
+   "generated_tokens": 55984,
+   "wall_seconds": 2.5388623239996377,
+   "output_tokens_per_second": 22050.8215316712,
+   "truncated_at_max_tokens": 8,
+   "decode_step": [
+    {
+     "batch_size": 1,
+     "context_tokens": 512,
+     "steps": 100,
+     "step_ms_p50": 2.7253429871052504,
+     "step_ms_p99": 2.8066688304534186,
+     "step_ms_mean": 2.7311141189420596,
+     "tokens_per_second": 366.9262932157247
+    },
+    {
+     "batch_size": 64,
+     "context_tokens": 512,
+     "steps": 100,
+     "step_ms_p50": 4.1664445016067475,
+     "step_ms_p99": 4.455115540185944,
+     "step_ms_mean": 4.225201059307437,
+     "tokens_per_second": 15360.819032947407
+    },
+    {
+     "batch_size": 256,
+     "context_tokens": 512,
+     "steps": 100,
+     "step_ms_p50": 8.634907513624057,
+     "step_ms_p99": 9.934485743288,
+     "step_ms_mean": 8.779864139214624,
+     "tokens_per_second": 29647.10387413949
+    }
+   ],
+   "weight_bytes": 3104205824,
+   "kv_blocks": 299043,
+   "kv_capacity_tokens": 4784688,
+   "kv_store_bytes": 71043284992,
+   "kv_bytes_per_token": 14848.0,
+   "gpu_free_bytes_before_load": 84121157632,
+   "correct": 137,
+   "accuracy": 0.685,
+   "no_answer_extracted": 0,
+   "same_final_answer_as_first_setting": 145
+  },
+  "fp8_weights": {
+   "setting": "fp8_weights",
+   "engine_overrides": {
+    "weight_dtype": "fp8"
+   },
+   "generated_tokens": 57605,
+   "wall_seconds": 3.8475288699846715,
+   "output_tokens_per_second": 14971.947436025217,
+   "truncated_at_max_tokens": 7,
+   "decode_step": [
+    {
+     "batch_size": 1,
+     "context_tokens": 512,
+     "steps": 100,
+     "step_ms_p50": 4.4032814912498,
+     "step_ms_p99": 4.618095289333725,
+     "step_ms_mean": 4.41632285801461,
+     "tokens_per_second": 227.10335507443708
+    },
+    {
+     "batch_size": 64,
+     "context_tokens": 512,
+     "steps": 100,
+     "step_ms_p50": 6.902499502757564,
+     "step_ms_p99": 7.167172716290234,
+     "step_ms_mean": 6.976889821526129,
+     "tokens_per_second": 9272.003565437688
+    },
+    {
+     "batch_size": 256,
+     "context_tokens": 512,
+     "steps": 100,
+     "step_ms_p50": 9.625620019505732,
+     "step_ms_p99": 10.627505515585664,
+     "step_ms_mean": 9.676970907894429,
+     "tokens_per_second": 26595.689366631097
+    }
+   ],
+   "weight_bytes": 1794010896,
+   "kv_blocks": 155642,
+   "kv_capacity_tokens": 2490272,
+   "kv_store_bytes": 71401537536,
+   "kv_bytes_per_token": 28672.0,
+   "gpu_free_bytes_before_load": 84119060480,
+   "correct": 141,
+   "accuracy": 0.705,
+   "no_answer_extracted": 0,
+   "same_final_answer_as_first_setting": 148
+  },
+  "fp8_weights_and_kv": {
+   "setting": "fp8_weights_and_kv",
+   "engine_overrides": {
+    "kv_cache_dtype": "fp8",
+    "weight_dtype": "fp8"
+   },
+   "generated_tokens": 55686,
+   "wall_seconds": 4.4908200499776285,
+   "output_tokens_per_second": 12399.962452353753,
+   "truncated_at_max_tokens": 8,
+   "decode_step": [
+    {
+     "batch_size": 1,
+     "context_tokens": 512,
+     "steps": 100,
+     "step_ms_p50": 5.003444995963946,
+     "step_ms_p99": 5.060156909457874,
+     "step_ms_mean": 5.010182639816776,
+     "tokens_per_second": 199.8622950400484
+    },
+    {
+     "batch_size": 64,
+     "context_tokens": 512,
+     "steps": 100,
+     "step_ms_p50": 8.07759449526202,
+     "step_ms_p99": 8.345660063787363,
+     "step_ms_mean": 8.13689105125377,
+     "tokens_per_second": 7923.150888242749
+    },
+    {
+     "batch_size": 256,
+     "context_tokens": 512,
+     "steps": 100,
+     "step_ms_p50": 12.777535506756976,
+     "step_ms_p99": 13.719186909729661,
+     "step_ms_mean": 12.949484171113,
+     "tokens_per_second": 20035.162482203465
+    }
+   ],
+   "weight_bytes": 1794010896,
+   "kv_blocks": 298232,
+   "kv_capacity_tokens": 4771712,
+   "kv_store_bytes": 70850617344,
+   "kv_bytes_per_token": 14848.0,
+   "gpu_free_bytes_before_load": 83777224704,
+   "correct": 142,
+   "accuracy": 0.71,
+   "no_answer_extracted": 0,
+   "same_final_answer_as_first_setting": 140
+  }
+ }
+}

@@ -1,0 +1,203 @@
+{
+ "model": "Qwen/Qwen2.5-1.5B-Instruct",
+ "dtype": "bfloat16",
+ "workload": {
+  "sessions": 16,
+  "turns_per_session": 4,
+  "requests": 64,
+  "prompt_tokens": 56983,
+  "max_tokens": 64
+ },
+ "identical_outputs": 46,
+ "diverged_outputs": 18,
+ "max_fp32_margin_at_divergence": 0.13251876831054688,
+ "divergences": [
+  {
+   "session": 1,
+   "turn": 1,
+   "first_divergence": 25,
+   "cache_on_token": 576,
+   "cache_off_token": 5692,
+   "fp32_top2_margin": 0.1067047119140625,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 2,
+   "turn": 3,
+   "first_divergence": 31,
+   "cache_on_token": 26364,
+   "cache_off_token": 3238,
+   "fp32_top2_margin": 0.0024356842041015625,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 3,
+   "turn": 2,
+   "first_divergence": 53,
+   "cache_on_token": 438,
+   "cache_off_token": 12440,
+   "fp32_top2_margin": 0.013103485107421875,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 4,
+   "turn": 1,
+   "first_divergence": 48,
+   "cache_on_token": 624,
+   "cache_off_token": 382,
+   "fp32_top2_margin": 0.025011062622070312,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 5,
+   "turn": 2,
+   "first_divergence": 20,
+   "cache_on_token": 2038,
+   "cache_off_token": 1273,
+   "fp32_top2_margin": 0.04352569580078125,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 7,
+   "turn": 2,
+   "first_divergence": 7,
+   "cache_on_token": 448,
+   "cache_off_token": 1380,
+   "fp32_top2_margin": 0.06704521179199219,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 8,
+   "turn": 1,
+   "first_divergence": 22,
+   "cache_on_token": 22683,
+   "cache_off_token": 729,
+   "fp32_top2_margin": 0.023092269897460938,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 9,
+   "turn": 1,
+   "first_divergence": 25,
+   "cache_on_token": 60601,
+   "cache_off_token": 279,
+   "fp32_top2_margin": 0.13251876831054688,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 9,
+   "turn": 2,
+   "first_divergence": 36,
+   "cache_on_token": 429,
+   "cache_off_token": 2615,
+   "fp32_top2_margin": 0.03723907470703125,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 10,
+   "turn": 0,
+   "first_divergence": 14,
+   "cache_on_token": 990,
+   "cache_off_token": 1795,
+   "fp32_top2_margin": 0.06743240356445312,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 11,
+   "turn": 0,
+   "first_divergence": 8,
+   "cache_on_token": 323,
+   "cache_off_token": 11,
+   "fp32_top2_margin": 0.026510238647460938,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 12,
+   "turn": 1,
+   "first_divergence": 13,
+   "cache_on_token": 3728,
+   "cache_off_token": 22683,
+   "fp32_top2_margin": 0.0621185302734375,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 13,
+   "turn": 0,
+   "first_divergence": 19,
+   "cache_on_token": 1849,
+   "cache_off_token": 4625,
+   "fp32_top2_margin": 0.011249542236328125,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 13,
+   "turn": 1,
+   "first_divergence": 25,
+   "cache_on_token": 279,
+   "cache_off_token": 60601,
+   "fp32_top2_margin": 0.05888938903808594,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 14,
+   "turn": 1,
+   "first_divergence": 22,
+   "cache_on_token": 22683,
+   "cache_off_token": 729,
+   "fp32_top2_margin": 0.04366302490234375,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 15,
+   "turn": 0,
+   "first_divergence": 8,
+   "cache_on_token": 11,
+   "cache_off_token": 323,
+   "fp32_top2_margin": 0.011899948120117188,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 15,
+   "turn": 1,
+   "first_divergence": 25,
+   "cache_on_token": 279,
+   "cache_off_token": 60601,
+   "fp32_top2_margin": 0.057689666748046875,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 15,
+   "turn": 2,
+   "first_divergence": 20,
+   "cache_on_token": 358,
+   "cache_off_token": 498,
+   "fp32_top2_margin": 0.04034233093261719,
+   "both_in_fp32_top2": true
+  }
+ ],
+ "noise_floor_cache_off_vs_cache_off_rebatched": {
+  "what": "both runs without the cache; second run limited to 5 concurrent sequences",
+  "identical_outputs": 46,
+  "diverged_outputs": 18,
+  "max_fp32_margin_at_divergence": 0.2040252685546875
+ },
+ "prefix_cache": {
+  "hit_rate": 0.7471670268275971,
+  "lookups": 64,
+  "hits": 48,
+  "lookup_tokens": 56919,
+  "hit_tokens": 42528,
+  "catchup_tokens": 3568,
+  "prefill_tokens_saved": 46096,
+  "cached_blocks_at_end": 460,
+  "nodes_at_end": 52
+ },
+ "tokens_through_the_model": {
+  "cache_off": 60572,
+  "cache_on": 14302
+ },
+ "wall_seconds": {
+  "cache_off": 1.1115528229856864,
+  "cache_on": 0.6737917569989804
+ }
+}
