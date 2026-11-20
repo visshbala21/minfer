@@ -41,6 +41,8 @@ class Sequence:
         status: Current lifecycle state.
         finish_reason: ``"stop"`` or ``"length"`` once finished.
         num_preemptions: Times the sequence lost its KV and had to recompute.
+        synced_blocks: Leading full blocks already shared through the prefix cache.
+        cache_hit_tokens: Tokens taken from the prefix cache at the first admission.
         rng: The request's own random stream (seeded requests only).
     """
 
@@ -54,6 +56,8 @@ class Sequence:
     status: SequenceStatus = SequenceStatus.WAITING
     finish_reason: str | None = None
     num_preemptions: int = 0
+    synced_blocks: int = 0
+    cache_hit_tokens: int = 0
     rng: random.Random | None = field(default=None, repr=False)
 
     @property

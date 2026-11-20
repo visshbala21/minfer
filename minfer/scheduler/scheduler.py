@@ -10,10 +10,14 @@ allocated before the plan is returned, so the forward pass cannot run out of mem
 
 from __future__ import annotations
 
+import time
 from collections import deque
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from itertools import islice
 
 from minfer.cache.block_manager import BlockManager, OutOfBlocks
+from minfer.cache.radix_tree import PrefixCache
 from minfer.scheduler.sequence import Sequence, SequenceStatus
 
 
@@ -31,12 +35,21 @@ class SchedulerConfig:
             ``max_batched_tokens``.
         watermark: Fraction of the block pool kept free at admission time, so that already
             running sequences can keep growing without immediately preempting a newcomer.
+        cache_aware: With a prefix cache, admit the waiting sequence with the longest cached
+            prefix first instead of the oldest.
+        starvation_seconds: Starvation guard for cache-aware admission: a sequence that has
+            waited this long is admitted in arrival order, ahead of any cache preference.
+        admission_window: How many of the oldest waiting sequences cache-aware admission
+            considers each time (bounds the per-step cost of looking prefixes up).
     """
 
     max_num_seqs: int = 256
     max_batched_tokens: int = 8192
     max_prefill_tokens: int | None = None
     watermark: float = 0.01
+    cache_aware: bool = True
+    starvation_seconds: float = 1.0
+    admission_window: int = 32
 
     def __post_init__(self) -> None:
         if self.max_num_seqs < 1 or self.max_batched_tokens < 1:
@@ -67,24 +80,45 @@ class StepPlan:
 
 
 class Scheduler:
-    """First-come-first-served continuous batching with preemption by recompute.
+    """Continuous batching with preemption by recompute and an optional prefix cache.
 
-    * **Admission.** Waiting sequences are admitted in order while a running slot is free
-      and the pool can hold their whole pending context on top of what earlier admissions
-      still have to allocate, plus the watermark. Admission stops at the first sequence that
-      does not fit (no overtaking, so long prompts cannot starve).
+    * **Admission.** Waiting sequences are admitted one at a time while a running slot is
+      free and the pool can hold the candidate's whole pending context on top of what
+      earlier admissions still have to allocate, plus the watermark. Admission stops at the
+      first candidate that does not fit. Without a prefix cache (or with ``cache_aware``
+      off) the candidate is the oldest waiting sequence: plain FCFS, no overtaking.
+    * **Cache-aware admission.** With a prefix cache the candidate is, among the oldest
+      ``admission_window`` waiting sequences, the one with the longest cached prefix: it
+      is the cheapest to start, and admitting it now uses cached blocks before memory
+      pressure evicts them. Two things override the preference, in arrival order:
+      preempted sequences (they already hold a place) and sequences that have waited
+      longer than ``starvation_seconds``.
     * **Step selection.** Running sequences are visited oldest first. A sequence with one
       pending token decodes; one with more prefills as much as the token budget allows.
-    * **Preemption.** When a sequence cannot get a block, the most recently admitted running
-      sequence is preempted: its blocks are freed and it returns to the *front* of the
-      waiting queue keeping its generated tokens, to be recomputed later. Because sequences
-      are visited oldest first, a victim is never one already selected for this step, and
-      the oldest sequence can always make progress.
+    * **Memory pressure.** When a sequence cannot get a block, blocks held only by the
+      prefix cache are evicted first. If that is not enough, the most recently admitted
+      running sequence is preempted: its blocks are released and it returns to the *front*
+      of the waiting queue keeping its generated tokens, to be recomputed later. Because
+      sequences are visited oldest first, a victim is never one already selected for this
+      step, and the oldest sequence can always make progress.
+    * **Sharing.** With a prefix cache, every full block a sequence computes is inserted
+      into the radix tree as soon as the step that filled it completes, and a sequence
+      that is still prefilling re-checks the tree before each chunk. Requests with a
+      common prefix that arrive together therefore compute it once: the first chunk of
+      the first request is in the tree before the others are scheduled.
     """
 
-    def __init__(self, config: SchedulerConfig, blocks: BlockManager) -> None:
+    def __init__(
+        self,
+        config: SchedulerConfig,
+        blocks: BlockManager,
+        cache: PrefixCache | None = None,
+        clock: Callable[[], float] = time.perf_counter,
+    ) -> None:
         self.config = config
         self.blocks = blocks
+        self.cache = cache
+        self.clock = clock
         self.waiting: deque[Sequence] = deque()
         self.running: list[Sequence] = []
         self.num_preemptions = 0
@@ -109,10 +143,14 @@ class Scheduler:
                 f"{self.max_sequence_tokens} tokens"
             )
         seq.status = SequenceStatus.WAITING
+        seq.arrival_time = self.clock()
         self.waiting.append(seq)
 
     def finish(self, seq: Sequence, reason: str) -> None:
-        """Mark a running sequence finished and release its blocks."""
+        """Mark a running sequence finished and release its blocks.
+
+        Blocks the prefix cache also holds stay allocated (and become evictable).
+        """
         seq.status = SequenceStatus.FINISHED
         seq.finish_reason = reason
         self.running.remove(seq)
@@ -127,13 +165,50 @@ class Scheduler:
             seq.status = SequenceStatus.FINISHED
             seq.finish_reason = "abort"
 
+    # ---------------------------------------------------------- prefix cache
+
+    def _sync(self, seq: Sequence) -> int:
+        """Exchange full blocks with the prefix cache; return the tokens newly adopted."""
+        before = seq.num_cached
+        seq.num_cached = self.cache.sync_sequence(seq.seq_id, seq.tokens, before)
+        seq.synced_blocks = seq.num_cached // self.blocks.block_size
+        return seq.num_cached - before
+
+    def commit(self, seqs: Iterable[Sequence]) -> None:
+        """Publish the blocks a step filled. Call after the step's tokens are appended."""
+        if self.cache is None:
+            return
+        size = self.blocks.block_size
+        for seq in seqs:
+            if seq.num_cached // size > seq.synced_blocks:
+                self._sync(seq)
+
     # ------------------------------------------------------------- admission
+
+    def _next_candidate(self) -> Sequence:
+        """The waiting sequence to try to admit next."""
+        head = self.waiting[0]
+        if self.cache is None or not self.config.cache_aware or len(self.waiting) == 1:
+            return head
+        if (
+            head.num_preemptions
+            or self.clock() - head.arrival_time >= self.config.starvation_seconds
+        ):
+            return head
+        best, best_length = head, self.cache.match_length(head.tokens)
+        for seq in islice(self.waiting, 1, self.config.admission_window):
+            if seq.num_preemptions:
+                continue
+            length = self.cache.match_length(seq.tokens)
+            if length > best_length:
+                best, best_length = seq, length
+        return best
 
     def _admit(self) -> None:
         """Move waiting sequences to running while slots and memory allow."""
         if not self.waiting:
             return
-        blocks = self.blocks
+        blocks, cache = self.blocks, self.cache
         reserve = int(blocks.num_usable * self.config.watermark)
         # Blocks that running sequences still have to allocate to finish their prefill.
         promised = sum(
@@ -142,16 +217,32 @@ class Scheduler:
             if s.num_pending > 1
         )
         while self.waiting and len(self.running) < self.config.max_num_seqs:
-            seq = self.waiting[0]
-            needed = blocks.blocks_for(len(seq.tokens) + 1)
-            fits = blocks.num_free - promised - reserve >= needed
-            # With nothing running the head must be admitted, or nothing ever would be.
-            if not fits and self.running:
+            available = blocks.num_free + blocks.num_evictable - promised - reserve
+            if available <= 0 and self.running:
                 break
-            self.waiting.popleft()
+            seq = self._next_candidate()
+            adopted = self._sync(seq) if cache is not None else 0
+            needed = blocks.blocks_missing(seq.seq_id, len(seq.tokens) + 1)
+            # Adopting cached blocks pinned them, so they no longer count as evictable.
+            fits = blocks.num_free + blocks.num_evictable - promised - reserve >= needed
+            # With nothing running the candidate must be admitted, or nothing ever would be.
+            if not fits and self.running:
+                if adopted:
+                    blocks.free(seq.seq_id)
+                    seq.num_cached = seq.synced_blocks = 0
+                break
+            self.waiting.remove(seq)
             seq.status = SequenceStatus.RUNNING
             self.running.append(seq)
             promised += needed
+            if cache is not None:
+                stats = cache.stats
+                stats.lookups += 1
+                stats.lookup_tokens += len(seq.tokens) - 1
+                stats.hit_tokens += adopted
+                stats.hits += adopted > 0
+                if not seq.num_preemptions:
+                    seq.cache_hit_tokens = adopted
 
     # ------------------------------------------------------------ preemption
 
@@ -159,22 +250,27 @@ class Scheduler:
         """Take a running sequence's KV away and put it at the front of the queue."""
         self.running.remove(seq)
         self.blocks.free(seq.seq_id)
-        seq.num_cached = 0
+        seq.num_cached = seq.synced_blocks = 0
         seq.num_preemptions += 1
         seq.status = SequenceStatus.WAITING
         self.waiting.appendleft(seq)
         self.num_preemptions += 1
 
     def _reserve(self, seq: Sequence, num_tokens: int) -> bool:
-        """Allocate blocks so ``seq`` can hold ``num_tokens``, preempting younger sequences.
+        """Allocate blocks so ``seq`` can hold ``num_tokens``.
 
+        Evicts unreferenced cache blocks first and preempts younger sequences after that.
         Returns ``False`` if ``seq`` itself had to be preempted.
         """
+        blocks = self.blocks
         while True:
             try:
-                self.blocks.ensure_capacity(seq.seq_id, num_tokens)
+                blocks.ensure_capacity(seq.seq_id, num_tokens)
                 return True
             except OutOfBlocks:
+                short = blocks.blocks_missing(seq.seq_id, num_tokens) - blocks.num_free
+                if self.cache is not None and self.cache.evict(short):
+                    continue
                 victim = self.running[-1]
                 self._preempt(victim)
                 if victim is seq:
@@ -196,14 +292,16 @@ class Scheduler:
         while index < len(self.running):
             seq = self.running[index]
             index += 1
-            pending = seq.num_pending
-            if pending == 1:
+            if seq.num_pending == 1:
                 if self._reserve(seq, seq.num_cached + 1):
                     plan.decode.append(seq)
                 continue
-            count = min(pending, prefill_budget)
-            if count == 0:
+            if prefill_budget == 0:
                 continue
+            if self.cache is not None:
+                # Catch up with whatever other sequences cached since this one last looked.
+                self.cache.stats.catchup_tokens += self._sync(seq)
+            count = min(seq.num_pending, prefill_budget)
             if self._reserve(seq, seq.num_cached + count):
                 plan.prefill.append((seq, count))
                 prefill_budget -= count

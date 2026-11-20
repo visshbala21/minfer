@@ -244,3 +244,180 @@ def test_prefill_chunk_budget_does_not_apply_without_decoders():
     a = seq(0, 100)
     sched.add(a)
     assert sched.schedule().prefill == [(a, 100)]
+
+
+# ------------------------------------------------------------------- prefix cache
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def make_cached(num_blocks=101, **config):
+    from minfer.cache import PrefixCache
+
+    config.setdefault("watermark", 0.0)
+    blocks = BlockManager(num_blocks, BLOCK)
+    cache = PrefixCache(blocks)
+    clock = FakeClock()
+    return Scheduler(SchedulerConfig(**config), blocks, cache, clock), blocks, cache, clock
+
+
+def prompt_seq(seq_id: int, tokens: list[int], max_new: int = 4) -> Sequence:
+    return Sequence(
+        seq_id=seq_id,
+        tokens=list(tokens),
+        prompt_len=len(tokens),
+        params=SamplingParams(max_tokens=max_new),
+        max_new_tokens=max_new,
+    )
+
+
+def run_to_completion(sched, seq_obj) -> None:
+    while seq_obj.status is not SequenceStatus.FINISHED:
+        plan = sched.schedule()
+        execute(plan, token=1000 + seq_obj.seq_id)
+        sched.commit([s for s, _ in plan.prefill] + plan.decode)
+        if seq_obj.num_generated >= seq_obj.max_new_tokens:
+            sched.finish(seq_obj, "length")
+
+
+def test_cache_hit_skips_the_cached_prefix():
+    sched, blocks, cache, _ = make_cached()
+    system = list(range(100, 140))  # 10 blocks
+    first = prompt_seq(0, [*system, 1, 2, 3])
+    sched.add(first)
+    run_to_completion(sched, first)
+    assert blocks.num_evictable == cache.num_blocks > 0
+
+    second = prompt_seq(1, [*system, 7, 8, 9, 10, 11])
+    sched.add(second)
+    plan = sched.schedule()
+    assert plan.prefill == [(second, 5)]  # only the tokens after the shared 40
+    assert second.num_cached == 40 and second.cache_hit_tokens == 40
+    assert blocks.table(1)[:10] == [b for node in cache.nodes() for b in node.blocks][:10]
+    stats = cache.stats
+    assert (stats.lookups, stats.hits, stats.hit_tokens) == (2, 1, 40)
+    assert stats.lookup_tokens == (43 - 1) + (45 - 1)
+
+
+def test_cache_aware_admission_prefers_the_longest_cached_prefix():
+    sched, _, _, _ = make_cached(max_num_seqs=1)
+    system = list(range(100, 140))
+    warm = prompt_seq(0, [*system, 1])
+    sched.add(warm)
+    run_to_completion(sched, warm)
+
+    cold = prompt_seq(1, list(range(500, 530)))
+    partial = prompt_seq(2, system[:20] + list(range(600, 620)))
+    hot = prompt_seq(3, [*system, 5, 6])
+    for s in (cold, partial, hot):
+        sched.add(s)
+    order = []
+    while sched.has_work:
+        sched.schedule()
+        (current,) = sched.running
+        if not order or order[-1] != current.seq_id:
+            order.append(current.seq_id)
+        run_to_completion(sched, current)
+    assert order == [3, 2, 1]
+
+
+def test_fcfs_when_cache_aware_is_off():
+    sched, _, _, _ = make_cached(max_num_seqs=1, cache_aware=False)
+    system = list(range(100, 140))
+    warm = prompt_seq(0, [*system, 1])
+    sched.add(warm)
+    run_to_completion(sched, warm)
+    cold, hot = prompt_seq(1, list(range(500, 530))), prompt_seq(2, [*system, 5, 6])
+    sched.add(cold)
+    sched.add(hot)
+    sched.schedule()
+    assert sched.running == [cold]
+    assert hot.num_cached == 0  # still waiting, holds nothing
+
+
+def test_starvation_guard_restores_arrival_order():
+    sched, _, _, clock = make_cached(max_num_seqs=1, starvation_seconds=2.0)
+    system = list(range(100, 140))
+    warm = prompt_seq(0, [*system, 1])
+    sched.add(warm)
+    run_to_completion(sched, warm)
+
+    cold = prompt_seq(1, list(range(500, 530)))
+    sched.add(cold)
+    served = []
+    for i in range(6):  # a steady stream of cache-hitting requests arriving behind it
+        clock.now += 0.5
+        hot = prompt_seq(10 + i, [*system, 50 + i, 60 + i])
+        sched.add(hot)
+        sched.schedule()
+        (current,) = sched.running
+        served.append(current.seq_id)
+        run_to_completion(sched, current)
+    # Hot requests overtake until the cold one has waited 2 s, then it goes first.
+    assert served[:3] == [10, 11, 12]
+    assert served[3] == 1
+    assert cold.status is SequenceStatus.FINISHED
+
+
+def test_preempted_sequences_are_readmitted_before_cache_hits():
+    sched, _, _, _ = make_cached(num_blocks=13, max_num_seqs=2)  # 12 usable blocks
+    system = list(range(100, 116))  # 4 blocks
+    a, b = prompt_seq(0, [*system, 1], max_new=30), prompt_seq(1, list(range(300, 318)), max_new=30)
+    sched.add(a)
+    sched.add(b)
+    hot = prompt_seq(2, [*system, 9, 9])
+    preempted = None
+    for _ in range(40):
+        plan = sched.schedule()
+        execute(plan)
+        sched.commit([s for s, _ in plan.prefill] + plan.decode)
+        if sched.num_preemptions and preempted is None:
+            preempted = sched.waiting[0]
+            sched.add(hot)
+            break
+    assert preempted is b
+    sched.finish(a, "length")
+    sched.schedule()
+    assert sched.running[0] is b  # not the cache-hitting newcomer
+
+
+def test_eviction_is_tried_before_preemption():
+    sched, blocks, cache, _ = make_cached(num_blocks=21)  # 20 usable
+    old = prompt_seq(0, list(range(100, 148)))  # 12 blocks, then cached
+    sched.add(old)
+    run_to_completion(sched, old)
+    assert blocks.num_evictable == cache.num_blocks >= 12
+    a, b = prompt_seq(1, list(range(200, 230))), prompt_seq(2, list(range(300, 330)))
+    sched.add(a)
+    sched.add(b)
+    plan = sched.schedule()
+    # 16 blocks needed, 8 free: the cache gives up blocks, nobody is preempted.
+    assert [s.seq_id for s, _ in plan.prefill] == [1, 2]
+    assert sched.num_preemptions == 0 and cache.stats.evicted_blocks >= 8
+    cache.check_invariants()
+    blocks.check_invariants(external_refs=cache.block_refs())
+
+
+def test_failed_admission_releases_adopted_blocks():
+    sched, blocks, cache, _ = make_cached(num_blocks=21, max_num_seqs=4)  # 20 usable
+    system = list(range(100, 132))  # 8 blocks
+    warm = prompt_seq(0, [*system, 1])
+    sched.add(warm)
+    run_to_completion(sched, warm)
+    hog = prompt_seq(1, list(range(400, 444)), max_new=1)  # 12 blocks: evicts nothing yet
+    sched.add(hog)
+    execute(sched.schedule())
+    # A request that hits the cache but needs more than what is left must not keep its pins.
+    big = prompt_seq(2, system + list(range(600, 640)))
+    sched.add(big)
+    sched.schedule()
+    assert big.status is SequenceStatus.WAITING
+    assert big.num_cached == 0 and blocks.table(2) == []
+    assert blocks.num_evictable == cache.num_blocks
+    blocks.check_invariants(external_refs=cache.block_refs())
