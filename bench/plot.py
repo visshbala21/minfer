@@ -23,6 +23,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 
+from bench import models
+
 RESULTS = Path("bench/results")
 PLOTS = Path("bench/plots")
 
@@ -83,11 +85,11 @@ def _finish(fig: plt.Figure, axes: list[Axes], title: str, note: str, name: str)
     print(f"wrote {PLOTS / name}")
 
 
-def load_matrix() -> dict[str, dict[str, Any]]:
-    """Per-engine results of ``bench/run_matrix.py``, in the fixed engine order."""
+def load_matrix(model: str) -> dict[str, dict[str, Any]]:
+    """Per-engine results of ``bench/run_matrix.py`` for ``model``, in the fixed engine order."""
     found = {}
     for engine in SERIES:
-        path = RESULTS / "matrix" / f"{engine}.json"
+        path = models.results_path(RESULTS / "matrix", model) / f"{engine}.json"
         if path.exists():
             found[engine] = json.loads(path.read_text())
     return found
@@ -121,7 +123,9 @@ PANELS = [
 ]
 
 
-def plot_workload(matrix: dict[str, dict[str, Any]], workload: str, title: str, note: str) -> None:
+def plot_workload(
+    matrix: dict[str, dict[str, Any]], workload: str, title: str, note: str, suffix: str
+) -> None:
     """Six small multiples (one measure each) of every engine across request rates."""
     engines = [e for e in matrix if matrix[e].get(workload)]
     if not engines:
@@ -139,10 +143,10 @@ def plot_workload(matrix: dict[str, dict[str, Any]], workload: str, title: str, 
         ax.set_xlabel("request rate (req/s)")
         ax.set_ylim(bottom=0)
         ax.margins(x=0.12)
-    _finish(fig, axes, title, note, f"{workload}_vs_rate.png")
+    _finish(fig, axes, title, note, f"{workload}_vs_rate{suffix}.png")
 
 
-def plot_agent_hit_rate(matrix: dict[str, dict[str, Any]]) -> None:
+def plot_agent_hit_rate(matrix: dict[str, dict[str, Any]], suffix: str) -> None:
     """Prefix-cache hit rate and first-turn vs later-turn TTFT on the agent workload."""
     engines = [e for e in matrix if matrix[e].get("agent")]
     if not engines:
@@ -167,7 +171,9 @@ def plot_agent_hit_rate(matrix: dict[str, dict[str, Any]]) -> None:
         ax.set_ylim(bottom=0)
         ax.margins(x=0.12)
     note = "Hit rate = cached prompt tokens / prompt tokens, from each server's own metrics."
-    _finish(fig, list(axes), "Agent workload: prefix reuse", note, "agent_prefix_cache.png")
+    _finish(
+        fig, list(axes), "Agent workload: prefix reuse", note, f"agent_prefix_cache{suffix}.png"
+    )
 
 
 def plot_decode_latency() -> None:
@@ -265,17 +271,23 @@ def plot_triton_kernel() -> None:
 
 def main() -> None:
     argparse.ArgumentParser(description=__doc__.split("\n\n")[0]).parse_args()
-    matrix = load_matrix()
-    agent_note = (
-        "Multi-turn agent sessions (bench/agent_workload.py), identical traces for every engine; "
-        "greedy; 'max' = all sessions at once, no think time."
-    )
-    plot_workload(matrix, "agent", "Agent workload: minfer vs vLLM vs SGLang", agent_note)
-    plot_agent_hit_rate(matrix)
-    sharegpt_note = (
-        "ShareGPT single-turn requests driven by `vllm bench serve` (control workload); greedy."
-    )
-    plot_workload(matrix, "sharegpt", "ShareGPT control workload", sharegpt_note)
+    # The 7B model's charts carry the plain file names; the 1.5B model's a suffix.
+    for model, suffix in ((models.PRIMARY, ""), (models.SECONDARY, "_1.5b")):
+        matrix = load_matrix(model)
+        name = model.rsplit("/", 1)[-1]
+        agent_note = (
+            f"{name}. Multi-turn agent sessions (bench/agent_workload.py), identical traces "
+            "for every engine; greedy; 'max' = all sessions at once, no think time."
+        )
+        title = f"Agent workload, {name}: minfer vs vLLM vs SGLang"
+        plot_workload(matrix, "agent", title, agent_note, suffix)
+        plot_agent_hit_rate(matrix, suffix)
+        sharegpt_note = (
+            f"{name}. ShareGPT single-turn requests driven by `vllm bench serve` "
+            "(control workload); greedy."
+        )
+        title = f"ShareGPT control workload, {name}"
+        plot_workload(matrix, "sharegpt", title, sharegpt_note, suffix)
     plot_decode_latency()
     plot_chunked_prefill()
     plot_triton_kernel()

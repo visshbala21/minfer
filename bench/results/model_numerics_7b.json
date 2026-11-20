@@ -1,0 +1,121 @@
+{
+  "model": "Qwen/Qwen2.5-7B-Instruct",
+  "torch": "2.14.0+cu130",
+  "gpu": "NVIDIA H100 80GB HBM3",
+  "prompts": {
+    "english": {
+      "num_tokens": 112,
+      "fp32_minfer_vs_hf_max_abs": 5.817413330078125e-05,
+      "bf16_minfer_vs_hf_bf16_max_abs": 1.765625,
+      "bf16_minfer_vs_hf_fp32": {
+        "max_abs": 9.31788444519043,
+        "mean_abs": 0.06277842819690704,
+        "top1_agreement": 0.973214328289032,
+        "kl_mean": 0.0008429752230260424,
+        "kl_max": 0.036733091178399555
+      },
+      "bf16_hf_vs_hf_fp32": {
+        "max_abs": 10.06788444519043,
+        "mean_abs": 0.0730404332280159,
+        "top1_agreement": 0.973214328289032,
+        "kl_mean": 0.000950029356131974,
+        "kl_max": 0.040436338028942136
+      },
+      "fp32_reference_logit_std": 4.020571231842041,
+      "fp32_reference_median_top1_margin": 1.2724590301513672
+    },
+    "code": {
+      "num_tokens": 161,
+      "fp32_minfer_vs_hf_max_abs": 7.43865966796875e-05,
+      "bf16_minfer_vs_hf_bf16_max_abs": 0.0,
+      "bf16_minfer_vs_hf_fp32": {
+        "max_abs": 1.3275494575500488,
+        "mean_abs": 0.037770744413137436,
+        "top1_agreement": 1.0,
+        "kl_mean": 0.00020015205373993686,
+        "kl_max": 0.007975038900208729
+      },
+      "bf16_hf_vs_hf_fp32": {
+        "max_abs": 1.3275494575500488,
+        "mean_abs": 0.037770744413137436,
+        "top1_agreement": 1.0,
+        "kl_mean": 0.00020015205373993686,
+        "kl_max": 0.007975038900208729
+      },
+      "fp32_reference_logit_std": 3.7933359146118164,
+      "fp32_reference_median_top1_margin": 4.605215072631836
+    },
+    "chinese": {
+      "num_tokens": 78,
+      "fp32_minfer_vs_hf_max_abs": 5.7220458984375e-05,
+      "bf16_minfer_vs_hf_bf16_max_abs": 0.0,
+      "bf16_minfer_vs_hf_fp32": {
+        "max_abs": 11.380681037902832,
+        "mean_abs": 0.0451686717569828,
+        "top1_agreement": 0.9871795177459717,
+        "kl_mean": 0.010690316556076345,
+        "kl_max": 0.7897184694610534
+      },
+      "bf16_hf_vs_hf_fp32": {
+        "max_abs": 11.380681037902832,
+        "mean_abs": 0.0451686717569828,
+        "top1_agreement": 0.9871795177459717,
+        "kl_mean": 0.010690316556076345,
+        "kl_max": 0.7897184694610534
+      },
+      "fp32_reference_logit_std": 3.020456314086914,
+      "fp32_reference_median_top1_margin": 1.3314666748046875
+    },
+    "chat": {
+      "num_tokens": 115,
+      "fp32_minfer_vs_hf_max_abs": 0.00022649765014648438,
+      "bf16_minfer_vs_hf_bf16_max_abs": 0.0,
+      "bf16_minfer_vs_hf_fp32": {
+        "max_abs": 9.72077751159668,
+        "mean_abs": 0.07065561413764954,
+        "top1_agreement": 0.9826086759567261,
+        "kl_mean": 0.010196324135764549,
+        "kl_max": 0.9403825812438606
+      },
+      "bf16_hf_vs_hf_fp32": {
+        "max_abs": 9.72077751159668,
+        "mean_abs": 0.07065561413764954,
+        "top1_agreement": 0.9826086759567261,
+        "kl_mean": 0.010196324135764549,
+        "kl_max": 0.9403825812438606
+      },
+      "fp32_reference_logit_std": 3.4522619247436523,
+      "fp32_reference_median_top1_margin": 2.674633026123047
+    },
+    "structured": {
+      "num_tokens": 147,
+      "fp32_minfer_vs_hf_max_abs": 0.000179290771484375,
+      "bf16_minfer_vs_hf_bf16_max_abs": 0.0,
+      "bf16_minfer_vs_hf_fp32": {
+        "max_abs": 8.454361915588379,
+        "mean_abs": 0.09602906554937363,
+        "top1_agreement": 0.9727891087532043,
+        "kl_mean": 0.00468336649741665,
+        "kl_max": 0.4944452194464636
+      },
+      "bf16_hf_vs_hf_fp32": {
+        "max_abs": 8.454361915588379,
+        "mean_abs": 0.09602906554937363,
+        "top1_agreement": 0.9727891087532043,
+        "kl_mean": 0.00468336649741665,
+        "kl_max": 0.4944452194464636
+      },
+      "fp32_reference_logit_std": 3.4563021659851074,
+      "fp32_reference_median_top1_margin": 2.254058837890625
+    }
+  },
+  "rope_tables_cpu_vs_gpu": {
+    "entries_per_table": 4194304,
+    "cos_fp32_entries_differing": 752938,
+    "cos_bf16_entries_differing": 16,
+    "cos_bf16_first_differing_position": 593,
+    "sin_fp32_entries_differing": 670524,
+    "sin_bf16_entries_differing": 16,
+    "sin_bf16_first_differing_position": 2402
+  }
+}

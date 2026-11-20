@@ -69,6 +69,16 @@ def command(
     return [*base, *(TUNED[engine] if tuned else ()), *extra]
 
 
+def code_version() -> dict[str, object]:
+    """The commit a benchmark ran on, and whether the working tree differed from it."""
+
+    def git(*args: str) -> str:
+        done = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True)
+        return done.stdout.strip()
+
+    return {"commit": git("rev-parse", "HEAD"), "dirty": bool(git("status", "--porcelain", "-uno"))}
+
+
 def _healthy(port: int) -> bool:
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2) as response:

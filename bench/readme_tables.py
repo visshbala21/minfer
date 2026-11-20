@@ -12,12 +12,15 @@ a "not measured" note rather than disappearing.
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import re
 import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+from bench import models
 
 RESULTS = Path("bench/results")
 README = Path("README.md")
@@ -36,8 +39,10 @@ def _table(header: list[str], rows: list[list[str]]) -> str:
     return "\n".join(lines)
 
 
-def _matrix() -> dict[str, Any]:
-    loaded = {name: _load(f"matrix/{name}.json") for name in ENGINES}
+def _matrix(model: str) -> dict[str, Any]:
+    """Per-engine matrix results for ``model`` (a full id; see bench/models.py)."""
+    directory = models.results_path("matrix", model)
+    loaded = {name: _load(f"{directory}/{name}.json") for name in ENGINES}
     return {name: data for name, data in loaded.items() if data}
 
 
@@ -49,10 +54,10 @@ def _best(values: list[float | None], lower_is_better: bool) -> int | None:
 
 
 def _matrix_table(
-    workload: str, columns: list[tuple[str, Callable[[dict], Any], str, bool]]
+    workload: str, columns: list[tuple[str, Callable[[dict], Any], str, bool]], model: str
 ) -> str:
     """One row per (rate, engine); the best engine per rate and column is bold."""
-    matrix = _matrix()
+    matrix = _matrix(model)
     engines = [e for e in matrix if matrix[e].get(workload)]
     if not engines:
         return MISSING
@@ -73,7 +78,7 @@ def _matrix_table(
     return _table(["rate (req/s)", "engine", *[name for name, _, _, _ in columns]], rows)
 
 
-def agent_table() -> str:
+def agent_table(model: str = models.PRIMARY) -> str:
     """Agent workload: every engine at every rate."""
     return _matrix_table(
         "agent",
@@ -88,10 +93,11 @@ def agent_table() -> str:
             ("prefix hit rate", lambda r: r["server_prefix_cache_hit_rate"], ".1%", False),
             ("failed", lambda r: r["failed"], "d", True),
         ],
+        model,
     )
 
 
-def sharegpt_table() -> str:
+def sharegpt_table(model: str = models.PRIMARY) -> str:
     """ShareGPT control workload (``vllm bench serve``)."""
     return _matrix_table(
         "sharegpt",
@@ -105,6 +111,7 @@ def sharegpt_table() -> str:
             ("E2E p99 (ms)", lambda r: r["p99_e2el_ms"], ".0f", True),
             ("failed", lambda r: r["failed"], "d", True),
         ],
+        model,
     )
 
 
@@ -383,9 +390,9 @@ def _span(values: list[float], fmt: str) -> str:
     return low if low == high else f"{low}–{high}"
 
 
-def headline() -> str:
+def headline(model: str = models.PRIMARY) -> str:
     """The comparison in a few generated sentences (agent workload)."""
-    matrix = _matrix()
+    matrix = _matrix(model)
     if not all(matrix.get(e, {}).get("agent") for e in ENGINES):
         return MISSING
     steady = [r for r in matrix["minfer"]["agent"] if r != "max"]
@@ -413,7 +420,7 @@ def headline() -> str:
 
     lines = [
         f"On the multi-turn agent workload at {steady[0]}–{steady[-1]} req/s "
-        "(Qwen2.5-1.5B-Instruct, bf16, one H100, greedy, identical traces):",
+        f"({model.rsplit('/', 1)[-1]}, bf16, one H100, greedy, identical traces):",
         "",
         "| | minfer | vLLM | SGLang |",
         "|---|---|---|---|",
@@ -530,6 +537,9 @@ SECTIONS: dict[str, Callable[[], str]] = {
     "headline": headline,
     "agent-results": agent_table,
     "sharegpt-results": sharegpt_table,
+    "headline-1.5b": functools.partial(headline, models.SECONDARY),
+    "agent-results-1.5b": functools.partial(agent_table, models.SECONDARY),
+    "sharegpt-results-1.5b": functools.partial(sharegpt_table, models.SECONDARY),
     "decode-latency": decode_latency_table,
     "prefill-latency": prefill_latency_table,
     "chunked-prefill": chunked_prefill_table,

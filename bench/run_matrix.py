@@ -33,7 +33,7 @@ from typing import Any
 
 from bench import agent_workload as aw
 from bench import models
-from bench.servers import ENGINES, ENVIRONMENT, ROOT, launch
+from bench.servers import ENGINES, ENVIRONMENT, ROOT, code_version, launch
 
 RATES = ("1", "2", "4", "8", "16", "max")
 RESULTS = Path("bench/results/matrix")  # for the 1.5B model; see bench/models.py
@@ -189,6 +189,7 @@ def main() -> None:
                 server_command=argv,
                 server_environment=ENVIRONMENT.get(engine, {}),
                 server_startup_seconds=time.time() - started,
+                code=code_version(),
             )
             # Warm-up: JIT, CUDA graphs, allocator pools, and the shared system prompts.
             run_agent(engine, base_url, "max", args.seed + 10_000, tokenizer, model)
