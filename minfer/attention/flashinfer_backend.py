@@ -33,7 +33,7 @@ import flashinfer  # noqa: E402 - must follow the PATH fix above
 _WORKSPACE_BYTES = 256 * 1024 * 1024
 
 
-class _KernelContext:
+class KernelContext:
     """Writes the pass's K/V into the store, then runs a planned FlashInfer kernel."""
 
     def __init__(
@@ -70,9 +70,9 @@ class FlashInferBackend:
         self.num_kv_heads = store.data.shape[4]
         self.head_dim = store.data.shape[5]
         self.dtype = store.data.dtype
-        workspace = torch.zeros(_WORKSPACE_BYTES, dtype=torch.uint8, device=store.data.device)
-        self._prefill = flashinfer.BatchPrefillWithPagedKVCacheWrapper(workspace, "NHD")
-        self._decode = flashinfer.BatchDecodeWithPagedKVCacheWrapper(workspace, "NHD")
+        self.workspace = torch.zeros(_WORKSPACE_BYTES, dtype=torch.uint8, device=store.data.device)
+        self._prefill = flashinfer.BatchPrefillWithPagedKVCacheWrapper(self.workspace, "NHD")
+        self._decode = flashinfer.BatchDecodeWithPagedKVCacheWrapper(self.workspace, "NHD")
 
     def prefill(self, batch: PagedBatch) -> AttentionContext:
         """See :meth:`PagedAttentionBackend.prefill`."""
@@ -90,7 +90,7 @@ class FlashInferBackend:
             q_data_type=self.dtype,
             kv_data_type=self.dtype,
         )
-        return _KernelContext(self.store, batch.slots, self._prefill)
+        return KernelContext(self.store, batch.slots, self._prefill)
 
     def decode(self, batch: PagedBatch) -> AttentionContext:
         """See :meth:`PagedAttentionBackend.decode`."""
@@ -106,4 +106,4 @@ class FlashInferBackend:
             q_data_type=self.dtype,
             kv_data_type=self.dtype,
         )
-        return _KernelContext(self.store, batch.slots, self._decode)
+        return KernelContext(self.store, batch.slots, self._decode)
