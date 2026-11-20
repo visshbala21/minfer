@@ -268,3 +268,45 @@ def test_prefix_cache_on_matches_off_up_to_float32_near_ties(reference, tokenize
     processed_on = on_engine.stats.prefill_tokens + on_engine.stats.decode_tokens
     assert processed_off - processed_on == stats.prefill_tokens_saved
     on_engine.prefix_cache.check_invariants()
+
+
+# ------------------------------------------------------- Phase 7: speculative decoding
+
+
+@pytest.mark.parametrize("speculation", ["ngram", "draft"])
+def test_speculation_on_the_real_model(reference, tokenizer, speculation):
+    """Greedy output with speculation equals plain greedy up to float32 near-ties.
+
+    Exact identity is asserted on the CPU float32 model (tests/test_speculation.py). Here
+    verification runs through the bf16 prefill kernel instead of the decode kernel, so the
+    usual near-tie flips apply (DESIGN.md M-002, M-010).
+    """
+    from bench.vllm_equivalence import reference_margin
+
+    text = "Repeat this list three times, exactly: alpha, beta, gamma, delta, epsilon."
+    prompts = [
+        *chat_prompts(tokenizer, 6),
+        tokenizer.apply_chat_template(
+            [{"role": "user", "content": text}], tokenize=True, add_generation_prompt=True
+        ),
+    ]
+    prompts = [list(p["input_ids"]) if not isinstance(p, list) else p for p in prompts]
+    params = SamplingParams(max_tokens=64)
+    plain = Engine.from_pretrained(PRIMARY_MODEL, EngineConfig(num_blocks=4096))
+    expected = plain.generate(prompts, params)
+    del plain
+    engine = Engine.from_pretrained(
+        PRIMARY_MODEL, EngineConfig(num_blocks=4096, speculation=speculation)
+    )
+    outputs = engine.generate(prompts, params)
+    stats = engine.stats
+    assert stats.spec_rounds > 0 and 0 < stats.spec_accepted <= stats.spec_proposed
+    assert stats.steps < sum(map(len, outputs))  # some steps emitted several tokens
+    for prompt, ours, theirs in zip(prompts, outputs, expected, strict=True):
+        if ours == theirs:
+            continue
+        at = next(i for i, (x, y) in enumerate(zip(ours, theirs, strict=False)) if x != y)
+        margin = reference_margin(reference, prompt + ours[:at], ours[at], theirs[at])
+        gap = abs(margin["fp32_logit_minfer_token"] - margin["fp32_logit_vllm_token"])
+        assert gap < 1.5, (speculation, at, margin)
+    check_outputs(engine, outputs, [params] * len(prompts))

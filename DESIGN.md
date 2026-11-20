@@ -939,3 +939,55 @@ optimization phase; the matrix is re-run on the final code in Phase 12.
 `config.json`, which fetched the weights too — while the matrix was measuring minfer. Fixed
 by fetching only `config.json`. Rule adopted: nothing that touches the network or the disk
 at scale runs while a benchmark holds the GPU.
+
+### M-010 Speculative decoding on the GPU (Phase 7 acceptance)
+
+Script: `bench/speculation.py` → `bench/results/speculation.json`. Engine-level, greedy,
+requests stop at EOS; agent = 32 sessions closed-loop (356 requests), ShareGPT = 256
+single-turn requests submitted at once; `num_draft_tokens = 4`, n-gram size 3, draft
+model Qwen2.5-0.5B. "tok/step" is tokens emitted per engine step over all sequences.
+
+| workload | speculation | out tok/s | vs off | TPOT p50 (ms) | TPOT p99 (ms) | tok/step | acceptance | outputs identical to off |
+|---|---|---|---|---|---|---|---|---|
+| agent | off | 1869 | — | 11.04 | 15.3 | 16.1 | — | — |
+| agent | ngram | 1730 | 0.93× | 7.58 | 21.7 | 31.9 | 75.7% | 231/356 |
+| agent | draft model | 1346 | 0.72× | 12.81 | 28.6 | 56.5 | 74.2% | 232/356 |
+| sharegpt | off | 23366 | — | 7.82 | 21.5 | 188.7 | — | — |
+| sharegpt | ngram | 10180 | 0.44× | 17.70 | 24.7 | 189.1 | 56.7% | 93/256 |
+| sharegpt | draft model | 8659 | 0.37× | 16.35 | 27.6 | 362.2 | 66.0% | 76/256 |
+
+**Speculation works and, on this engine today, makes things slower.**
+
+- *It works:* 57–76% of drafted tokens are accepted, and steps emit about twice as many
+  tokens (agent: 16 → 32 per step with prompt lookup, 57 with the draft model).
+- *It is slower:* throughput drops to 0.93× (prompt lookup) and 0.72× (draft model) on the
+  agent workload and to 0.44× / 0.37× on ShareGPT. The reason is the cost model of D-029:
+  a verification span runs in the eager prefill pass (~11 ms of dispatch per pass, M-004)
+  while the tokens it replaces would have come from ~4–7 ms CUDA-graph decode steps; the
+  draft model adds its own passes on top. With 256 concurrent ShareGPT requests the plain
+  decode graph already produces 188 tokens per step, so there is little left to win and a
+  full eager pass to lose.
+- The one improvement is median TPOT on the agent workload with prompt lookup
+  (11.0 → 7.6 ms): agent outputs do copy from their prompts, as the design assumed. p99
+  gets worse (15 → 22 ms).
+- **Kept, off by default, reported as measured.** The fix is not in the speculation logic
+  but in the pass it rides on: a CUDA-graph capture of the verification/prefill pass
+  (Phase 11) changes the denominator. The ablation in Phase 12 re-measures it.
+
+**Greedy outputs with speculation on vs off.** Exactly identical on the CPU float32 model
+for any draft quality (`tests/test_speculation.py`: scripted drafts that are all right,
+all wrong and mixed; prompt lookup; a draft model equal to and unrelated to the target;
+under chunked prefill, memory pressure, and with the prefix cache). On the GPU in bf16 the
+right-hand column applies: verification evaluates the same positions with the prefill
+kernel instead of the decode kernel, and near-ties flip as in M-002. At the first differing
+token of each diverging output, float32 separates the two tokens by at most 0.97 logits
+(per setting: 0.43, 0.52, 0.97, 0.32); in 3–7 outputs per setting the pair is not float32's exact
+top-2 (three-way near-ties). ShareGPT diverges more often than the agent workload because
+its outputs are up to 256 tokens long: more positions, more chances for one flip, and
+everything after a flip differs. The GPU test asserts a float32 gap below 1.5 logits at
+every first divergence (single bf16 logits are up to ~1.2 off, M-002).
+
+**Bug found on the way.** FlashInfer's plain decode kernel is specialized for GQA group
+sizes 1, 2, 3, 4, 6, 8, 16; Qwen2.5-0.5B has 14 heads over 2 KV heads (group 7) and failed
+with "Unsupported group_size: 7". The backend now selects FlashInfer's tensor-core decode
+path for other group sizes (`needs_tensor_cores`).

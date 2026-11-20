@@ -22,7 +22,12 @@ import torch
 from torch import Tensor
 
 from minfer.attention.base import AttentionContext
-from minfer.attention.flashinfer_backend import KernelContext, TritonDecodeContext, flashinfer
+from minfer.attention.flashinfer_backend import (
+    KernelContext,
+    TritonDecodeContext,
+    flashinfer,
+    needs_tensor_cores,
+)
 from minfer.attention.paged import (
     PagedBatch,
     SequenceSpan,
@@ -100,6 +105,7 @@ class DecodeGraphs:
                 workspace,
                 "NHD",
                 use_cuda_graph=True,
+                use_tensor_cores=needs_tensor_cores(model.num_heads, model.num_kv_heads),
                 paged_kv_indptr_buffer=torch.zeros(size + 1, dtype=torch.int32, device=device),
                 paged_kv_indices_buffer=torch.zeros(
                     size * max_pages_per_sequence, dtype=torch.int32, device=device

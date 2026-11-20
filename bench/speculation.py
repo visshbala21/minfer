@@ -147,13 +147,13 @@ def compare(reference: Any, sessions: list, base: list, other: list) -> dict[str
                 unexplained += 1  # one output is a strict prefix of the other
                 continue
             margin = reference_margin(reference, prompt + a[:at], b[at], a[at])
-            margins.append(margin["fp32_top2_margin"])
+            margins.append(abs(margin["fp32_logit_minfer_token"] - margin["fp32_logit_vllm_token"]))
             unexplained += not margin["both_in_fp32_top2"]
     return {
         "identical_outputs": identical,
         "diverged_outputs": diverged,
         "divergences_not_between_fp32_top2": unexplained,
-        "max_fp32_margin_at_divergence": max(margins, default=None),
+        "max_fp32_logit_gap_between_the_two_tokens": max(margins, default=None),
     }
 
 

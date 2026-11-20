@@ -198,6 +198,15 @@ class DraftModelDrafter:
                 probs.setdefault(seqs[i].seq_id, []).append(warped[row])
         return tokens.tolist()
 
+    def _decode(self, spans: list[SequenceSpan]) -> Tensor:
+        """Logits of a one-token-per-sequence pass (CUDA graph when one fits)."""
+        graphs = self.decode_graphs
+        if graphs is not None and len(spans) <= graphs.max_batch_size:
+            return graphs.run(spans)
+        batch = build_paged_batch(spans, self.blocks.block_size, self.device)
+        hidden = self.model(batch.token_ids, batch.positions, self.backend.decode(batch))
+        return self.model.logits(hidden)
+
     @torch.inference_mode()
     def propose(self, seqs: Seq[Sequence], limits: Seq[int]) -> list[Draft]:
         """See :meth:`minfer.spec.base.Drafter.propose`."""
@@ -221,10 +230,24 @@ class DraftModelDrafter:
             return [drafts[seq.seq_id] for seq in seqs]
 
         probs: dict[int, list[Tensor]] = {}
-        batch = build_paged_batch(spans, size, self.device)
-        hidden = self.model(batch.token_ids, batch.positions, self.backend.prefill(batch))
-        last_rows = batch.qo_indptr[1:].to(self.device, torch.int64) - 1
-        picked = self._pick(self.model.logits(hidden.index_select(0, last_rows)), active, probs)
+        # Sequences one token behind (the usual case after the first round) catch up
+        # through the CUDA-graph decode pass; longer gaps need the ragged prefill pass.
+        single = [i for i, span in enumerate(spans) if len(span.token_ids) == 1]
+        ragged = [i for i, span in enumerate(spans) if len(span.token_ids) > 1]
+        picked: list[int] = [0] * len(active)
+        if single:
+            logits = self._decode([spans[i] for i in single])
+            tokens = self._pick(logits, [active[i] for i in single], probs)
+            for i, token in zip(single, tokens, strict=True):
+                picked[i] = token
+        if ragged:
+            batch = build_paged_batch([spans[i] for i in ragged], size, self.device)
+            hidden = self.model(batch.token_ids, batch.positions, self.backend.prefill(batch))
+            last_rows = batch.qo_indptr[1:].to(self.device, torch.int64) - 1
+            logits = self.model.logits(hidden.index_select(0, last_rows))
+            tokens = self._pick(logits, [active[i] for i in ragged], probs)
+            for i, token in zip(ragged, tokens, strict=True):
+                picked[i] = token
         for seq, token in zip(active, picked, strict=True):
             drafts[seq.seq_id].tokens.append(token)
             length = len(seq.tokens)
@@ -245,13 +268,7 @@ class DraftModelDrafter:
                 position = len(seq.tokens) + step - 1
                 spans.append(SequenceSpan((fed,), position, self.blocks.table(seq_id)))
                 self._tail[seq_id].append(fed)
-            graphs = self.decode_graphs
-            if graphs is not None and len(spans) <= graphs.max_batch_size:
-                logits = graphs.run(spans)
-            else:
-                batch = build_paged_batch(spans, size, self.device)
-                hidden = self.model(batch.token_ids, batch.positions, self.backend.decode(batch))
-                logits = self.model.logits(hidden)
+            logits = self._decode(spans)
             for seq, token in zip(active, self._pick(logits, active, probs), strict=True):
                 drafts[seq.seq_id].tokens.append(token)
             step += 1

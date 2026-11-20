@@ -63,6 +63,15 @@ class KernelContext:
         return self.wrapper.run(q, store.layer(layer), k_scale=k_scale, v_scale=v_scale)
 
 
+def needs_tensor_cores(num_heads: int, num_kv_heads: int) -> bool:
+    """Whether FlashInfer's decode must take its tensor-core path for this head layout.
+
+    Its plain decode kernel is specialized for grouped-query group sizes 1, 2, 3, 4, 6, 8
+    and 16 only (Qwen2.5-0.5B has 14 query heads over 2 KV heads: group size 7).
+    """
+    return num_heads // num_kv_heads not in (1, 2, 3, 4, 6, 8, 16)
+
+
 class TritonDecodeContext:
     """Writes the pass's K/V into the store, then runs the Triton paged-decode kernel."""
 
@@ -108,7 +117,9 @@ class FlashInferBackend:
         self.kv_dtype = store.data.dtype
         self.workspace = torch.zeros(_WORKSPACE_BYTES, dtype=torch.uint8, device=store.data.device)
         self._prefill = flashinfer.BatchPrefillWithPagedKVCacheWrapper(self.workspace, "NHD")
-        self._decode = flashinfer.BatchDecodeWithPagedKVCacheWrapper(self.workspace, "NHD")
+        self._decode = flashinfer.BatchDecodeWithPagedKVCacheWrapper(
+            self.workspace, "NHD", use_tensor_cores=needs_tensor_cores(num_heads, self.num_kv_heads)
+        )
 
     def prefill(self, batch: PagedBatch) -> AttentionContext:
         """See :meth:`PagedAttentionBackend.prefill`."""
