@@ -80,8 +80,9 @@ def check_outputs(engine: Engine, outputs: list[list[int]], params: list[Samplin
         assert len(out) == p.max_tokens or out[-1] in engine.eos_token_ids
         assert not any(t in engine.eos_token_ids for t in out[:-1])
     assert not engine.has_work
-    assert engine.blocks.num_free == engine.blocks.num_usable
-    engine.blocks.check_invariants(external_refs={})
+    blocks, cache = engine.blocks, engine.prefix_cache
+    assert blocks.num_free + blocks.num_evictable == blocks.num_usable
+    blocks.check_invariants(external_refs=cache.block_refs() if cache else {})
 
 
 def test_64_concurrent_requests_complete(engine, tokenizer):
@@ -98,8 +99,9 @@ def test_64_concurrent_requests_complete(engine, tokenizer):
 
 
 def test_64_concurrent_requests_complete_under_memory_pressure(tokenizer):
-    # 200 blocks of 16 tokens hold 3,200 tokens; the 64 requests need about 5,500 at peak.
-    small = Engine.from_pretrained(PRIMARY_MODEL, EngineConfig(num_blocks=201))
+    # 100 blocks of 16 tokens hold 1,600 tokens; the 64 requests need about 5,500 at peak
+    # (less what the prefix cache shares of the common chat-template header).
+    small = Engine.from_pretrained(PRIMARY_MODEL, EngineConfig(num_blocks=101))
     prompts = chat_prompts(tokenizer, 64)
     params = mixed_params(64)
     outputs = small.generate(prompts, params)
@@ -230,3 +232,39 @@ def test_batches_beyond_the_largest_graph_fall_back_to_eager(tokenizer):
     prompts = chat_prompts(tokenizer, 12)
     params = mixed_params(12)
     check_outputs(small, small.generate(prompts, params), params)
+
+
+# -------------------------------------------------------------- Phase 4: prefix cache
+
+
+def test_prefix_cache_on_matches_off_up_to_float32_near_ties(reference, tokenizer):
+    """Real model, multi-turn sessions: the cache changes how much is computed, not what.
+
+    Exact identity is asserted on the CPU float32 model (tests/test_prefix_cache_engine.py).
+    In bf16 a cached block may have been filled by a different kernel or batch than a
+    recomputed one, so near-ties can flip; anything else would be a bug.
+    """
+    from bench.prefix_cache_equivalence import compare, run
+
+    off_engine = Engine.from_pretrained(
+        PRIMARY_MODEL, EngineConfig(num_blocks=4096, prefix_cache=False)
+    )
+    on_engine = Engine.from_pretrained(PRIMARY_MODEL, EngineConfig(num_blocks=4096))
+    prompts, off, _ = run(off_engine, tokenizer, 6, 32, None)
+    _, on, _ = run(on_engine, tokenizer, 6, 32, prompts)
+    requests = sum(map(len, prompts))
+    divergences = compare(reference, prompts, off, on)
+    for d in divergences:
+        assert d["both_in_fp32_top2"], d
+        assert d["fp32_top2_margin"] < NEAR_TIE_MARGIN, d
+    assert len(divergences) < requests / 2
+
+    stats = on_engine.prefix_cache.stats
+    assert stats.lookups == requests
+    # Shared system prompts and resent history. The six first turns arrive together and
+    # miss (measured: 0.75), so the bound is well below what later turns achieve.
+    assert stats.hit_rate > 0.6
+    processed_off = off_engine.stats.prefill_tokens + off_engine.stats.decode_tokens
+    processed_on = on_engine.stats.prefill_tokens + on_engine.stats.decode_tokens
+    assert processed_off - processed_on == stats.prefill_tokens_saved
+    on_engine.prefix_cache.check_invariants()

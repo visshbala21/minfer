@@ -1,0 +1,212 @@
+{
+ "model": "Qwen/Qwen2.5-1.5B-Instruct",
+ "dtype": "bfloat16",
+ "workload": {
+  "sessions": 16,
+  "turns_per_session": 4,
+  "requests": 64,
+  "prompt_tokens": 56978,
+  "max_tokens": 64
+ },
+ "identical_outputs": 45,
+ "diverged_outputs": 19,
+ "max_fp32_margin_at_divergence": 0.2518596649169922,
+ "divergences": [
+  {
+   "session": 0,
+   "turn": 2,
+   "first_divergence": 58,
+   "cache_on_token": 4647,
+   "cache_off_token": 9760,
+   "fp32_top2_margin": 0.17914390563964844,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 0,
+   "turn": 3,
+   "first_divergence": 20,
+   "cache_on_token": 1815,
+   "cache_off_token": 2038,
+   "fp32_top2_margin": 0.0016651153564453125,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 1,
+   "turn": 1,
+   "first_divergence": 30,
+   "cache_on_token": 11,
+   "cache_off_token": 4774,
+   "fp32_top2_margin": 0.2518596649169922,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 3,
+   "turn": 1,
+   "first_divergence": 16,
+   "cache_on_token": 5602,
+   "cache_off_token": 4211,
+   "fp32_top2_margin": 0.10944747924804688,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 5,
+   "turn": 2,
+   "first_divergence": 20,
+   "cache_on_token": 1273,
+   "cache_off_token": 2038,
+   "fp32_top2_margin": 0.024311065673828125,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 7,
+   "turn": 2,
+   "first_divergence": 7,
+   "cache_on_token": 1380,
+   "cache_off_token": 448,
+   "fp32_top2_margin": 0.04781150817871094,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 7,
+   "turn": 3,
+   "first_divergence": 15,
+   "cache_on_token": 7626,
+   "cache_off_token": 22683,
+   "fp32_top2_margin": 0.0337066650390625,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 8,
+   "turn": 1,
+   "first_divergence": 22,
+   "cache_on_token": 22683,
+   "cache_off_token": 729,
+   "fp32_top2_margin": 0.023092269897460938,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 9,
+   "turn": 1,
+   "first_divergence": 19,
+   "cache_on_token": 12218,
+   "cache_off_token": 16953,
+   "fp32_top2_margin": 0.14365768432617188,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 11,
+   "turn": 2,
+   "first_divergence": 1,
+   "cache_on_token": 1598,
+   "cache_off_token": 8253,
+   "fp32_top2_margin": 0.1946086883544922,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 12,
+   "turn": 1,
+   "first_divergence": 22,
+   "cache_on_token": 729,
+   "cache_off_token": 22683,
+   "fp32_top2_margin": 0.047252655029296875,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 12,
+   "turn": 2,
+   "first_divergence": 38,
+   "cache_on_token": 5978,
+   "cache_off_token": 10146,
+   "fp32_top2_margin": 0.09103012084960938,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 12,
+   "turn": 3,
+   "first_divergence": 13,
+   "cache_on_token": 96337,
+   "cache_off_token": 38331,
+   "fp32_top2_margin": 0.2517204284667969,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 13,
+   "turn": 1,
+   "first_divergence": 16,
+   "cache_on_token": 4211,
+   "cache_off_token": 5602,
+   "fp32_top2_margin": 0.10355567932128906,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 13,
+   "turn": 2,
+   "first_divergence": 46,
+   "cache_on_token": 78870,
+   "cache_off_token": 7933,
+   "fp32_top2_margin": 0.056232452392578125,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 14,
+   "turn": 1,
+   "first_divergence": 22,
+   "cache_on_token": 729,
+   "cache_off_token": 22683,
+   "fp32_top2_margin": 0.04366302490234375,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 14,
+   "turn": 3,
+   "first_divergence": 34,
+   "cache_on_token": 7032,
+   "cache_off_token": 279,
+   "fp32_top2_margin": 0.05460166931152344,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 15,
+   "turn": 1,
+   "first_divergence": 45,
+   "cache_on_token": 57532,
+   "cache_off_token": 60601,
+   "fp32_top2_margin": 0.05111122131347656,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 15,
+   "turn": 2,
+   "first_divergence": 37,
+   "cache_on_token": 1849,
+   "cache_off_token": 4982,
+   "fp32_top2_margin": 0.04730987548828125,
+   "both_in_fp32_top2": true
+  }
+ ],
+ "noise_floor_cache_off_vs_cache_off_rebatched": {
+  "what": "both runs without the cache; second run limited to 5 concurrent sequences",
+  "identical_outputs": 54,
+  "diverged_outputs": 10,
+  "max_fp32_margin_at_divergence": 0.12893295288085938
+ },
+ "prefix_cache": {
+  "hit_rate": 0.7500439259233229,
+  "lookups": 64,
+  "hits": 48,
+  "lookup_tokens": 56914,
+  "hit_tokens": 42688,
+  "catchup_tokens": 3568,
+  "prefill_tokens_saved": 46256,
+  "cached_blocks_at_end": 451,
+  "nodes_at_end": 48
+ },
+ "tokens_through_the_model": {
+  "cache_off": 60622,
+  "cache_on": 14170
+ },
+ "wall_seconds": {
+  "cache_off": 1.8422084549965803,
+  "cache_on": 1.3650897110055666
+ }
+}

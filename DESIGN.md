@@ -487,3 +487,128 @@ All latencies in ms, measured on the **short** requests unless noted.
 - **Follow-up for Phase 11.** The eager prefill pass's fixed cost is the reason chunking is
   expensive here; removing it (graph capture for bucketed prefill shapes, or fusing the
   decode rows into the prefill pass) would change this table.
+
+---
+
+## Phase 4 — Radix-tree prefix cache + cache-aware scheduling
+
+### D-020 Block-aligned radix tree
+
+- **Decision.** `minfer/cache/radix_tree.py`: a radix tree keyed on token sequences in which
+  every edge is a whole number of KV blocks. A node owns its edge's tokens and the blocks
+  that hold them; children are indexed by the tokens of their first block, so descending
+  costs one dictionary lookup per node plus a slice comparison along the edge.
+- **Why block-aligned.** A block is the unit a page table can share. Token-granular reuse
+  would need copy-on-write of a partially matching block for every hit; aligning to blocks
+  makes cached blocks immutable and shared by reference with no copying at all.
+- **Cost.** A prefix is reused up to its last full block: at most `block_size − 1` = 15
+  matching tokens are recomputed per request (and one token is always left pending,
+  D-014). Against multi-thousand-token agent prefixes that is noise; the measured hit rates
+  below include it.
+- **Shape.** A sequence that keeps generating lengthens its leaf's edge in place instead of
+  growing a chain of one-block nodes, so the depth of the tree is proportional to the
+  number of *divergences* on a path, not to its length. Edges split only when a sequence
+  with blocks of its own diverges inside one.
+
+### D-021 Ownership: the cache holds one reference; "evictable" is counted, not searched
+
+- The tree holds exactly one reference to each of its blocks
+  (`BlockManager.cache_block`); sequences hold theirs through their block tables. A cached
+  block with reference count 1 is in use by nobody and is *evictable*.
+- The block manager maintains `num_evictable` incrementally on every retain/release, so
+  admission treats evictable blocks as available memory in O(1), with no tree scan.
+- Invariant that makes that count meaningful: a sequence always references the *tree's*
+  copy of every block on its path (below), so an unreferenced node never has a referenced
+  descendant, and everything counted evictable really can be evicted leaf-first.
+
+### D-022 One operation in both directions: `sync`
+
+`PrefixCache.sync(tokens, own_blocks, limit)` walks the tree along a sequence's tokens. Where
+the tree has a block, that block is canonical; where it does not and the sequence has
+filled one, the sequence's block is inserted; the walk continues past the sequence's own
+blocks while the tree has more. The sequence's table is then pointed at the canonical
+blocks (`BlockManager.adopt`). That single operation is used at three moments:
+
+1. **Admission** (table empty): a pure lookup — the classic prefix-cache hit.
+2. **After every step** that filled a block (`Scheduler.commit`): insertion. Blocks are
+   published as soon as they exist, not when the request finishes, so a request can hit on
+   the prompt of another request that is still running. If two sequences computed the same
+   block in the same step, the second one's copy is dropped in favour of the tree's.
+3. **Before each prefill chunk** of a sequence that is still prefilling: catch-up. If
+   another sequence has meanwhile cached more of this prompt, it is adopted instead of
+   computed. With chunked prefill this gives in-batch deduplication for free: of N
+   identical prompts arriving together, the first computes chunk 1, and by the next step
+   the other N−1 find it in the tree (`test_identical_concurrent_requests_...`).
+
+Outputs of the model are cached too (they are in the sequence's blocks like anything else),
+which is what makes turn *k+1* of a session hit on all of turn *k*.
+
+### D-023 Eviction: LRU leaves, trimmed from the tail, before any preemption
+
+- When an allocation fails, `Scheduler._reserve` first asks the cache to evict; only if
+  nothing evictable is left does it preempt a running sequence (D-015).
+- Victims are least-recently-used leaves (a min-heap of `(last_access, node)` with lazy
+  invalidation; a path's nodes all get the same access time, so an ancestor is never older
+  than its descendants). A leaf is trimmed block by block from its tail, exactly as many as
+  needed: the tokens furthest from the root are the least likely to be shared, and the head
+  of a long edge (a system prompt) survives the eviction of its tail (old history).
+- A preempted sequence's published blocks stay in the tree, so its recompute is a cache
+  hit unless memory pressure evicts them first.
+
+### D-024 Cache-aware admission with a starvation guard
+
+- Among the oldest `admission_window` (32) waiting requests, the one with the longest
+  cached prefix is admitted first (`PrefixCache.match_length`, a read-only walk).
+  It is the cheapest to start and uses cached blocks before pressure evicts them.
+- Overrides, in arrival order: a preempted sequence (it already held a place), and any
+  request that has waited `starvation_seconds` (default 1 s) — a cold request cannot be
+  overtaken indefinitely by a stream of hot ones (`test_starvation_guard_...`).
+- `--no-cache-aware-scheduling` restores plain FCFS. Whether the preference pays off is
+  an empirical question for the agent benchmark (Phase 6) and the ablations (Phase 12).
+
+### M-006 Prefix cache: correctness and effect (Phase 4 acceptance)
+
+**Unit tests** (`tests/test_radix_tree.py`, 22 tests): insert, match, block alignment,
+split (including grandchildren), leaf extension, duplicate merging, catch-up, LRU order,
+tail trimming, pinned leaves, reference counts through a full lifecycle, and a randomized
+run against a brute-force list-of-prefixes model with the tree and block-manager
+invariants checked after every operation.
+
+**Outputs identical with the cache on vs off — exact, on the CPU float32 model**
+(`tests/test_prefix_cache_engine.py`): six concurrent four-turn sessions with two shared
+system prompts give the same tokens as the cache-off engine *and* as the cache-free
+oracle, under serial execution, FCFS, chunked prefill, a tight token budget, block sizes 1
+and 16, a pool small enough to force eviction, and a pool small enough to force preemption;
+seeded sampling is unchanged by a hit; an aborted request leaves the tree consistent.
+The accounting is exact too: tokens through the model (off) − tokens through the model
+(on) = `prefill_tokens_saved`.
+
+**On the real model in bf16** (`bench/prefix_cache_equivalence.py` →
+`bench/results/prefix_cache_equivalence.json`): 16 concurrent sessions × 4 turns
+(64 requests, 56,978 prompt tokens), two agent types with JSON tool schemas, greedy,
+identical prompts replayed with the cache off and on.
+
+| | cache off | cache on |
+|---|---|---|
+| tokens through the model | 60,622 | 14,170 (−77%) |
+| prefix-cache hit rate (tokens) | — | 75.0% (42,688 / 56,914) |
+| requests with a hit | — | 48 / 64 |
+| tokens adopted while prefilling (catch-up) | — | 3,568 |
+| wall time for the workload | 1.84 s | 1.37 s |
+
+- The 16 first turns arrive together and miss at admission (nothing is cached yet); their
+  shared system prompts are then partly recovered by catch-up.
+- **Outputs: 45 of 64 are token-identical; 19 differ.** Every difference starts at a
+  float32 near-tie between float32's top-2 tokens (largest margin 0.252 logits). The
+  noise floor, measured in the same script by running the cache-*off* engine twice with
+  different concurrency limits (only the batching differs): 54 of 64 identical,
+  largest margin 0.129. So bf16 outputs are not bit-stable against *any* change in
+  how a token's inputs were computed (M-002); the cache is one such change — a cached block
+  was filled by a different pass than a recomputed one — and flips somewhat more near-ties
+  than rebatching alone (19 vs 10), all of the same kind. The GPU test asserts
+  that every divergence is such a near-tie (margin < 0.5, both tokens in float32's top 2).
+- **Honest reading of the acceptance criterion.** "Outputs identical with cache on vs off"
+  is established exactly where arithmetic is deterministic (float32, CPU) and up to bf16
+  near-ties on the GPU, with the noise floor measured alongside.
+- **Hit rate is logged**: `PrefixCacheStats` (lookups, hits, hit rate, tokens saved,
+  catch-up tokens, inserted/evicted blocks), exported by the server's `/metrics` in Phase 5.
