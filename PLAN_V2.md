@@ -38,3 +38,17 @@ README headline must lead with Phase 15's result if it is a win; otherwise lead 
 
 ## Phase 17 headline metric (required)
 Primary result: "full-stack minfer" (best valid combination of techniques) vs vLLM and SGLang, each in its best documented configuration for this workload, on the same real coding-agent traces at 7B under realistic memory pressure. Report p99 and p50 TTFT, prefill tokens computed, TPOT, throughput, and any quality change. Lead the README with this number (win or loss), followed by the decomposition chart explaining where the gain comes from.
+
+# REVISION 2 — Research framing (supersedes Phase 15/17 framing above)
+Project framing: minfer is a from-scratch engine used as a controlled TESTBED to measure, on REAL coding-agent traces, how agent-serving techniques contribute alone and in combination. Do not claim any mechanism is novel. Cite prior work precisely: Continuum (arXiv 2511.02230), InferCept, CacheWise (arXiv 2606.16824), TraceLab (arXiv 2606.30560), CacheBlend, EPIC, MiniPIC (arXiv 2606.13126), CacheSlide (FAST'26), Irminsul (arXiv 2605.05696), Leyline (arXiv 2606.01065). Before writing the README claim, search for any existing composed evaluation of these techniques and state honestly what is and isn't new.
+
+## Phase 14B — Real traces (do right after Phase 14)
+Build bench/real_traces.py: load the TraceLab coding-agent trace (github.com/uw-syfi/TraceLab) and one public SWE trajectory dataset (e.g. nvidia/Open-SWE-Traces or nebius/SWE-rebench-openhands-trajectories). Replay them against any OpenAI-compatible engine with real token sequences, real turn structure, and tool-call pause durations from TraceLab's timings. Report trace statistics (context lengths, turns, pause distribution, prefix / shifted-duplicate / novel token fractions via rolling-hash fingerprints).
+
+## Phase 15 — Tool-call-aware retention (Continuum-style), as specified above, evaluated on real traces.
+
+## Phase 15C — Position-independent reuse (CacheBlend/MiniPIC-style, cap ~8h)
+Reuse KV for identical content (file contents, repeated tool outputs) that reappears at shifted positions: RoPE re-rotation of cached keys plus selective recomputation of a small fraction of tokens. Measure quality honestly: teacher-forced next-token agreement and logit KL vs full prefill on real trajectories, at several recompute ratios.
+
+## Phase 17 (revised) — Composition study (HEADLINE)
+On real traces at 7B under realistic memory pressure, run the full factorial of {prefix cache, TTL retention, host-memory tier, position-independent reuse, prompt-lookup speculation} where combinations are valid. Report: prefill tokens saved, TTFT p50/p99, TPOT, throughput, quality metrics. Produce a waterfall/decomposition chart of savings and an interaction table (which techniques compound, which compete for KV memory). Compare against vLLM and SGLang with their best options, and vllm-continuum if installable. README leads with the composition findings.
