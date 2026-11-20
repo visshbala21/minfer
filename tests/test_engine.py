@@ -76,10 +76,11 @@ def test_greedy_matches_dense_oracle(model, oracle):
         {"max_num_seqs": 1},
         {"max_num_seqs": 5},
         {"max_batched_tokens": 7},
+        {"prefill_chunk_tokens": 5},
         {"block_size": 1},
         {"block_size": 16, "num_blocks": 64},
     ],
-    ids=["serial", "five-at-a-time", "chunked-prefill", "block-1", "block-16"],
+    ids=["serial", "five-at-a-time", "token-budget", "chunked-prefill", "block-1", "block-16"],
 )
 def test_greedy_is_invariant_to_batching(model, oracle, config):
     prompts, eos, expected = oracle

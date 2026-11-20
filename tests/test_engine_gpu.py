@@ -143,3 +143,90 @@ def test_greedy_matches_vllm_up_to_float32_near_ties(engine, reference, fixture,
         assert case["both_in_fp32_top2"], case
         assert case["fp32_top2_margin"] < NEAR_TIE_MARGIN, case
     assert any(case["identical"] for case in report)
+
+
+# ------------------------------------------------------------------ Phase 3: CUDA graphs
+
+
+def _decode_both_ways(engine: Engine, count: int, steps: int, seed: int):
+    """Yield ``(eager_logits, graph_logits)`` for ``steps`` decode passes over ``count`` rows.
+
+    Both passes run on identical cache state: a decode pass writes the new token's K/V to
+    the same slot either way, so running one after the other is idempotent.
+    """
+    from minfer.attention import SequenceSpan, build_paged_batch
+
+    rng = random.Random(seed)
+    model, blocks, size = engine.model, engine.blocks, engine.config.block_size
+    seqs = [
+        [rng.randrange(1000, 100_000) for _ in range(rng.randint(1, 200))] for _ in range(count)
+    ]
+    ids = [("graph-test", i) for i in range(count)]
+    try:
+        with torch.inference_mode():
+            for seq_id, seq in zip(ids, seqs, strict=True):
+                blocks.ensure_capacity(seq_id, len(seq) + steps)
+            spans = [SequenceSpan(s, 0, blocks.table(i)) for i, s in zip(ids, seqs, strict=True)]
+            batch = build_paged_batch(spans, size, engine.device)
+            model(batch.token_ids, batch.positions, engine.backend.prefill(batch))
+            for _ in range(steps):
+                tokens = [rng.randrange(1000, 100_000) for _ in range(count)]
+                spans = [
+                    SequenceSpan([t], len(s), blocks.table(i))
+                    for i, s, t in zip(ids, seqs, tokens, strict=True)
+                ]
+                batch = build_paged_batch(spans, size, engine.device)
+                hidden = model(batch.token_ids, batch.positions, engine.backend.decode(batch))
+                eager = model.logits(hidden).float()
+                yield eager, engine.decode_graphs.run(spans).float()
+                for seq, token in zip(seqs, tokens, strict=True):
+                    seq.append(token)
+    finally:
+        for seq_id in ids:
+            blocks.free(seq_id)
+
+
+@pytest.mark.parametrize("count", [1, 4, 16, 256])
+def test_graph_decode_is_bit_identical_to_eager_at_bucket_sizes(engine, count):
+    """Replaying the captured graph is the same computation as the eager pass.
+
+    36 steps take every sequence across at least two block boundaries, so the page tables
+    the graph reads change between replays.
+    """
+    assert engine.decode_graphs is not None
+    assert engine.decode_graphs.bucket_size(count) == count
+    for eager, graph in _decode_both_ways(engine, count, steps=36, seed=count):
+        assert torch.equal(eager, graph)
+
+
+@pytest.mark.parametrize("count", [3, 13, 100])
+def test_graph_decode_with_padding_rows_matches_eager(engine, count):
+    """A batch padded up to its bucket differs from the eager pass only by bf16 rounding.
+
+    Padding changes the batch dimension of every matmul, and cuBLAS does not promise the
+    same rounding for different shapes (the effect behind M-002); it must not change more
+    than that.
+    """
+    assert engine.decode_graphs.bucket_size(count) > count
+    for eager, graph in _decode_both_ways(engine, count, steps=20, seed=count):
+        difference = (eager - graph).abs()
+        assert difference.max().item() < 1.5
+        assert difference.mean().item() < 0.05
+
+
+def test_graphs_off_runs_eagerly(tokenizer):
+    eager = Engine.from_pretrained(PRIMARY_MODEL, EngineConfig(num_blocks=2048, cuda_graphs=False))
+    assert eager.decode_graphs is None
+    prompts = chat_prompts(tokenizer, 8)
+    params = mixed_params(8)
+    check_outputs(eager, eager.generate(prompts, params), params)
+
+
+def test_batches_beyond_the_largest_graph_fall_back_to_eager(tokenizer):
+    small = Engine.from_pretrained(
+        PRIMARY_MODEL, EngineConfig(num_blocks=2048, cuda_graph_batch_sizes=(1, 2, 4))
+    )
+    assert small.decode_graphs.max_batch_size == 4
+    prompts = chat_prompts(tokenizer, 12)
+    params = mixed_params(12)
+    check_outputs(small, small.generate(prompts, params), params)

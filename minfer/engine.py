@@ -50,6 +50,14 @@ class EngineConfig:
         max_model_len: Context limit; ``None`` uses the model's ``max_position_embeddings``.
         attention_backend: ``"flashinfer"`` (CUDA) or ``"reference"`` (plain PyTorch, any
             device and dtype; slow).
+        cuda_graphs: Replay captured CUDA graphs for decode passes (FlashInfer backend
+            only). Batches larger than the largest captured size run eagerly.
+        cuda_graph_batch_sizes: Decode batch sizes to capture; sizes above ``max_num_seqs``
+            are rounded down to it.
+        prefill_chunk_tokens: Chunked prefill: while any sequence is decoding, at most this
+            many prefill tokens per step, so a long prompt is interleaved with decode steps
+            instead of stalling them. ``None`` disables chunking (prefill is bounded by
+            ``max_batched_tokens`` only).
         seed: Seed of the engine-level random stream used by unseeded sampling requests.
     """
 
@@ -61,6 +69,9 @@ class EngineConfig:
     watermark: float = 0.01
     max_model_len: int | None = None
     attention_backend: Literal["flashinfer", "reference"] = "flashinfer"
+    cuda_graphs: bool = True
+    cuda_graph_batch_sizes: tuple[int, ...] = (1, 2, 4, 8, 16, 32, 64, 128, 256)
+    prefill_chunk_tokens: int | None = 2048
     seed: int = 0
 
 
@@ -146,16 +157,29 @@ class Engine:
             model.dtype,
         )
         self.backend: PagedAttentionBackend
+        self.decode_graphs = None
         if config.attention_backend == "flashinfer":
             from minfer.attention.flashinfer_backend import FlashInferBackend
 
             self.backend = FlashInferBackend(self.store, mc.num_heads)
+            if config.cuda_graphs:
+                from minfer.attention.decode_graphs import DecodeGraphs
+
+                sizes = {min(size, config.max_num_seqs) for size in config.cuda_graph_batch_sizes}
+                self.decode_graphs = DecodeGraphs(
+                    model,
+                    self.store,
+                    self.backend.workspace,
+                    batch_sizes=sorted(sizes),
+                    max_pages_per_sequence=self.blocks.blocks_for(self.max_model_len),
+                )
         else:
             self.backend = ReferencePagedBackend(self.store)
         self.scheduler = Scheduler(
             SchedulerConfig(
                 max_num_seqs=config.max_num_seqs,
                 max_batched_tokens=config.max_batched_tokens,
+                max_prefill_tokens=config.prefill_chunk_tokens,
                 watermark=config.watermark,
             ),
             self.blocks,
@@ -281,11 +305,16 @@ class Engine:
                 SequenceSpan(seq.tokens[-1:], seq.num_cached, self.blocks.table(seq.seq_id))
             )
             seq.num_cached += 1
-        batch = build_paged_batch(spans, self.config.block_size, self.device)
-        hidden = self.model(batch.token_ids, batch.positions, self.backend.decode(batch))
-        self.stats.decode_tokens += batch.num_tokens
+        graphs = self.decode_graphs
+        if graphs is not None and len(spans) <= graphs.max_batch_size:
+            logits = graphs.run(spans)
+        else:
+            batch = build_paged_batch(spans, self.config.block_size, self.device)
+            hidden = self.model(batch.token_ids, batch.positions, self.backend.decode(batch))
+            logits = self.model.logits(hidden)
+        self.stats.decode_tokens += len(spans)
         sampled.extend(plan.decode)
-        rows.append(self.model.logits(hidden))
+        rows.append(logits)
 
     def _sample(self, logits: Tensor, seqs: list[Sequence]) -> Tensor:
         """Pick the next token for each row according to its request's parameters."""
