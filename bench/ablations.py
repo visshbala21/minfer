@@ -17,7 +17,7 @@ Three groups:
   memory (the 64 sessions' contexts do not all fit, so cached prefixes get evicted) —
   each with and without the feature it is meant to exercise.
 
-Writes ``bench/results/ablations.json``.
+Writes ``bench/results/ablations.json`` (1.5B) or ``ablations_7b.json``.
 """
 
 from __future__ import annotations
@@ -29,7 +29,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from bench.run_matrix import MODEL, run_agent
+from bench import models
+from bench.run_matrix import run_agent
 from bench.servers import launch
 
 RATES = {"16": 4, "max": 5}  # rate -> trace seed (the seeds the matrix uses for these rates)
@@ -60,7 +61,8 @@ CONFIGS: dict[str, tuple[str, list[str]]] = {
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--out", type=Path, default=Path("bench/results/ablations.json"))
+    parser.add_argument("--model", default=models.PRIMARY, help="model id, or 7b / 1.5b")
+    parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--configs", nargs="+", default=list(CONFIGS), choices=list(CONFIGS))
     parser.add_argument("--port", type=int, default=8041)
     parser.add_argument("--resume", action="store_true", help="keep results already on disk")
@@ -69,19 +71,21 @@ def main() -> None:
 
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(MODEL)
-    results: dict[str, Any] = {"model": MODEL, "rates": list(RATES), "configs": {}}
+    model = models.resolve(args.model)
+    args.out = args.out or models.results_path("bench/results/ablations.json", model)
+    tokenizer = AutoTokenizer.from_pretrained(model)
+    results: dict[str, Any] = {"model": model, "rates": list(RATES), "configs": {}}
     if args.resume and args.out.exists():
         results = json.loads(args.out.read_text())
     for name in args.configs:
         if name in results["configs"]:
             continue
         label, flags = CONFIGS[name]
-        log = Path("bench/logs") / f"ablation_{name}_server.log"
-        with launch("minfer", MODEL, args.port, log, flags) as (base_url, argv):
-            run_agent("minfer", base_url, "max", 10_000, tokenizer)  # warm-up
+        log = Path("bench/logs") / f"ablation_{models.tag(model)}_{name}_server.log"
+        with launch("minfer", model, args.port, log, flags) as (base_url, argv):
+            run_agent("minfer", base_url, "max", 10_000, tokenizer, model)  # warm-up
             runs = {
-                rate: run_agent("minfer", base_url, rate, seed, tokenizer)
+                rate: run_agent("minfer", base_url, rate, seed, tokenizer, model)
                 for rate, seed in RATES.items()
             }
         results["configs"][name] = {"label": label, "flags": flags, "command": argv, **runs}

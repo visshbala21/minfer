@@ -637,6 +637,14 @@ def render_prompts(trace: Trace, tokenizer: Any) -> dict[str, list[str]]:
     return prompts
 
 
+def tokenize_prompts(prompts: dict[str, list[str]], tokenizer: Any) -> dict[str, list[list[int]]]:
+    """The rendered prompts as token ids, for replaying without server-side tokenization."""
+    return {
+        session_id: [tokenizer(text, add_special_tokens=False)["input_ids"] for text in texts]
+        for session_id, texts in prompts.items()
+    }
+
+
 async def _one_request(
     http: Any, url: str, body: dict[str, Any], record: RequestRecord, origin: float
 ) -> None:
@@ -675,11 +683,13 @@ async def _one_request(
 
 
 async def replay(
-    trace: Trace, prompts: dict[str, list[str]], base_url: str, model: str
+    trace: Trace, prompts: dict[str, list[Any]], base_url: str, model: str
 ) -> tuple[list[RequestRecord], float]:
     """Replay ``trace`` against an OpenAI-compatible server.
 
-    Returns the per-request records and the wall-clock duration of the replay.
+    ``prompts`` holds each request's prompt as text (:func:`render_prompts`) or as token
+    ids (:func:`tokenize_prompts`); ``/v1/completions`` accepts both. Returns the
+    per-request records and the wall-clock duration of the replay.
     """
     import aiohttp
 

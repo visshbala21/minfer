@@ -3,7 +3,7 @@ export PATH := $(CURDIR)/.venv/bin:$(PATH)
 
 PY := .venv/bin/python
 
-.PHONY: setup env lint format test test-cpu bench bench-agent bench-micro bench-ablations plots
+.PHONY: setup env lint format test test-cpu bench bench-agent bench-micro bench-ablations bench-audit plots
 
 setup:  ## build .venv, .venv-vllm and .venv-sglang from the pinned lock files
 	scripts/setup_envs.sh all
@@ -25,7 +25,7 @@ test:  ## full suite (needs the GPU and downloaded weights)
 test-cpu:  ## the subset CI runs
 	$(PY) -m pytest -m "not gpu"
 
-bench: bench-micro bench-agent bench-ablations plots  ## every benchmark behind the README
+bench: bench-micro bench-agent bench-ablations bench-audit plots  ## every benchmark behind the README
 	$(PY) -m bench.readme_tables
 
 bench-micro:  ## engine-level benchmarks and equivalence checks (minfer; vLLM only for the fixture)
@@ -43,10 +43,13 @@ bench-micro:  ## engine-level benchmarks and equivalence checks (minfer; vLLM on
 	bench/serve_compat.sh
 
 bench-agent:  ## minfer vs vLLM vs SGLang on the agent workload and ShareGPT, all rates
-	$(PY) -m bench.run_matrix
+	$(PY) -m bench.run_matrix --model 1.5b
 
 bench-ablations:  ## the agent workload with one feature changed at a time
-	$(PY) -m bench.ablations
+	$(PY) -m bench.ablations --model 1.5b
+
+bench-audit:  ## the baselines under their documented tuning flags; token-id prompts
+	$(PY) -m bench.fairness_audit --model 1.5b
 
 plots:  ## regenerate bench/plots/ from bench/results/
 	$(PY) -m bench.plot

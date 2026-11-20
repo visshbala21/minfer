@@ -1,8 +1,9 @@
 """Start and stop the inference servers under benchmark, one at a time.
 
-Each engine runs from its own virtualenv with its defaults for everything that is a tuning
-choice (batching limits, attention backend, CUDA graphs, prefix caching — on by default in
-all three), and with the same model, dtype and context length. The exact command line of
+Each engine runs from its own virtualenv with the same model, dtype and context length.
+minfer runs at its defaults; vLLM and SGLang run at their defaults (batching limits,
+attention backend, CUDA graphs, prefix caching — on by default in all three) plus the
+flags in ``TUNED``, which the fairness audit selected for them. The exact command line of
 every run is recorded in the results.
 """
 
@@ -29,8 +30,26 @@ ENVIRONMENT: dict[str, dict[str, str]] = {
 }
 
 
-def command(engine: str, model: str, port: int, extra: Sequence[str] = ()) -> list[str]:
-    """The server command line for ``engine``."""
+# Flags the benchmarks give each baseline on top of its defaults, chosen by the fairness
+# audit (bench/fairness_audit.py, DESIGN.md M-020) from the settings each engine documents
+# for latency-sensitive, prefix-heavy serving:
+# * vLLM: no per-request access-log line (neither other server writes one). No other flag
+#   tried (xxHash prefix hashing, the interactivity and throughput performance modes) moved
+#   its numbers beyond run-to-run noise.
+# * SGLang: the dynamic batch tokenizer (+14% saturated throughput). Longest-prefix-match
+#   scheduling made no difference, mixed chunks tripled saturated TTFT, and torch.compile
+#   was many times slower on this workload.
+TUNED: dict[str, list[str]] = {
+    "minfer": [],
+    "vllm": ["--disable-uvicorn-access-log"],
+    "sglang": ["--enable-dynamic-batch-tokenizer"],
+}
+
+
+def command(
+    engine: str, model: str, port: int, extra: Sequence[str] = (), tuned: bool = True
+) -> list[str]:
+    """The server command line for ``engine`` (``tuned=False``: without ``TUNED``)."""
     if engine == "minfer":
         base = [".venv/bin/python", "-m", "minfer.cli", "serve", "--model", model]
         base += ["--port", str(port), "--log-level", "warning"]
@@ -47,7 +66,7 @@ def command(engine: str, model: str, port: int, extra: Sequence[str] = ()) -> li
         base += ["--enable-metrics", "--enable-cache-report"]
     else:
         raise ValueError(f"unknown engine {engine!r}")
-    return [*base, *extra]
+    return [*base, *(TUNED[engine] if tuned else ()), *extra]
 
 
 def _healthy(port: int) -> bool:
@@ -76,6 +95,7 @@ def launch(
     log_path: Path,
     extra: Sequence[str] = (),
     startup_timeout: float = 900.0,
+    tuned: bool = True,
 ) -> Iterator[tuple[str, list[str]]]:
     """Run a server for the duration of the ``with`` block.
 
@@ -83,7 +103,7 @@ def launch(
     group is terminated and the function waits until the GPU's memory is released, so the
     next engine starts on an idle device.
     """
-    argv = command(engine, model, port, extra)
+    argv = command(engine, model, port, extra, tuned)
     env = os.environ.copy()
     # Each engine's JIT (FlashInfer needs ninja) must find its own virtualenv's tools.
     venv_bin = ROOT / Path(argv[0]).parent
