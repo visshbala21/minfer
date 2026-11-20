@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  cpu:
+    name: ruff + CPU unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: "0.13.4"
+      - name: Install pinned dependencies (CPU build of torch, CUDA-only wheels pruned)
+        run: scripts/setup_cpu_env.sh
+      - name: Lint
+        run: |
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
+      - name: CPU tests
+        run: .venv/bin/python -m pytest -m "not gpu"

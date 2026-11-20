@@ -1,0 +1,398 @@
+{
+  "summary": {
+    "trials": 12,
+    "prompt_runs": 60,
+    "prompt_runs_diverged": 9,
+    "trials_with_any_divergence": 7,
+    "max_logit_abs_diff": 0.8671875,
+    "diverged_runs_with_identical_layer0_inputs": 9,
+    "diverged_runs_with_different_layer0_outputs": 9,
+    "runs_unstable_on_immediate_repeat": 0
+  },
+  "trials": [
+    {
+      "english": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "code": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "chinese": {
+        "logits_max_abs_diff": 0.4375,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": false,
+        "all_calls_stable_on_repeat": true
+      },
+      "chat": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "structured": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      }
+    },
+    {
+      "english": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "code": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "chinese": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "chat": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "structured": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      }
+    },
+    {
+      "english": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "code": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "chinese": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "chat": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "structured": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      }
+    },
+    {
+      "english": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "code": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "chinese": {
+        "logits_max_abs_diff": 0.4375,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": false,
+        "all_calls_stable_on_repeat": true
+      },
+      "chat": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "structured": {
+        "logits_max_abs_diff": 0.453125,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": false,
+        "all_calls_stable_on_repeat": true
+      }
+    },
+    {
+      "english": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "code": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "chinese": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "chat": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "structured": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      }
+    },
+    {
+      "english": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "code": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "chinese": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "chat": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "structured": {
+        "logits_max_abs_diff": 0.453125,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": false,
+        "all_calls_stable_on_repeat": true
+      }
+    },
+    {
+      "english": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "code": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "chinese": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "chat": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "structured": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      }
+    },
+    {
+      "english": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "code": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "chinese": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "chat": {
+        "logits_max_abs_diff": 0.8671875,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": false,
+        "all_calls_stable_on_repeat": true
+      },
+      "structured": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      }
+    },
+    {
+      "english": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "code": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "chinese": {
+        "logits_max_abs_diff": 0.4375,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": false,
+        "all_calls_stable_on_repeat": true
+      },
+      "chat": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "structured": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      }
+    },
+    {
+      "english": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "code": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "chinese": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "chat": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "structured": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      }
+    },
+    {
+      "english": {
+        "logits_max_abs_diff": 0.34375,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": false,
+        "all_calls_stable_on_repeat": true
+      },
+      "code": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "chinese": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "chat": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "structured": {
+        "logits_max_abs_diff": 0.453125,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": false,
+        "all_calls_stable_on_repeat": true
+      }
+    },
+    {
+      "english": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "code": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "chinese": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      },
+      "chat": {
+        "logits_max_abs_diff": 0.8671875,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": false,
+        "all_calls_stable_on_repeat": true
+      },
+      "structured": {
+        "logits_max_abs_diff": 0.0,
+        "layer0_inputs_identical": true,
+        "layer0_outputs_identical": true,
+        "all_calls_stable_on_repeat": true
+      }
+    }
+  ]
+}
