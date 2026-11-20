@@ -65,12 +65,14 @@ class KernelContext:
 
 
 def needs_tensor_cores(num_heads: int, num_kv_heads: int) -> bool:
-    """Whether FlashInfer's decode must take its tensor-core path for this head layout.
+    """Whether FlashInfer's decode should take its tensor-core path for this head layout.
 
-    Its plain decode kernel is specialized for grouped-query group sizes 1, 2, 3, 4, 6, 8
-    and 16 only (Qwen2.5-0.5B has 14 query heads over 2 KV heads: group size 7).
+    Yes for grouped-query group sizes of 4 and above: that is the rule SGLang applies, and
+    for group size 6 the tensor-core path is the faster one at every batch size and context
+    measured (DESIGN.md M-019). FlashInfer's plain decode kernel is also only specialized
+    for group sizes 1, 2, 3, 4, 6, 8 and 16 (Qwen2.5-0.5B and 7B have group size 7).
     """
-    return num_heads // num_kv_heads not in (1, 2, 3, 4, 6, 8, 16)
+    return num_heads // num_kv_heads >= 4
 
 
 class TritonDecodeContext:

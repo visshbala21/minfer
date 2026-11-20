@@ -9,11 +9,15 @@ deliberately scattered (a shuffled block table), then
 
 * the two kernels' outputs are compared with each other and with a float32 reference
   computed by plain PyTorch on the gathered keys and values;
-* each kernel is timed two ways: called from Python (which, for sub-0.1 ms kernels, mostly
-  measures the launcher), and replayed 28 times from a CUDA graph, which is how the engine
-  runs decode attention and measures what the GPU actually executes. FlashInfer's
-  host-side ``plan()`` (needed once per engine step; the Triton kernel has no equivalent)
-  is reported separately.
+* **kernel only**: each kernel is replayed 28 times from a CUDA graph, which is how the
+  engine runs decode attention and measures what the GPU executes, with no Python launcher
+  and no host-side planning. FlashInfer is timed in both decode configurations (with and
+  without ``use_tensor_cores``) and the faster one is the baseline;
+* **end to end**: one engine step's worth of decode attention in wall-clock time — the
+  host-side preparation (FlashInfer's ``plan()``; for the Triton kernel, densifying the page
+  table and copying it to the device) followed by the 28 replayed kernels;
+* for reference, each kernel called from Python (for sub-0.1 ms kernels this mostly measures
+  the launcher).
 
 Writes ``bench/results/triton_kernel.json``.
 """
@@ -24,15 +28,18 @@ import argparse
 import json
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import torch
 
 from minfer.attention.flashinfer_backend import flashinfer
+from minfer.attention.paged import dense_block_table
 from minfer.attention.triton_decode import paged_decode_attention
 
 NUM_HEADS, NUM_KV_HEADS, HEAD_DIM, BLOCK = 12, 2, 128, 16
 BATCH_SIZES = (1, 8, 32, 64, 256)
 CONTEXTS = (128, 1024, 4096, 16384)
+LAYERS = 28  # kernel calls per decode step of the model these shapes come from
 
 
 def make_case(batch: int, context: int, generator: torch.Generator) -> dict:
@@ -88,8 +95,10 @@ def timed(fn: object, repeats: int) -> float:
     return best
 
 
-def graph_ms_per_call(fn: object, calls: int = 28, repeats: int = 50) -> float:
-    """GPU time per call when ``calls`` calls are replayed from one CUDA graph.
+def graph_ms_per_call(
+    fn: object, calls: int = LAYERS, repeats: int = 50
+) -> tuple[torch.cuda.CUDAGraph, float]:
+    """Capture ``calls`` calls in one CUDA graph; return it and the GPU time per call.
 
     This is how the engine runs decode attention (28 layers per captured step): Python
     launch overhead is gone and only what the GPU executes remains.
@@ -108,7 +117,7 @@ def graph_ms_per_call(fn: object, calls: int = 28, repeats: int = 50) -> float:
             graph.replay()
         torch.cuda.synchronize()
         best = min(best, (time.perf_counter() - start) / (repeats * calls) * 1e3)
-    return best
+    return graph, best
 
 
 def main() -> None:
@@ -170,43 +179,107 @@ def main() -> None:
                 "flashinfer_kernel_ms": timed(run_flashinfer, args.repeats),
                 "flashinfer_plan_and_kernel_ms": timed(plan_and_run, args.repeats),
             }
-            # The same two kernels as the engine runs them: replayed from a CUDA graph.
+            # Kernel only: the kernels as the engine runs them, replayed from a CUDA graph
+            # (no Python launcher, no plan()). FlashInfer is measured in both of its decode
+            # configurations and the faster one is the baseline: SGLang and vLLM select the
+            # tensor-core path for this head layout (group size 6).
             pages = case["table"].shape[1]
-            graph_wrapper = flashinfer.BatchDecodeWithPagedKVCacheWrapper(
-                workspace,
-                "NHD",
-                use_cuda_graph=True,
-                paged_kv_indptr_buffer=torch.zeros(batch + 1, dtype=torch.int32, device="cuda"),
-                paged_kv_indices_buffer=torch.zeros(
-                    batch * pages, dtype=torch.int32, device="cuda"
-                ),
-                paged_kv_last_page_len_buffer=torch.zeros(batch, dtype=torch.int32, device="cuda"),
+            csr = SimpleNamespace(
+                kv_indptr=case["indptr"],
+                kv_indices=case["indices"],
+                kv_last_page_len=case["last_page_len"],
+                block_size=BLOCK,
             )
-            graph_wrapper.plan(
-                case["indptr"],
-                case["indices"],
-                case["last_page_len"],
-                NUM_HEADS,
-                NUM_KV_HEADS,
-                HEAD_DIM,
-                BLOCK,
-                pos_encoding_mode="NONE",
-                q_data_type=torch.bfloat16,
-                kv_data_type=torch.bfloat16,
-            )
-            out = torch.empty_like(case["q"])
-
-            def graph_flashinfer(case: dict = case, w: object = graph_wrapper) -> None:
-                w.run(case["q"], case["cache"])
-
-            def graph_triton(case: dict = case, out: torch.Tensor = out) -> None:
-                paged_decode_attention(
-                    case["q"], case["cache"], case["table"], case["lengths"], out=out
+            flashinfer_graphs = {}
+            for name, tensor_cores in (("flashinfer", False), ("flashinfer_tc", True)):
+                graph_wrapper = flashinfer.BatchDecodeWithPagedKVCacheWrapper(
+                    workspace,
+                    "NHD",
+                    use_cuda_graph=True,
+                    use_tensor_cores=tensor_cores,
+                    paged_kv_indptr_buffer=torch.zeros(batch + 1, dtype=torch.int32, device="cuda"),
+                    paged_kv_indices_buffer=torch.zeros(
+                        batch * pages, dtype=torch.int32, device="cuda"
+                    ),
+                    paged_kv_last_page_len_buffer=torch.zeros(
+                        batch, dtype=torch.int32, device="cuda"
+                    ),
                 )
 
-            row["triton_graph_ms"] = graph_ms_per_call(graph_triton)
-            row["flashinfer_graph_ms"] = graph_ms_per_call(graph_flashinfer)
+                def graph_plan(case: dict = case, w: object = graph_wrapper) -> None:
+                    w.plan(
+                        case["indptr"],
+                        case["indices"],
+                        case["last_page_len"],
+                        NUM_HEADS,
+                        NUM_KV_HEADS,
+                        HEAD_DIM,
+                        BLOCK,
+                        pos_encoding_mode="NONE",
+                        q_data_type=torch.bfloat16,
+                        kv_data_type=torch.bfloat16,
+                    )
+
+                def graph_run(case: dict = case, w: object = graph_wrapper) -> torch.Tensor:
+                    return w.run(case["q"], case["cache"])
+
+                graph_plan()
+                error = (graph_run().float() - exact).abs().max().item()
+                row[f"{name}_graph_vs_fp32_max_abs"] = error
+                graph, kernel_ms = graph_ms_per_call(graph_run)
+                row[f"{name}_graph_ms"] = kernel_ms
+                row[f"{name}_plan_ms"] = timed(graph_plan, args.repeats)
+                flashinfer_graphs[name] = (kernel_ms, graph, graph_plan)
+
+            out = torch.empty_like(case["q"])
+            table_buffer = torch.zeros_like(case["table"])
+            lengths_buffer = torch.ones_like(case["lengths"])
+
+            def triton_prepare(
+                csr: object = csr,
+                table_buffer: torch.Tensor = table_buffer,
+                lengths_buffer: torch.Tensor = lengths_buffer,
+            ) -> None:
+                # What the engine does per step instead of plan(): densify the page table
+                # on the host and copy it into the graph's static buffers.
+                table, lengths = dense_block_table(csr)
+                table_buffer.copy_(table)
+                lengths_buffer.copy_(lengths)
+
+            def graph_triton(
+                case: dict = case,
+                out: torch.Tensor = out,
+                table_buffer: torch.Tensor = table_buffer,
+                lengths_buffer: torch.Tensor = lengths_buffer,
+            ) -> None:
+                paged_decode_attention(
+                    case["q"], case["cache"], table_buffer, lengths_buffer, out=out
+                )
+
+            triton_prepare()
+            triton_graph, row["triton_graph_ms"] = graph_ms_per_call(graph_triton)
+            row["triton_prepare_ms"] = timed(triton_prepare, args.repeats)
+
+            best = min(flashinfer_graphs, key=lambda name, g=flashinfer_graphs: g[name][0])
+            best_ms, best_graph, best_plan = flashinfer_graphs[best]
+            row["flashinfer_best_config"] = best
+            row["flashinfer_best_graph_ms"] = best_ms
             row["speedup_in_graph"] = row["flashinfer_graph_ms"] / row["triton_graph_ms"]
+            row["speedup_in_graph_vs_best"] = best_ms / row["triton_graph_ms"]
+
+            # End to end: one engine step's worth of decode attention — the host-side
+            # preparation once, then the 28 layers' kernels — in wall-clock time.
+            def step_flashinfer(plan: object = best_plan, graph: object = best_graph) -> None:
+                plan()
+                graph.replay()
+
+            def step_triton(graph: object = triton_graph) -> None:
+                triton_prepare()
+                graph.replay()
+
+            row["flashinfer_step_ms"] = timed(step_flashinfer, 50)
+            row["triton_step_ms"] = timed(step_triton, 50)
+            row["speedup_end_to_end"] = row["flashinfer_step_ms"] / row["triton_step_ms"]
             row["triton_vs_flashinfer_kernel"] = row["flashinfer_kernel_ms"] / row["triton_ms"]
             rows.append(row)
             print(
@@ -222,7 +295,10 @@ def main() -> None:
         "head_dim": HEAD_DIM,
         "block_size": BLOCK,
         "dtype": "bfloat16",
-        "what": f"one attention layer; ms per call, best of 5 rounds of {args.repeats} calls",
+        "what": (
+            f"one attention layer; ms per call, best of 5 rounds of {args.repeats} calls; "
+            f"*_step_ms is host preparation plus {LAYERS} replayed calls"
+        ),
         "rows": rows,
     }
     args.out.write_text(json.dumps(results, indent=1) + "\n")
