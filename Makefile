@@ -3,7 +3,7 @@ export PATH := $(CURDIR)/.venv/bin:$(PATH)
 
 PY := .venv/bin/python
 
-.PHONY: setup env lint format test test-cpu bench bench-agent bench-micro plots
+.PHONY: setup env lint format test test-cpu bench bench-agent bench-micro bench-ablations plots
 
 setup:  ## build .venv, .venv-vllm and .venv-sglang from the pinned lock files
 	scripts/setup_envs.sh all
@@ -25,15 +25,28 @@ test:  ## full suite (needs the GPU and downloaded weights)
 test-cpu:  ## the subset CI runs
 	$(PY) -m pytest -m "not gpu"
 
-bench: bench-micro bench-agent plots  ## every benchmark behind the README, then the charts
+bench: bench-micro bench-agent bench-ablations plots  ## every benchmark behind the README
+	$(PY) -m bench.readme_tables
 
-bench-micro:  ## engine-level benchmarks and equivalence checks (minfer only)
+bench-micro:  ## engine-level benchmarks and equivalence checks (minfer; vLLM only for the fixture)
+	.venv-vllm/bin/python bench/vllm_greedy_fixture.py
+	$(PY) -m bench.vllm_equivalence
 	$(PY) -m bench.decode_latency
+	$(PY) -m bench.prefill_latency
 	$(PY) -m bench.chunked_prefill
 	$(PY) -m bench.prefix_cache_equivalence
+	$(PY) -m bench.triton_kernel
+	$(PY) -m bench.speculation
+	$(PY) -m bench.gsm8k
+	$(PY) -m bench.profile_engine --tag after
+	$(PY) -m bench.tensor_parallel_check
+	bench/serve_compat.sh
 
 bench-agent:  ## minfer vs vLLM vs SGLang on the agent workload and ShareGPT, all rates
 	$(PY) -m bench.run_matrix
+
+bench-ablations:  ## the agent workload with one feature changed at a time
+	$(PY) -m bench.ablations
 
 plots:  ## regenerate bench/plots/ from bench/results/
 	$(PY) -m bench.plot
