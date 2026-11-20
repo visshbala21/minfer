@@ -1,0 +1,79 @@
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "minfer"
+version = "0.1.0"
+description = "A from-scratch LLM inference engine optimized for multi-turn AI agent workloads."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.12,<3.13"
+authors = [{ name = "Visshwa Balasubramanian" }]
+# Every direct dependency is pinned to an exact version; transitive pins live in uv.lock.
+# torch and flashinfer-python are deliberately the exact versions vLLM 0.34.0 pins, so that
+# benchmark differences are attributable to the engine and not to library builds.
+dependencies = [
+    "torch==2.14.0",
+    "triton==3.8.0",
+    "flashinfer-python==0.7.3",
+    "transformers==5.22.2",
+    "tokenizers==0.23.3",
+    "safetensors==0.8.0",
+    "huggingface-hub==2.4.0",
+    "numpy==2.5.5",
+    "fastapi==0.165.0",
+    "uvicorn==0.54.0",
+    "uvloop==0.23.0",
+    "httptools==0.9.0",
+    "pydantic==2.14.4",
+    "orjson==3.13.0",
+]
+
+[project.scripts]
+minfer = "minfer.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest==9.2.0",
+    "pytest-timeout==2.4.0",
+    "ruff==0.17.6",
+    "httpx==0.28.1",
+    "openai==3.57.0",
+    "aiohttp==3.14.5",
+    "matplotlib==3.11.2",
+    "datasets==5.2.0",
+    "modal==1.6.4",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["minfer"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [".venv", ".venv-vllm", ".venv-sglang"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "ANN001", "ANN201", "ANN202", "D101", "D102"]
+ignore = [
+    "E741",   # short math names (q, k, v, l) mirror the papers
+    "RUF001", # allow unicode math symbols in docstrings
+    "RUF002",
+    "RUF003",
+    "SIM108",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN", "D"]
+"bench/**" = ["D"]
+"deploy/**" = ["D"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 1800
+markers = [
+    "gpu: needs a CUDA device and downloaded model weights",
+    "slow: long-running test",
+]
+addopts = "-ra"

@@ -1,0 +1,19 @@
+# virtualenvs (may be symlinks to fast local disk, see scripts/setup_envs.sh)
+.venv
+.venv-vllm
+.venv-sglang
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# local scratch / logs (committed results live in bench/results/)
+*.log
+bench/logs/
+.cache/
+.DS_Store
