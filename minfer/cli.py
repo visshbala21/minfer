@@ -40,8 +40,14 @@ def add_engine_arguments(parser: argparse.ArgumentParser) -> None:
         help="run the transformer's linear layers with FP8 weights and activations",
     )
     group.add_argument(
+        "--fused-kernels",
+        action=argparse.BooleanOptionalAction,
+        default=defaults.fused_kernels,
+        help="merged projections and fused norm/RoPE/activation kernels",
+    )
+    group.add_argument(
         "--decode-kernel",
-        choices=["flashinfer", "triton"],
+        choices=["auto", "flashinfer", "triton"],
         default=defaults.decode_kernel,
         help="paged-attention kernel used for decode steps",
     )
@@ -100,6 +106,7 @@ def engine_config_from_args(args: argparse.Namespace) -> EngineConfig:
         max_model_len=args.max_model_len,
         kv_cache_dtype=args.kv_cache_dtype,
         weight_dtype=args.weight_dtype,
+        fused_kernels=args.fused_kernels,
         decode_kernel=args.decode_kernel,
         cuda_graphs=args.cuda_graphs,
         prefill_chunk_tokens=args.prefill_chunk_tokens,

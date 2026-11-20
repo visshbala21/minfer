@@ -1,0 +1,308 @@
+{
+ "model": "Qwen/Qwen2.5-1.5B-Instruct",
+ "gpu": "NVIDIA H100 80GB HBM3",
+ "engine_overrides": {},
+ "note": "profiler overhead inflates wall times; compare kernel counts and GPU time",
+ "scenarios": {
+  "decode_graph_batch1": {
+   "steps": 5,
+   "wall_ms_per_step": 3.1579061993397772,
+   "cuda_kernels_per_step": 398.0,
+   "gpu_kernel_ms_per_step": 2.029842799999994,
+   "top_kernels_by_launches": [
+    {
+     "kernel": "_add_rms_norm_kernel",
+     "per_step": 57.0
+    },
+    {
+     "kernel": "void at::native::index_elementwise_kernel<128, 4, at::native::index_copy_kernel_",
+     "per_step": 56.0
+    },
+    {
+     "kernel": "nvjet_sm90_tst_64x8_64x16_4x1_v_bz_bias_TNT",
+     "per_step": 28.0
+    },
+    {
+     "kernel": "_rope_qkv_kernel",
+     "per_step": 28.0
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<2, at::native::CUDAFunctorOnSelf_",
+     "per_step": 28.0
+    },
+    {
+     "kernel": "_paged_decode_kernel",
+     "per_step": 28.0
+    },
+    {
+     "kernel": "_merge_splits_kernel",
+     "per_step": 28.0
+    },
+    {
+     "kernel": "nvjet_sm90_tst_64x8_64x16_4x1_v_bz_TNT",
+     "per_step": 28.0
+    }
+   ],
+   "top_kernels_by_gpu_time": [
+    {
+     "kernel": "nvjet_sm90_tst_256x8_64x6_4x1_v_bz_TNT",
+     "ms_per_step": 0.6199892000000019
+    },
+    {
+     "kernel": "nvjet_sm90_tst_64x8_64x16_4x1_v_bz_splitK_TNT",
+     "ms_per_step": 0.3321065999999994
+    },
+    {
+     "kernel": "nvjet_sm90_tst_384x8_64x4_2x1_v_bz_TNT",
+     "ms_per_step": 0.1628533999999998
+    },
+    {
+     "kernel": "nvjet_sm90_tst_64x8_64x16_4x1_v_bz_bias_TNT",
+     "ms_per_step": 0.1597751999999983
+    },
+    {
+     "kernel": "nvjet_sm90_tst_64x8_64x16_4x1_v_bz_TNT",
+     "ms_per_step": 0.13838740000000088
+    },
+    {
+     "kernel": "_merge_splits_kernel",
+     "ms_per_step": 0.12723659999999928
+    },
+    {
+     "kernel": "_paged_decode_kernel",
+     "ms_per_step": 0.1056119999999998
+    },
+    {
+     "kernel": "_add_rms_norm_kernel",
+     "ms_per_step": 0.10533619999999819
+    }
+   ],
+   "trace": "decode_graph_batch1.json.gz"
+  },
+  "decode_graph_batch64": {
+   "steps": 5,
+   "wall_ms_per_step": 3.826564596965909,
+   "cuda_kernels_per_step": 399.0,
+   "gpu_kernel_ms_per_step": 2.585232199999997,
+   "top_kernels_by_launches": [
+    {
+     "kernel": "_add_rms_norm_kernel",
+     "per_step": 57.0
+    },
+    {
+     "kernel": "void at::native::index_elementwise_kernel<128, 4, at::native::index_copy_kernel_",
+     "per_step": 56.0
+    },
+    {
+     "kernel": "nvjet_sm90_tst_64x32_64x16_4x2_h_bz_bias_TNT",
+     "per_step": 28.0
+    },
+    {
+     "kernel": "_rope_qkv_kernel",
+     "per_step": 28.0
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<2, at::native::CUDAFunctorOnSelf_",
+     "per_step": 28.0
+    },
+    {
+     "kernel": "_paged_decode_kernel",
+     "per_step": 28.0
+    },
+    {
+     "kernel": "_merge_splits_kernel",
+     "per_step": 28.0
+    },
+    {
+     "kernel": "nvjet_sm90_tst_24x64_64x16_4x1_v_bz_TNN",
+     "per_step": 28.0
+    }
+   ],
+   "top_kernels_by_gpu_time": [
+    {
+     "kernel": "nvjet_sm90_tst_144x64_64x8_2x1_v_bz_TNN",
+     "ms_per_step": 0.6783517999999997
+    },
+    {
+     "kernel": "_paged_decode_kernel",
+     "ms_per_step": 0.49881420000000193
+    },
+    {
+     "kernel": "nvjet_sm90_tst_64x64_64x13_4x1_v_bz_splitK_TNT",
+     "ms_per_step": 0.3527544000000008
+    },
+    {
+     "kernel": "nvjet_sm90_tst_64x32_64x16_4x2_h_bz_bias_TNT",
+     "ms_per_step": 0.17545419999999984
+    },
+    {
+     "kernel": "nvjet_sm90_tst_384x64_64x3_2x1_v_bz_coopB_TNN",
+     "ms_per_step": 0.17523740000000051
+    },
+    {
+     "kernel": "void at::native::index_elementwise_kernel<128, 4, at::native::index_copy_kernel_",
+     "ms_per_step": 0.157452800000002
+    },
+    {
+     "kernel": "nvjet_sm90_tst_24x64_64x16_4x1_v_bz_TNN",
+     "ms_per_step": 0.14995739999999888
+    },
+    {
+     "kernel": "_add_rms_norm_kernel",
+     "ms_per_step": 0.11602399999999571
+    }
+   ],
+   "trace": "decode_graph_batch64.json.gz"
+  },
+  "decode_eager_batch1": {
+   "steps": 5,
+   "wall_ms_per_step": 10.400313598802313,
+   "cuda_kernels_per_step": 398.0,
+   "gpu_kernel_ms_per_step": 2.0467836000000244,
+   "top_kernels_by_launches": [
+    {
+     "kernel": "_add_rms_norm_kernel",
+     "per_step": 57.0
+    },
+    {
+     "kernel": "void at::native::index_elementwise_kernel<128, 4, at::native::index_copy_kernel_",
+     "per_step": 56.0
+    },
+    {
+     "kernel": "nvjet_sm90_tst_64x8_64x16_4x1_v_bz_bias_TNT",
+     "per_step": 28.0
+    },
+    {
+     "kernel": "_rope_qkv_kernel",
+     "per_step": 28.0
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<2, at::native::CUDAFunctorOnSelf_",
+     "per_step": 28.0
+    },
+    {
+     "kernel": "_paged_decode_kernel",
+     "per_step": 28.0
+    },
+    {
+     "kernel": "_merge_splits_kernel",
+     "per_step": 28.0
+    },
+    {
+     "kernel": "nvjet_sm90_tst_64x8_64x16_4x1_v_bz_TNT",
+     "per_step": 28.0
+    }
+   ],
+   "top_kernels_by_gpu_time": [
+    {
+     "kernel": "nvjet_sm90_tst_256x8_64x6_4x1_v_bz_TNT",
+     "ms_per_step": 0.616621200000014
+    },
+    {
+     "kernel": "nvjet_sm90_tst_64x8_64x16_4x1_v_bz_splitK_TNT",
+     "ms_per_step": 0.3345704000000066
+    },
+    {
+     "kernel": "nvjet_sm90_tst_384x8_64x4_2x1_v_bz_TNT",
+     "ms_per_step": 0.16258459999999905
+    },
+    {
+     "kernel": "nvjet_sm90_tst_64x8_64x16_4x1_v_bz_bias_TNT",
+     "ms_per_step": 0.15971660000000093
+    },
+    {
+     "kernel": "nvjet_sm90_tst_64x8_64x16_4x1_v_bz_TNT",
+     "ms_per_step": 0.13999859999999617
+    },
+    {
+     "kernel": "_merge_splits_kernel",
+     "ms_per_step": 0.12776239999999903
+    },
+    {
+     "kernel": "void at::native::index_elementwise_kernel<128, 4, at::native::index_copy_kernel_",
+     "ms_per_step": 0.11270319999999348
+    },
+    {
+     "kernel": "_paged_decode_kernel",
+     "ms_per_step": 0.10798079999999777
+    }
+   ],
+   "trace": "decode_eager_batch1.json.gz"
+  },
+  "prefill_2048_tokens": {
+   "steps": 5,
+   "wall_ms_per_step": 13.744011195376515,
+   "cuda_kernels_per_step": 399.0,
+   "gpu_kernel_ms_per_step": 11.168753800000005,
+   "top_kernels_by_launches": [
+    {
+     "kernel": "_add_rms_norm_kernel",
+     "per_step": 57.0
+    },
+    {
+     "kernel": "void at::native::index_elementwise_kernel<128, 4, at::native::index_copy_kernel_",
+     "per_step": 56.0
+    },
+    {
+     "kernel": "nvjet_sm90_tst_192x128_64x5_1x2_h_bz_coopB_TNT",
+     "per_step": 56.0
+    },
+    {
+     "kernel": "Memset ",
+     "per_step": 30.0
+    },
+    {
+     "kernel": "nvjet_sm90_tst_256x128_64x4_1x2_h_bz_coopA_bias_TNT",
+     "per_step": 28.0
+    },
+    {
+     "kernel": "_rope_qkv_kernel",
+     "per_step": 28.0
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<2, at::native::CUDAFunctorOnSelf_",
+     "per_step": 28.0
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<8, at::native::FillFunctor<c10::B",
+     "per_step": 28.0
+    }
+   ],
+   "top_kernels_by_gpu_time": [
+    {
+     "kernel": "nvjet_sm90_tst_320x128_64x3_1x2_h_bz_coopB_TNT",
+     "ms_per_step": 4.244322600000007
+    },
+    {
+     "kernel": "nvjet_sm90_tst_192x128_64x5_1x2_h_bz_coopB_TNT",
+     "ms_per_step": 2.404269200000001
+    },
+    {
+     "kernel": "void flashinfer::PrefillWithKVCacheKernel<flashinfer::SparseCollectiveMainloop<P",
+     "ms_per_step": 1.367473599999999
+    },
+    {
+     "kernel": "_silu_mul_kernel",
+     "ms_per_step": 1.0451086000000032
+    },
+    {
+     "kernel": "_rope_qkv_kernel",
+     "ms_per_step": 0.6006695999999901
+    },
+    {
+     "kernel": "nvjet_sm90_tst_256x128_64x4_1x2_h_bz_coopA_bias_TNT",
+     "ms_per_step": 0.5874390000000038
+    },
+    {
+     "kernel": "_add_rms_norm_kernel",
+     "ms_per_step": 0.38274560000000035
+    },
+    {
+     "kernel": "void at::native::index_elementwise_kernel<128, 4, at::native::index_copy_kernel_",
+     "ms_per_step": 0.20188040000000781
+    }
+   ],
+   "trace": "prefill_2048_tokens.json.gz"
+  }
+ }
+}

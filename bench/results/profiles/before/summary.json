@@ -1,0 +1,311 @@
+{
+ "model": "Qwen/Qwen2.5-1.5B-Instruct",
+ "gpu": "NVIDIA H100 80GB HBM3",
+ "engine_overrides": {
+  "fused_kernels": false,
+  "decode_kernel": "flashinfer"
+ },
+ "note": "profiler overhead inflates wall times; compare kernel counts and GPU time",
+ "scenarios": {
+  "decode_graph_batch1": {
+   "steps": 5,
+   "wall_ms_per_step": 5.431797803612426,
+   "cuda_kernels_per_step": 1219.0,
+   "gpu_kernel_ms_per_step": 3.6297652000000076,
+   "top_kernels_by_launches": [
+    {
+     "kernel": "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<a",
+     "per_step": 168.0
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<8, at::native::CUDAFunctor_add<c1",
+     "per_step": 112.0
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<8, at::native::BinaryFunctor<c10:",
+     "per_step": 85.0
+    },
+    {
+     "kernel": "void at::native::",
+     "per_step": 57.0
+    },
+    {
+     "kernel": "void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda",
+     "per_step": 57.0
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<4, at::native::",
+     "per_step": 57.0
+    },
+    {
+     "kernel": "void at::native::reduce_kernel<512, 1, at::native::ReduceOp<float, at::native::M",
+     "per_step": 57.0
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<4, at::native::CUDAFunctorOnSelf_",
+     "per_step": 57.0
+    }
+   ],
+   "top_kernels_by_gpu_time": [
+    {
+     "kernel": "nvjet_sm90_tst_128x8_64x12_4x1_v_bz_TNT",
+     "ms_per_step": 0.6589664000000038
+    },
+    {
+     "kernel": "void flashinfer::BatchDecodeWithPagedKVCacheKernel<",
+     "ms_per_step": 0.33492920000000076
+    },
+    {
+     "kernel": "nvjet_sm90_tst_64x8_64x16_4x1_v_bz_splitK_TNT",
+     "ms_per_step": 0.3348268000000018
+    },
+    {
+     "kernel": "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<a",
+     "ms_per_step": 0.3019378000000048
+    },
+    {
+     "kernel": "nvjet_sm90_tst_8x64_64x16_4x1_v_bz_bias_TNN",
+     "ms_per_step": 0.2694258000000006
+    },
+    {
+     "kernel": "nvjet_sm90_tst_384x8_64x4_2x1_v_bz_TNT",
+     "ms_per_step": 0.16273199999999943
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<8, at::native::CUDAFunctor_add<c1",
+     "ms_per_step": 0.15572420000000248
+    },
+    {
+     "kernel": "nvjet_sm90_tst_64x8_64x16_4x1_v_bz_bias_TNT",
+     "ms_per_step": 0.1503422000000005
+    }
+   ],
+   "trace": "decode_graph_batch1.json.gz"
+  },
+  "decode_graph_batch64": {
+   "steps": 5,
+   "wall_ms_per_step": 7.156089995987713,
+   "cuda_kernels_per_step": 1219.0,
+   "gpu_kernel_ms_per_step": 5.111174599999974,
+   "top_kernels_by_launches": [
+    {
+     "kernel": "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<a",
+     "per_step": 225.0
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<8, at::native::CUDAFunctor_add<c1",
+     "per_step": 112.0
+    },
+    {
+     "kernel": "void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda",
+     "per_step": 57.0
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<4, at::native::",
+     "per_step": 57.0
+    },
+    {
+     "kernel": "void at::native::reduce_kernel<512, 1, at::native::ReduceOp<float, at::native::M",
+     "per_step": 57.0
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<4, at::native::CUDAFunctorOnSelf_",
+     "per_step": 57.0
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<4, at::native::rsqrt_kernel_cuda",
+     "per_step": 57.0
+    },
+    {
+     "kernel": "void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_impl_nocast<a",
+     "per_step": 57.0
+    }
+   ],
+   "top_kernels_by_gpu_time": [
+    {
+     "kernel": "void flashinfer::BatchDecodeWithPagedKVCacheKernel<",
+     "ms_per_step": 1.0522175999999965
+    },
+    {
+     "kernel": "nvjet_sm90_tst_72x64_64x12_2x1_v_bz_TNN",
+     "ms_per_step": 0.7191194000000103
+    },
+    {
+     "kernel": "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<a",
+     "ms_per_step": 0.583226399999992
+    },
+    {
+     "kernel": "nvjet_sm90_tst_64x64_64x13_4x1_v_bz_splitK_TNT",
+     "ms_per_step": 0.35732140000000145
+    },
+    {
+     "kernel": "void at::native::reduce_kernel<512, 1, at::native::ReduceOp<float, at::native::M",
+     "ms_per_step": 0.29283120000000157
+    },
+    {
+     "kernel": "nvjet_sm90_tst_64x8_64x16_2x4_h_bz_bias_TNT",
+     "ms_per_step": 0.28135019999999816
+    },
+    {
+     "kernel": "nvjet_sm90_tst_384x64_64x3_2x1_v_bz_coopB_TNN",
+     "ms_per_step": 0.17504540000000052
+    },
+    {
+     "kernel": "void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda",
+     "ms_per_step": 0.16513399999999828
+    }
+   ],
+   "trace": "decode_graph_batch64.json.gz"
+  },
+  "decode_eager_batch1": {
+   "steps": 5,
+   "wall_ms_per_step": 17.69054500036873,
+   "cuda_kernels_per_step": 1219.0,
+   "gpu_kernel_ms_per_step": 3.7482886000000226,
+   "top_kernels_by_launches": [
+    {
+     "kernel": "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<a",
+     "per_step": 168.0
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<8, at::native::CUDAFunctor_add<c1",
+     "per_step": 112.0
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<8, at::native::BinaryFunctor<c10:",
+     "per_step": 85.0
+    },
+    {
+     "kernel": "void at::native::",
+     "per_step": 57.0
+    },
+    {
+     "kernel": "void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda",
+     "per_step": 57.0
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<4, at::native::",
+     "per_step": 57.0
+    },
+    {
+     "kernel": "void at::native::reduce_kernel<512, 1, at::native::ReduceOp<float, at::native::M",
+     "per_step": 57.0
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<4, at::native::CUDAFunctorOnSelf_",
+     "per_step": 57.0
+    }
+   ],
+   "top_kernels_by_gpu_time": [
+    {
+     "kernel": "nvjet_sm90_tst_128x8_64x12_4x1_v_bz_TNT",
+     "ms_per_step": 0.6626786
+    },
+    {
+     "kernel": "nvjet_sm90_tst_64x8_64x16_4x1_v_bz_splitK_TNT",
+     "ms_per_step": 0.3341608000000055
+    },
+    {
+     "kernel": "void flashinfer::BatchDecodeWithPagedKVCacheKernel<",
+     "ms_per_step": 0.33148679999999964
+    },
+    {
+     "kernel": "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<a",
+     "ms_per_step": 0.3276041999999645
+    },
+    {
+     "kernel": "nvjet_sm90_tst_8x64_64x16_4x1_v_bz_bias_TNN",
+     "ms_per_step": 0.2749247999999892
+    },
+    {
+     "kernel": "nvjet_sm90_tst_384x8_64x4_2x1_v_bz_TNT",
+     "ms_per_step": 0.16357039999999906
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<8, at::native::CUDAFunctor_add<c1",
+     "ms_per_step": 0.15869579999998873
+    },
+    {
+     "kernel": "nvjet_sm90_tst_64x8_64x16_4x1_v_bz_bias_TNT",
+     "ms_per_step": 0.15317599999999226
+    }
+   ],
+   "trace": "decode_eager_batch1.json.gz"
+  },
+  "prefill_2048_tokens": {
+   "steps": 5,
+   "wall_ms_per_step": 19.675519596785307,
+   "cuda_kernels_per_step": 1248.0,
+   "gpu_kernel_ms_per_step": 15.556002199999968,
+   "top_kernels_by_launches": [
+    {
+     "kernel": "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<a",
+     "per_step": 225.0
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<8, at::native::CUDAFunctor_add<c1",
+     "per_step": 112.0
+    },
+    {
+     "kernel": "Memset ",
+     "per_step": 58.0
+    },
+    {
+     "kernel": "void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda",
+     "per_step": 57.0
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<4, at::native::",
+     "per_step": 57.0
+    },
+    {
+     "kernel": "void at::native::reduce_kernel<512, 1, at::native::ReduceOp<float, at::native::M",
+     "per_step": 57.0
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<4, at::native::CUDAFunctorOnSelf_",
+     "per_step": 57.0
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<4, at::native::rsqrt_kernel_cuda",
+     "per_step": 57.0
+    }
+   ],
+   "top_kernels_by_gpu_time": [
+    {
+     "kernel": "nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN",
+     "ms_per_step": 4.3725243999999925
+    },
+    {
+     "kernel": "nvjet_sm90_tst_192x128_64x5_1x2_h_bz_coopB_TNT",
+     "ms_per_step": 2.3703357999999946
+    },
+    {
+     "kernel": "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<a",
+     "ms_per_step": 1.4846500000000287
+    },
+    {
+     "kernel": "void flashinfer::PrefillWithKVCacheKernel<flashinfer::SparseCollectiveMainloop<P",
+     "ms_per_step": 1.3397816000000007
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<8, at::native::BinaryFunctor<c10:",
+     "ms_per_step": 0.9465726000000035
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<8, at::native::",
+     "ms_per_step": 0.6658780000000003
+    },
+    {
+     "kernel": "void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_impl_nocast<a",
+     "ms_per_step": 0.525896199999991
+    },
+    {
+     "kernel": "void at::native::vectorized_elementwise_kernel<8, at::native::CUDAFunctor_add<c1",
+     "ms_per_step": 0.49003160000001117
+    }
+   ],
+   "trace": "prefill_2048_tokens.json.gz"
+  }
+ }
+}

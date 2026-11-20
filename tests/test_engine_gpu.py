@@ -427,3 +427,81 @@ def test_fp8_engine_tracks_the_float32_model(reference, fixture, tokenizer, over
     prompts = chat_prompts(tokenizer, 24)
     params = mixed_params(24)
     check_outputs(engine, engine.generate(prompts, params), params)
+
+
+# ----------------------------------------------------------- Phase 11: fused kernels
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16], ids=["fp32", "bf16"])
+def test_fused_kernels_match_the_reference_modules(dtype):
+    """Each fused kernel against the PyTorch modules it replaces, on real weights."""
+    from minfer.model import fused
+    from minfer.model.qwen2 import apply_rope
+
+    model = load_model(PRIMARY_MODEL, dtype=dtype)
+    config = model.config
+    generator = torch.Generator().manual_seed(0)
+    rows = 37
+    x = (torch.randn(rows, config.hidden_size, generator=generator) * 2).to("cuda", dtype)
+    delta = torch.randn(rows, config.hidden_size, generator=generator).to("cuda", dtype)
+    exact = dtype == torch.bfloat16  # in bf16 the reference's own roundings are replicated
+    tolerance = 0.0 if exact else 2e-6
+
+    norm = model.layers[3].input_layernorm
+    total, normed = fused.add_rms_norm(x, delta, norm.weight, config.rms_norm_eps)
+    assert torch.equal(total, x + delta)
+    assert (normed.float() - norm(x + delta).float()).abs().max().item() <= tolerance
+    same, normed = fused.add_rms_norm(x, None, norm.weight, config.rms_norm_eps)
+    assert same is x and (normed.float() - norm(x).float()).abs().max().item() <= tolerance
+
+    mlp = model.layers[3].mlp
+    gate, up = mlp.gate_proj(x), mlp.up_proj(x)
+    activated = fused.silu_mul(torch.cat([gate, up], dim=-1))
+    reference = torch.nn.functional.silu(gate) * up
+    assert (activated.float() - reference.float()).abs().max().item() <= (0.0 if exact else 2e-5)
+
+    attention = model.layers[3].self_attn
+    positions = torch.randint(0, 5000, (rows,), generator=generator).to("cuda")
+    q0, k0, v0 = attention.q_proj(x), attention.k_proj(x), attention.v_proj(x)
+    q, k, v = fused.rope_qkv(
+        torch.cat([q0, k0, v0], dim=-1),
+        positions,
+        model.rope.cos,
+        model.rope.sin,
+        config.num_heads,
+        config.num_kv_heads,
+        config.head_dim,
+    )
+    cos, sin = model.rope(positions)
+    heads = (rows, config.num_heads, config.head_dim)
+    kv_heads = (rows, config.num_kv_heads, config.head_dim)
+    assert torch.equal(v, v0.view(kv_heads))
+    # The fused rotation rounds once where the reference rounds three times: equal up to
+    # that rounding (relative to the operands, since the two products can cancel).
+    for ours, raw, shape in ((q, q0, heads), (k, k0, kv_heads)):
+        expected = apply_rope(raw.view(shape), cos, sin).float()
+        bound = raw.view(shape).float().abs().amax(dim=-1, keepdim=True) * (
+            2**-6 if exact else 1e-6
+        )
+        assert ((ours.float() - expected).abs() <= bound + 1e-6).all()
+
+
+def test_fused_model_matches_the_unfused_model(tokenizer):
+    from minfer.attention import DenseCausalAttention
+
+    ids = tokenizer("The quick brown fox jumps over the lazy dog. " * 12)["input_ids"]
+    tokens = torch.tensor(ids, device="cuda")
+    positions = torch.arange(len(ids), device="cuda")
+    for dtype, max_diff, mean_diff in ((torch.float32, 1e-3, 1e-4), (torch.bfloat16, 3.0, 0.15)):
+        model = load_model(PRIMARY_MODEL, dtype=dtype)
+        with torch.inference_mode():
+            dense = DenseCausalAttention(1, len(ids))
+            before = model.logits(model(tokens, positions, dense)).float()
+            model.fuse()
+            model.fuse()  # idempotent
+            after = model.logits(model(tokens, positions, dense)).float()
+        difference = (after - before).abs()
+        assert difference.max().item() < max_diff and difference.mean().item() < mean_diff
+        assert (after.argmax(-1) == before.argmax(-1)).float().mean().item() > 0.95
+        assert not hasattr(model.layers[0].self_attn, "q_proj")  # merged weights replaced them
+        del model

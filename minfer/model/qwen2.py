@@ -57,6 +57,18 @@ def _linear(in_features: int, out_features: int, bias: bool) -> nn.Linear:
     return nn.utils.skip_init(nn.Linear, in_features, out_features, bias=bias)
 
 
+def _merged_linear(parts: tuple[nn.Linear, ...]) -> nn.Linear:
+    """One linear layer computing the concatenated outputs of ``parts`` (same input)."""
+    weight = torch.cat([part.weight for part in parts], dim=0)
+    has_bias = parts[0].bias is not None
+    merged = _linear(weight.shape[1], weight.shape[0], bias=has_bias)
+    merged.weight = nn.Parameter(weight.contiguous(), requires_grad=False)
+    if has_bias:
+        bias = torch.cat([part.bias for part in parts], dim=0)
+        merged.bias = nn.Parameter(bias.contiguous(), requires_grad=False)
+    return merged
+
+
 class RMSNorm(nn.Module):
     """Root-mean-square layer norm, computed in float32 regardless of the input dtype."""
 
@@ -201,6 +213,7 @@ class Qwen2Model(nn.Module):
         self.lm_head = _linear(config.hidden_size, config.vocab_size, bias=False)
         if config.tie_word_embeddings:
             self.lm_head.weight = self.embed_tokens.weight
+        self.fused = False
         self.requires_grad_(False)
 
     @property
@@ -213,6 +226,67 @@ class Qwen2Model(nn.Module):
         """Floating-point dtype of the weights."""
         return self.embed_tokens.weight.dtype
 
+    def fuse(self) -> None:
+        """Switch to the fused execution path (CUDA only; irreversible).
+
+        Merges each layer's q/k/v projections into one matmul and its gate/up projections
+        into another, and routes the element-wise stages through the kernels of
+        :mod:`minfer.model.fused`. Per layer that is 8 kernel launches plus attention,
+        instead of about 45 — which is what a single-token decode step is bound by. The
+        function computed is the same; the separate projection weights are released.
+        """
+        if self.fused:
+            return
+        if self.shard is not None:
+            raise ValueError("the fused path does not support tensor-parallel shards")
+        for layer in self.layers:
+            attention, mlp = layer.self_attn, layer.mlp
+            if isinstance(attention.q_proj, FP8Linear):
+                raise ValueError("the fused path does not support FP8 linear layers")
+            projections = (attention.q_proj, attention.k_proj, attention.v_proj)
+            layer.qkv_proj = _merged_linear(projections)
+            layer.gate_up_proj = _merged_linear((mlp.gate_proj, mlp.up_proj))
+            del attention.q_proj, attention.k_proj, attention.v_proj
+            del mlp.gate_proj, mlp.up_proj
+        self.fused = True
+
+    def _forward_fused(
+        self, token_ids: Tensor, positions: Tensor, attn: AttentionContext
+    ) -> Tensor:
+        """The transformer stack through merged projections and fused kernels."""
+        from minfer.model import fused
+
+        config = self.config
+        n = token_ids.shape[0]
+        cos, sin = self.rope.cos, self.rope.sin
+        layers = self.layers
+        stream = self.embed_tokens(token_ids)
+        stream, normed = fused.add_rms_norm(
+            stream, None, layers[0].input_layernorm.weight, config.rms_norm_eps
+        )
+        last = len(layers) - 1
+        for index, layer in enumerate(layers):
+            q, k, v = fused.rope_qkv(
+                layer.qkv_proj(normed),
+                positions,
+                cos,
+                sin,
+                self.num_heads,
+                self.num_kv_heads,
+                config.head_dim,
+            )
+            attended = attn.attend(index, q, k, v)
+            projected = layer.self_attn.o_proj(attended.reshape(n, -1))
+            stream, normed = fused.add_rms_norm(
+                stream, projected, layer.post_attention_layernorm.weight, config.rms_norm_eps
+            )
+            hidden = layer.mlp.down_proj(fused.silu_mul(layer.gate_up_proj(normed)))
+            following = self.norm if index == last else layers[index + 1].input_layernorm
+            stream, normed = fused.add_rms_norm(
+                stream, hidden, following.weight, config.rms_norm_eps
+            )
+        return normed
+
     def forward(self, token_ids: Tensor, positions: Tensor, attn: AttentionContext) -> Tensor:
         """Run the transformer stack.
 
@@ -224,6 +298,8 @@ class Qwen2Model(nn.Module):
         Returns:
             ``[n, hidden_size]`` hidden states after the final norm.
         """
+        if self.fused:
+            return self._forward_fused(token_ids, positions, attn)
         x = self.embed_tokens(token_ids)
         cos, sin = self.rope(positions)
         for index, layer in enumerate(self.layers):

@@ -72,8 +72,13 @@ class EngineConfig:
             of its bf16 memory); ``"auto"`` stores everything in the model dtype.
         weight_dtype: ``"fp8"`` converts the transformer's linear layers to FP8 weights
             with dynamically quantized activations (:mod:`minfer.quant.fp8`).
+        fused_kernels: Run the transformer blocks through merged projections and fused
+            Triton kernels (:meth:`Qwen2Model.fuse`): about 4× fewer kernel launches per
+            step. CUDA only; ignored for tensor-parallel shards and FP8 weights.
         decode_kernel: Decode attention kernel of the FlashInfer backend: FlashInfer's own
-            or the Triton kernel in :mod:`minfer.attention.triton_decode`.
+            or the Triton kernel in :mod:`minfer.attention.triton_decode`. ``"auto"`` picks
+            the Triton kernel (faster in the engine, M-011) unless the KV cache is FP8,
+            which only FlashInfer's kernels read.
         cuda_graphs: Replay captured CUDA graphs for decode passes (FlashInfer backend
             only). Batches larger than the largest captured size run eagerly.
         cuda_graph_batch_sizes: Decode batch sizes to capture; sizes above ``max_num_seqs``
@@ -108,7 +113,8 @@ class EngineConfig:
     attention_backend: Literal["flashinfer", "reference"] = "flashinfer"
     kv_cache_dtype: Literal["auto", "fp8"] = "auto"
     weight_dtype: Literal["auto", "fp8"] = "auto"
-    decode_kernel: Literal["flashinfer", "triton"] = "flashinfer"
+    fused_kernels: bool = True
+    decode_kernel: Literal["auto", "flashinfer", "triton"] = "auto"
     cuda_graphs: bool = True
     cuda_graph_batch_sizes: tuple[int, ...] = (1, 2, 4, 8, 16, 32, 64, 128, 256)
     prefill_chunk_tokens: int | None = 2048
@@ -195,8 +201,13 @@ class Engine:
         fp8_kv = config.kv_cache_dtype == "fp8"
         if fp8_kv and config.decode_kernel == "triton":
             raise ValueError("the Triton decode kernel does not read an FP8 KV cache")
+        self.decode_kernel = config.decode_kernel
+        if self.decode_kernel == "auto":
+            self.decode_kernel = "flashinfer" if fp8_kv else "triton"
         if config.weight_dtype == "fp8":
             quantize_linears(model)
+        elif config.fused_kernels and self.device.type == "cuda" and model.shard is None:
+            model.fuse()
         calibration = self._calibrate_kv(calibration_prompts or ()) if fp8_kv else None
         self.kv_calibration = calibration
         sensitive = calibration.high_precision_layers if calibration else ()
@@ -248,7 +259,7 @@ class Engine:
                 self.backend.workspace,
                 batch_sizes=sorted(sizes),
                 max_pages_per_sequence=self.blocks.blocks_for(self.max_model_len),
-                decode_kernel=config.decode_kernel,
+                decode_kernel=self.decode_kernel,
             )
         self.prefix_cache = PrefixCache(self.blocks) if config.prefix_cache else None
         self.scheduler = Scheduler(
@@ -334,7 +345,7 @@ class Engine:
         if self.config.attention_backend == "flashinfer":
             from minfer.attention.flashinfer_backend import FlashInferBackend
 
-            return FlashInferBackend(store, self.model.num_heads, self.config.decode_kernel)
+            return FlashInferBackend(store, self.model.num_heads, self.decode_kernel)
         return ReferencePagedBackend(store)
 
     # -------------------------------------------------------------- requests
