@@ -61,7 +61,3 @@ class PagedKVStore:
         """Gather the keys and values stored at ``slots``."""
         flat = self._flat[layer]
         return flat.index_select(0, slots), flat.index_select(0, slots + self.block_size)
-
-    def copy_block_prefix(self, src_block: int, dst_block: int, num_tokens: int) -> None:
-        """Copy the first ``num_tokens`` positions of one block to another, in every layer."""
-        self.data[:, dst_block, :, :num_tokens] = self.data[:, src_block, :, :num_tokens]

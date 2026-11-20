@@ -91,7 +91,7 @@ def test_build_paged_batch_validates_spans():
 # ---------------------------------------------------------------------------- KV store
 
 
-def test_kv_store_write_read_and_block_copy():
+def test_kv_store_write_and_read():
     store = PagedKVStore(2, 6, BLOCK, 2, 8, "cpu", torch.float32)
     assert store.nbytes == 2 * 6 * 2 * BLOCK * 2 * 8 * 4
     generator = torch.Generator().manual_seed(0)
@@ -106,10 +106,6 @@ def test_kv_store_write_read_and_block_copy():
     assert store.layer(0).abs().sum() == 0  # other layers untouched
     read_k, read_v = store.read(1, slots)
     assert torch.equal(read_k, k) and torch.equal(read_v, v)
-
-    store.copy_block_prefix(src_block=3, dst_block=2, num_tokens=2)
-    assert torch.equal(store.layer(1)[2, :, :2], store.layer(1)[3, :, :2])
-    assert store.layer(1)[2, :, 2:].abs().sum() == 0  # positions past the prefix not copied
 
 
 # ------------------------------------------------------- paged reference vs dense oracle

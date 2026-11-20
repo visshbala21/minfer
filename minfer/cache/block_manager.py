@@ -43,9 +43,16 @@ class BlockManager:
     The lowest ``num_reserved`` block ids are never handed out. Block 0 is reserved so that
     fixed-shape (padded) batches have a harmless block to read from and write to.
 
+    A block can additionally be *cached*: the prefix cache holds one reference to it and
+    flags it here. A cached block with exactly that one reference is *evictable* — nothing
+    running uses it, so the cache can give it back. The manager keeps the evictable count up
+    to date on every retain/release, so admission can treat evictable blocks as available
+    memory without scanning the cache.
+
     Invariants (checked by :meth:`check_invariants`, exercised in the tests):
       * a block is on the free list iff its reference count is zero;
-      * every block in a sequence's table holds at least one reference on that table's behalf.
+      * every block in a sequence's table holds at least one reference on that table's behalf;
+      * ``num_evictable`` equals the number of cached blocks whose reference count is one.
     """
 
     def __init__(self, num_blocks: int, block_size: int = 16, num_reserved: int = 1) -> None:
@@ -57,6 +64,8 @@ class BlockManager:
         self.block_size = block_size
         self.num_reserved = num_reserved
         self._ref_counts = [0] * num_blocks
+        self._cached = [False] * num_blocks
+        self._num_evictable = 0
         # LIFO free list; popping from the end hands out low ids first.
         self._free = list(range(num_blocks - 1, num_reserved - 1, -1))
         self._tables: dict[Hashable, list[int]] = {}
@@ -78,6 +87,11 @@ class BlockManager:
         """Blocks currently referenced by at least one owner."""
         return self.num_usable - len(self._free)
 
+    @property
+    def num_evictable(self) -> int:
+        """Cached blocks no sequence references: memory the prefix cache can give back."""
+        return self._num_evictable
+
     def blocks_for(self, num_tokens: int) -> int:
         """Number of blocks needed to hold ``num_tokens`` positions."""
         return -(-num_tokens // self.block_size)
@@ -93,23 +107,52 @@ class BlockManager:
 
     def retain(self, blocks: Iterable[int]) -> None:
         """Add one reference to each block (it must already be in use)."""
+        counts, cached = self._ref_counts, self._cached
         for block in blocks:
-            if self._ref_counts[block] <= 0:
+            count = counts[block]
+            if count <= 0:
                 raise ValueError(f"cannot retain free block {block}")
-            self._ref_counts[block] += 1
+            counts[block] = count + 1
+            if count == 1 and cached[block]:
+                self._num_evictable -= 1
 
     def release(self, blocks: Iterable[int]) -> int:
         """Drop one reference from each block; return how many became free."""
+        counts, cached = self._ref_counts, self._cached
         freed = 0
         for block in blocks:
-            count = self._ref_counts[block]
+            count = counts[block]
             if count <= 0:
                 raise ValueError(f"block {block} released more times than retained")
-            self._ref_counts[block] = count - 1
+            counts[block] = count - 1
             if count == 1:
+                if cached[block]:
+                    raise ValueError(f"cached block {block} lost the cache's reference")
                 self._free.append(block)
                 freed += 1
+            elif count == 2 and cached[block]:
+                self._num_evictable += 1
         return freed
+
+    def cache_block(self, block: int) -> None:
+        """Give the prefix cache a reference to an in-use block and flag it as cached."""
+        if self._cached[block]:
+            raise ValueError(f"block {block} is already cached")
+        self.retain((block,))
+        self._cached[block] = True
+
+    def uncache_block(self, block: int) -> None:
+        """Drop the prefix cache's reference; the block is freed if nothing else holds it."""
+        if not self._cached[block]:
+            raise ValueError(f"block {block} is not cached")
+        if self._ref_counts[block] == 1:
+            self._num_evictable -= 1
+        self._cached[block] = False
+        self.release((block,))
+
+    def is_cached(self, block: int) -> bool:
+        """Whether the prefix cache holds a reference to ``block``."""
+        return self._cached[block]
 
     def ref_count(self, block: int) -> int:
         """Current reference count of ``block``."""
@@ -126,15 +169,26 @@ class BlockManager:
         return len(self.table(seq_id)) * self.block_size
 
     def adopt(self, seq_id: Hashable, blocks: Iterable[int]) -> None:
-        """Start a sequence's table with already-populated blocks, sharing them.
+        """Make ``blocks`` the first entries of the sequence's table, sharing them.
 
-        Used on a prefix-cache hit: the table takes its own reference on each block.
+        Used when the prefix cache already holds the keys/values of the sequence's leading
+        positions. The table takes its own reference on every block it newly points to and
+        drops its reference on any block of its own that is displaced, so a sequence can
+        adopt a longer cached prefix at any time, not only when its table is empty.
         """
-        if self._tables.get(seq_id):
-            raise ValueError(f"sequence {seq_id!r} already has a block table")
-        blocks = list(blocks)
-        self.retain(blocks)
-        self._tables[seq_id] = blocks
+        table = self._tables.setdefault(seq_id, [])
+        displaced = []
+        for index, block in enumerate(blocks):
+            if index < len(table):
+                if table[index] == block:
+                    continue
+                displaced.append(table[index])
+                self.retain((block,))
+                table[index] = block
+            else:
+                self.retain((block,))
+                table.append(block)
+        self.release(displaced)
 
     def blocks_missing(self, seq_id: Hashable, num_tokens: int) -> int:
         """How many more blocks the sequence needs to hold ``num_tokens`` positions."""
@@ -152,17 +206,6 @@ class BlockManager:
         new_blocks = self.allocate(missing)
         self._tables.setdefault(seq_id, []).extend(new_blocks)
         return new_blocks
-
-    def replace_block(self, seq_id: Hashable, index: int, block: int) -> int:
-        """Swap entry ``index`` of the table for ``block``; return the block it replaced.
-
-        The caller transfers its reference on ``block`` to the table and receives the
-        table's reference on the old block (copy-on-write of a shared block).
-        """
-        table = self._tables[seq_id]
-        old = table[index]
-        table[index] = block
-        return old
 
     def free(self, seq_id: Hashable) -> int:
         """Drop the sequence's table; return how many blocks returned to the pool."""
@@ -194,3 +237,10 @@ class BlockManager:
                 assert count == expected[block], f"block {block}: {count} != {expected[block]}"
             else:
                 assert count >= expected[block], f"block {block}: {count} < {expected[block]}"
+            assert not self._cached[block] or count >= 1, f"cached block {block} is free"
+        evictable = sum(
+            1
+            for block in range(self.num_blocks)
+            if self._cached[block] and self._ref_counts[block] == 1
+        )
+        assert evictable == self._num_evictable, f"{evictable} != {self._num_evictable}"

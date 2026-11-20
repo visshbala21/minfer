@@ -94,9 +94,6 @@ def test_adopt_shares_blocks_and_free_keeps_other_owner():
     assert [manager.ref_count(b) for b in shared] == [2, 2]
     manager.ensure_capacity("b", 12)
     assert manager.table("b")[:2] == shared and manager.table("b")[2] not in manager.table("a")
-    with pytest.raises(ValueError):
-        manager.adopt("b", shared)
-
     assert manager.free("a") == 1  # only a's private third block is returned
     assert [manager.ref_count(b) for b in shared] == [1, 1]
     manager.check_invariants(external_refs={})
@@ -104,16 +101,47 @@ def test_adopt_shares_blocks_and_free_keeps_other_owner():
     assert manager.num_free == manager.num_usable
 
 
-def test_replace_block_transfers_references():
-    manager = BlockManager(num_blocks=8, block_size=4)
-    manager.ensure_capacity("a", 8)
-    manager.adopt("b", manager.table("a"))
-    (fresh,) = manager.allocate(1)
-    old = manager.replace_block("b", 1, fresh)
-    assert old == manager.table("a")[1] and manager.table("b")[1] == fresh
-    manager.release([old])  # the caller now owns b's former reference
+def test_adopt_rebinds_a_prefix_and_releases_displaced_blocks():
+    manager = BlockManager(num_blocks=12, block_size=4)
+    manager.ensure_capacity("a", 16)  # 4 blocks
+    manager.ensure_capacity("b", 10)  # 3 private blocks
+    own = list(manager.table("b"))
+    shared = manager.table("a")[:2]
+    manager.adopt("b", shared)
+    assert manager.table("b") == [*shared, own[2]]
+    assert [manager.ref_count(b) for b in shared] == [2, 2]
+    assert [manager.ref_count(b) for b in own[:2]] == [0, 0]  # displaced and freed
+    manager.adopt("b", manager.table("a"))  # longer than b's table: replaces and appends
+    assert manager.table("b") == manager.table("a")
+    assert manager.ref_count(own[2]) == 0
+    manager.adopt("b", manager.table("a"))  # idempotent
+    assert all(manager.ref_count(b) == 2 for b in manager.table("a"))
     manager.check_invariants(external_refs={})
-    assert manager.ref_count(old) == 1 and manager.ref_count(fresh) == 1
+
+
+def test_cached_blocks_and_evictable_accounting():
+    manager = BlockManager(num_blocks=8, block_size=4)
+    a, b = manager.ensure_capacity("seq", 8)
+    assert manager.num_evictable == 0
+    manager.cache_block(a)
+    manager.cache_block(b)
+    assert manager.is_cached(a) and manager.num_evictable == 0  # still used by "seq"
+    with pytest.raises(ValueError):
+        manager.cache_block(a)
+    manager.free("seq")
+    assert manager.num_evictable == 2 and manager.num_free == 5  # held by the cache alone
+    manager.adopt("other", [a])
+    assert manager.num_evictable == 1
+    manager.check_invariants(external_refs={a: 1, b: 1})
+    manager.uncache_block(b)
+    assert manager.num_evictable == 0 and manager.num_free == 6
+    manager.uncache_block(a)  # still referenced by "other": not freed
+    assert manager.ref_count(a) == 1 and not manager.is_cached(a)
+    with pytest.raises(ValueError):
+        manager.uncache_block(a)
+    manager.free("other")
+    assert manager.num_free == manager.num_usable
+    manager.check_invariants(external_refs={})
 
 
 def test_randomized_operations_keep_invariants():
