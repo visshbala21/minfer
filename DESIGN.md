@@ -1617,3 +1617,47 @@ TTFT, TPOT and throughput on the agent workload are re-measured in M-020. The RE
 Triton claim is replaced, its headline explanation of the TTFT lead is qualified, and its
 tables carry the audit; the full matrix with the tuned baselines is re-run at 7B in
 Phase 14 and at 1.5B in Phase 17.
+
+---
+
+## Related work (citations verified 2026-11-20)
+
+The revised plan frames minfer as a testbed for measuring how agent-serving techniques
+contribute alone and in combination; **no mechanism below is claimed as new.** Each entry
+was checked against its arXiv or venue page; "abstract only" means the full text was not
+opened, and anything marked *unverified* must not be stated as fact in the README.
+
+| work | id / venue | mechanism | evaluation as reported |
+|---|---|---|---|
+| **Continuum** — Li et al., "Efficient and Robust Multi-Turn LLM Agent Scheduling with KV Cache Time-to-Live" | arXiv 2511.02230 (preprint; v7 Sep 2026) | After a turn ending in a tool call, pin the KV in GPU memory for a TTL chosen from per-tool historical durations; program-level FCFS | Llama-3.1-8B/70B, Gemma-3-12B, GLM-4.5; SWE-Bench (mini-swe-agent), BFCL V4, OpenHands; vs vLLM 0.10.2 (+LMCache DRAM offload), Autellix, InferCept, SGLang, Dynamo. Body: 1.12–3.66× lower delay, 1.10–3.22× throughput. Code: github.com/Hanchenli/vllm-continuum ("preview"; README says it omits the paper's estimator; base vLLM version *unverified*) |
+| **InferCept** — Abhyankar et al. | arXiv 2402.01869, ICML 2024 | Tool calls as interceptions, not request ends; reduce GPU memory wasted while paused | abstract only: 1.6–2× throughput |
+| **CacheWise** — Tiwari et al. | arXiv 2606.16824 | Prefix-aware dispatch + predictive eviction by expected time to next reuse (tool name/argument clustering), on vLLM | Qwen2.5-Coder-32B, 2×H200, real Claude Code traces at 10–50 sessions; 2–2.6× fewer evictions; DRAM swap variant ~1.19× over vLLM at N=30 |
+| **TraceLab** — Zhu et al. | arXiv 2606.30560 | Characterization + dataset (no serving system): ~4,300 Claude Code / Codex sessions, timings and sizes only | tool latency P50 0.3 s, P90 13.6 s, P99 3.6 min; median prefix 126k / 116k tokens |
+| **CacheBlend** — Yao et al. | arXiv 2405.16444, EuroSys 2025 | Reuse per-chunk KV at non-prefix positions; selectively recompute a small subset of tokens | abstract only: 2.2–3.3× lower TTFT vs full recompute (RAG) |
+| **EPIC** — Hu et al. | arXiv 2410.15332, ICML 2025 | Position-independent caching; recompute a few tokens at each chunk start (LegoLink, v3) | abstract only: up to 8× TTFT, negligible accuracy loss |
+| **MiniPIC** — Ordonez, Parnell | arXiv 2606.13126 | Store unrotated keys; apply RoPE inside attention with per-request logical positions | 2WikiMultihopQA (RAG, not agents): +49% prefill throughput over vLLM |
+| **CacheSlide** — Liu et al. | USENIX FAST '26 | Relative-position-dependent caching for agents | abstract only: 3.11–4.3× lower latency |
+| **Irminsul** — Ma, Eitzinger, Köstler | arXiv 2605.05696 | Content-hash keying over content-defined chunks in SGLang's radix cache + closed-form key rotation; MLA models only | up to ~83% of prompt tokens recovered beyond exact prefix on synthetic patterns; treatment TTFT not measured |
+| **Leyline** — same authors | arXiv 2606.01065 | Policy-issued directives splice edits into cached context with RoPE rotation of downstream keys | +11.2 pp hit rate; GQA support only microbenchmarked |
+
+**Is there an existing composed evaluation?** Five searches (queries in the session log)
+found no paper that evaluates prefix caching, TTL retention, a host-memory tier,
+position-independent reuse and speculative decoding *together* on real coding-agent traces
+with interaction effects. That is a negative search result, not proof of absence. Nearest
+neighbours, which bound any claim: Continuum (TTL + DRAM/SSD offload), CacheWise
+(scheduling + eviction + DRAM swap on real Claude Code traces), EfficientAgent
+(arXiv 2609.33762, host-tier sizing on SWE-bench Verified), "Stateful Inference for
+Low-Latency Multi-Agent Tool Calling" (arXiv 2605.26289: persistent KV + radix prefix
+cache + prompt-lookup speculation on generated workflows), and the vLLM × AgentX blog post
+(2026-09-08: many features on real coding traces, no ablation). **Not yet opened, to check
+before the README makes any claim about the speculation × cache or position-independent ×
+prefix interactions:** KV-Repurpose (arXiv 2610.13060), AgSpec (2610.01108), Callo
+(2611.18459), SAGA (2605.00528).
+
+**Trace sources (Phase 14B).** TraceLab's release (`v0.0.1`, CC BY 4.0, 357,161 LLM rounds)
+contains timings, token counts and character counts but **no prompt text or token ids**
+(paper §3.3), so real token sequences have to come from elsewhere:
+`nvidia/Open-SWE-Traces` (CC BY 4.0; full messages, tool calls and tool definitions for
+five agent harnesses including Claude Code; no timestamps) supplies content and turn
+structure, and TraceLab supplies tool-call pause durations, sampled per tool name.
+`nebius/SWE-rebench-openhands-trajectories` is a single 2.1 GB parquet with no timings.
