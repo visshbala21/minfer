@@ -35,3 +35,6 @@ ACCEPTANCE: plots of prefix hit rate, TTFT p50/p99, and throughput vs concurrenc
 
 ## Phase 17 update
 README headline must lead with Phase 15's result if it is a win; otherwise lead with the strongest honest result.
+
+## Phase 17 headline metric (required)
+Primary result: "full-stack minfer" (best valid combination of techniques) vs vLLM and SGLang, each in its best documented configuration for this workload, on the same real coding-agent traces at 7B under realistic memory pressure. Report p99 and p50 TTFT, prefill tokens computed, TPOT, throughput, and any quality change. Lead the README with this number (win or loss), followed by the decomposition chart explaining where the gain comes from.
