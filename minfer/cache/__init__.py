@@ -6,5 +6,6 @@ from minfer.cache.block_manager import (
     kv_bytes_per_block,
     plan_num_blocks,
 )
+from minfer.cache.kv_store import PagedKVStore
 
-__all__ = ["BlockManager", "OutOfBlocks", "kv_bytes_per_block", "plan_num_blocks"]
+__all__ = ["BlockManager", "OutOfBlocks", "PagedKVStore", "kv_bytes_per_block", "plan_num_blocks"]

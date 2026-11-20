@@ -186,3 +186,87 @@ JSON with unicode), every position compared. "fp32 ref" is transformers in float
 - **Consequences adopted.** bf16 tests compare against the fp32 reference with aggregate
   metrics rather than against another bf16 run elementwise; later phases compare paged
   attention against the dense oracle in fp32 wherever a tight tolerance is wanted.
+
+---
+
+## Phase 2 — Paged KV cache + continuous batching (in progress)
+
+### D-009 Block manager: integers only, reference counted, block 0 reserved
+
+- `BlockManager` (`minfer/cache/block_manager.py`) owns a LIFO free list, a reference count
+  per block, and the block table of every live sequence. It holds no tensors, so it is
+  unit-testable on the CPU and its invariants (a block is free iff its count is zero; every
+  table entry is backed by a reference) are asserted by `check_invariants` under a
+  4,000-operation randomized test.
+- Blocks are reference counted from the start, although nothing shares them until Phase 4:
+  `adopt()` lets a new sequence begin its table with another owner's blocks, and
+  `replace_block()` exists for copy-on-write of a partially filled shared block. Designing the
+  sharing in now avoids retrofitting ownership rules into the scheduler later.
+- Block 0 is never allocated. Fixed-shape (CUDA-graph) batches are padded with dummy rows, and
+  those rows need somewhere harmless to read from and write to.
+- `ensure_capacity` is all-or-nothing: on `OutOfBlocks` the table is unchanged, so the
+  scheduler can react (evict, preempt) without undoing a partial allocation.
+- Budget: `kv_bytes_per_block` × blocks ≤ a fraction of the device memory free *after* the
+  weights are loaded. For Qwen2.5-1.5B in bf16 with 16-token blocks a block is
+  28 layers × 2 (K,V) × 16 × 2 heads × 128 × 2 bytes = 458,752 bytes, i.e. 28.7 KB per token.
+
+### D-010 KV layout: one tensor, addressed by slot
+
+- `PagedKVStore` holds a single `[layers, blocks, 2, block_size, kv_heads, head_dim]` tensor;
+  `layer(i)` is the 5-D "NHD" paged cache FlashInfer takes directly (keys at index 0, values
+  at index 1 of the third axis).
+- A token's **slot** is `block · 2·block_size + offset`, the row of its key in the layer's
+  flattened view; its value is `block_size` rows later. A KV write is therefore two
+  `index_copy_` calls whose index tensor has shape `[n_tokens]` and nothing else — no
+  per-sequence structure, which is the property CUDA-graph capture will need in Phase 3.
+- The store is zero-initialized so padded rows that read block 0 see finite values.
+
+### D-011 One batch shape for prefill, verification and decode
+
+- `PagedBatch` describes a pass as, per sequence, a run of new tokens at positions
+  `[start, start+len)` with everything before `start` already cached. A prefill chunk, a
+  single decode token and (Phase 7) a run of speculative tokens are the same shape, so there
+  is one builder (`build_paged_batch`, vectorized in numpy) and one model entry point.
+- Per-token tensors (ids, positions, slots) go to the device; the CSR page table
+  (`kv_indptr`, `kv_indices`, `kv_last_page_len`) and `qo_indptr` stay on the CPU.
+  FlashInfer's `plan()` begins with `indptr.to("cpu")` to do its work partitioning on the
+  host, so handing it device tensors would force a device-to-host sync every step.
+
+### D-012 A plain-PyTorch paged backend is the oracle (and the CPU backend)
+
+- FlashInfer 0.7.3 kernels exist for fp16, bf16 and fp8 only (`flashinfer/jit/utils.py`
+  `dtype_map`); there is no float32 and no CPU path. `ReferencePagedBackend` implements the
+  same contract with a gather per sequence and a position mask
+  (`kv_position <= query_position`), in any dtype on any device.
+- It is deliberately slow and obvious. Its jobs are (1) to let the whole engine — scheduler,
+  prefix cache, speculation — run in CI on a tiny random model, and (2) to give the
+  accelerated backends a float32 reference, sidestepping the bf16 ambiguity of B-001.
+- Verified on the CPU (`tests/test_paged_attention.py`, tiny random 3-layer model, block
+  size 4): hidden states from ragged prefill chunks, mixed-length decode batches,
+  interleaved (non-contiguous) block tables, and a sequence that *adopts* another sequence's
+  blocks for a shared prefix all match one cache-free pass to 2e-5.
+
+### Decisions taken but not yet implemented (next steps for this phase)
+
+These are settled design, recorded so the next session starts from them:
+
+1. **Separate prefill and decode passes per engine step** (SGLang-style) rather than one
+   mixed ragged batch (vLLM-style). Decode is then a fixed-shape batch that a CUDA graph can
+   capture per batch-size bucket; prefill stays eager with dynamic shapes. Cost: two forward
+   passes in steps that have both kinds of work.
+2. **Sequence invariant**: a running sequence always has ≥ 1 token whose KV is not yet cached;
+   processing all pending tokens yields the logits for the next one. Prefill, decode,
+   re-prefill after preemption, and a prefix-cache hit are then one code path that differs
+   only in how many tokens are pending.
+3. **Preemption by recompute**: when a decode step cannot get a block, the most recently
+   admitted sequence frees its blocks and returns to the head of the waiting queue with its
+   generated tokens kept; it later re-prefills prompt + output.
+4. **FlashInfer backend** (`minfer/attention/flashinfer_backend.py`): one shared workspace
+   buffer, `BatchPrefillWithPagedKVCacheWrapper(causal=True)` for spans and
+   `BatchDecodeWithPagedKVCacheWrapper` for decode, RoPE applied in PyTorch
+   (`pos_encoding_mode="NONE"`), page-table tensors passed from the CPU.
+5. **Sampling** as inverse-CDF with one uniform per row, so per-request seeds work inside a
+   vectorized batch; temperature → top-k → top-p in the transformers/vLLM order.
+6. **vLLM equivalence test**: fixtures generated by a script run inside `.venv-vllm`
+   (greedy, 20 prompts), compared token-for-token; any bf16 divergence must be shown to be a
+   near-tie by evaluating the fp32 logit margin at the first differing position.
