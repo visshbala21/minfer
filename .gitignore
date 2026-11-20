@@ -17,3 +17,6 @@ dist/
 bench/logs/
 .cache/
 .DS_Store
+
+# generated benchmark traces (deterministic; see bench/agent_workload.py)
+bench/traces/
