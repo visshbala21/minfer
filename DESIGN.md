@@ -710,3 +710,232 @@ and is left for Phase 11.
   the non-streamed text, usage chunks, token-id and batched prompts, stop strings, seeded
   sampling, error envelopes, prefix-cache hits visible in `usage` and `/metrics`, and the
   raw SSE wire format.
+
+---
+
+## Phase 6 — Agent workload benchmark
+
+### D-027 The workload: scripted histories, identical prompts for every engine
+
+`bench/agent_workload.py` generates multi-turn sessions of three agent types (coder,
+analyst, researcher). Each type has a ~4k-token system prompt (numbered guidelines plus
+4–5 JSON tool schemas rendered through the model's chat template), shared by all of its
+sessions. A session is a task followed by 5–15 turns; each turn is an assistant message
+(a thought and a `<tool_call>` JSON, or the final answer) and a tool result (file contents
+with line numbers, pytest logs with stack traces, grep hits, SQL result tables, search
+results, fetched pages). Every request resends everything so far.
+
+- **Scripted assistant messages.** The history uses the trace's assistant messages, not
+  what the server under test generated, and each request asks for exactly the scripted
+  number of output tokens (`ignore_eos`). Two servers replaying a trace therefore get
+  byte-identical prompts and do the same amount of decoding, whatever their sampling noise
+  (which M-002 showed is unavoidable in bf16).
+- **What that costs.** A server cannot reuse the KV of its *own* generated tokens on the
+  next turn (the history holds the scripted text). Real agent loops do get that reuse, so
+  the benchmark understates prefix-cache benefit — for every engine equally.
+- **Client-side rendering.** The replay client renders prompts with the model's chat
+  template and sends text to `/v1/completions`, so all servers tokenize the same string;
+  differences in server-side chat-template handling cannot leak into the comparison.
+- **Timing.** Sessions arrive open-loop (Poisson); the next turn of a session is sent
+  `think` seconds (exponential, mean 1 s) after the previous response completes. "Rate" is
+  the nominal request rate: session arrival rate × mean turns (10). "max" starts 64
+  sessions at once with no think time.
+- **Determinism.** Contents depend only on (seed, session index); timing on its own
+  streams. Each result records the trace's SHA-256, and the matrix uses a different seed
+  per rate so one rate's sessions cannot be cache hits for the next (the system prompts
+  are shared by construction — that is the workload — and are warm after the warm-up).
+- Traces are JSONL (a header with the agent definitions, then one line per session) and can
+  be regenerated bit-for-bit; they are not committed (several MB each).
+
+### D-028 Fairness of the three-engine comparison
+
+- One server at a time on the same GPU; each engine in its own pinned virtualenv; the same
+  model, bf16, greedy decoding with explicit parameters, same context length.
+- Every tuning choice is left at the engine's default: batching limits, attention backend,
+  CUDA graphs, chunked prefill, and prefix caching (on by default in all three).
+- vLLM gets `--generation-config vllm` so that it does not adopt the checkpoint's sampling
+  defaults (the benchmark sends explicit greedy parameters regardless), and
+  `--enable-prompt-tokens-details`; SGLang gets `--enable-metrics --enable-cache-report`.
+  These only add reporting.
+- SGLang runs with `SGLANG_ENABLE_JIT_DEEPGEMM=0`: its DeepGEMM JIT (an FP8 GEMM library a
+  bf16 model never calls) aborts at start-up unless nvcc ≥ 12.9, and this machine has
+  12.8. Its FlashInfer kernels compile with the system toolkit, as minfer's do.
+- The agent workload is measured by this repository's client; the ShareGPT control workload
+  is measured by vLLM's own client (`vllm bench serve`), so one of the two workloads is
+  not measured by code written for minfer.
+- Sample sizes: each agent run has at least 60 s of arrivals and ≥ ~230 requests (so "p99"
+  at the low rates is the 3rd-worst request); ShareGPT runs have max(120, 60 × rate)
+  requests and 1,000 at "max".
+
+### B-003 Front-end tokenization serialized on the GIL (fixed)
+
+- **Symptom.** First agent run at "max" rate through the server: TTFT p50 1,385 ms and
+  1,829 output tok/s, while the same sessions driven in-process gave TTFT p50 28 ms and
+  2,600 tok/s.
+- **Root cause.** The server tokenized each prompt with `tokenizer.encode` in a thread
+  pool. Encoding a 6k-token prompt takes 6.9 ms and holds the GIL; with 4–16 threads
+  contending, the same work took 25–29 ms *per prompt* (measured in isolation). With 64
+  sessions resending 25 KB prompts, requests queued for over a second before reaching
+  the engine.
+- **Fix.** `BatchTokenizer`: concurrent requests are encoded together with
+  `encode_batch_fast` on one worker thread. It releases the GIL and parallelizes in Rust:
+  0.57 ms per prompt in a batch of 64. Requests arriving during a batch form the next one,
+  so there is no added wait. Same run after the fix: TTFT p50 79 ms, 2,627 tok/s.
+
+---
+
+## Phase 7 — Speculative decoding
+
+### D-029 Verification rides in the prefill pass
+
+- A sequence with a draft of `k` tokens is verified by processing the span *(pending token,
+  d1 … dk)* — a ragged span like any prefill chunk (D-011, D-014). Row *i* of the span is
+  the target's prediction after *i* draft tokens. Sequences without a draft take the
+  ordinary (CUDA-graph) decode pass in the same step.
+- **Greedy** requests accept `d_{i+1}` iff it equals the target's argmax at row *i*, then
+  emit the target's own token at the first mismatch: the emitted sequence is exactly the
+  non-speculative greedy output, for any draft whatsoever. This is what the CPU tests
+  assert, with drafts that are all right, all wrong, and mixed.
+- **Sampling** requests use speculative sampling: accept with probability
+  `min(1, p(d)/q(d))`, otherwise resample from the normalized residual `max(p − q, 0)`.
+  Prompt-lookup drafts are a point mass (`q = 1` on the drafted token); draft-model drafts
+  carry the warped distribution they were sampled from. Tests check the emitted second and
+  third tokens against the target's exact conditional distributions.
+- **KV rollback is logical.** Rejected tokens' K/V was written beyond what `num_cached`
+  covers afterwards; it is never read (attention is bounded by the cached length) and is
+  overwritten when real tokens reach those positions. Rejected K/V can never enter the
+  prefix cache because only full blocks below `num_cached` are published.
+- **Per-request draft length.** `Sequence.draft_len` doubles after a fully accepted draft
+  (up to `num_draft_tokens`) and drops to `accepted + 1` after a rejection, so a request
+  whose drafts keep failing stops paying for long verifications.
+- **Cost model.** A verification span goes through the eager prefill pass, not the
+  CUDA-graph decode pass, so on this engine a speculative step is *slower* than a plain
+  decode step (M-004: ~11 ms vs ~4 ms at small batch). Speculation pays only when it
+  emits enough tokens per step to cover that; the numbers are in M-009.
+
+### D-030 Drafters
+
+- **Prompt lookup** (`minfer/spec/ngram.py`): if the last `n` tokens (default 3) occurred
+  earlier in the sequence, propose what followed them. An incremental per-sequence
+  dictionary of n-gram → continuation position makes a lookup O(1) amortized; no model, no
+  extra forward pass.
+- **Draft model** (`minfer/spec/draft_model.py`): Qwen2.5-0.5B with its own block pool,
+  page tables and radix tree — the target's KV machinery instantiated a second time, so
+  the draft model also reuses shared prefixes. Per step it catches up on tokens the
+  target confirmed (one ragged prefill pass, whose last row is the first draft token), then
+  runs one CUDA-graph decode pass per further draft token. K/V it wrote for drafts that
+  were then rejected is discarded by comparing its speculative tail with the confirmed
+  tokens.
+- Seeded sampling stays reproducible with speculation but is not the *same* stream as
+  without it (speculative sampling consumes a different number of uniforms per token).
+
+---
+
+## Phase 10 — Tensor parallelism (implemented; multi-GPU run not possible here)
+
+### D-031 Megatron-style shards, driver/worker execution, head-sharded KV
+
+- **Shards.** A rank holds `1/N` of the attention heads (query and KV heads together, so
+  grouped-query attention stays local to a rank) and `1/N` of the MLP's hidden units.
+  q/k/v and gate/up projections are column-parallel (no communication); o_proj and
+  down_proj are row-parallel: each rank computes a partial sum of the full-width output
+  and an all-reduce adds them. That is two all-reduces of one hidden-state vector per
+  token per layer. Embeddings, norms and the unembedding are replicated.
+  `shard_state_dict` slices a full checkpoint; `Qwen2Model(config, shard)` is the same
+  module code with narrower projections and a `reduce` hook.
+- **Execution.** Rank 0 runs the unchanged engine (scheduler, block manager, prefix cache,
+  sampling). Before each pass its attention backend broadcasts the batch layout to the
+  workers over pipes; every rank then runs the same stack on its shard and they meet in
+  the all-reduces (`torch.distributed`: NCCL between GPUs, gloo between CPU processes).
+- **Sharded KV cache.** Block ids are allocated only by the driver, so one block id
+  addresses the same positions in every rank's store; each store holds only its rank's KV
+  heads. Per-rank KV memory is `1/N` of the single-device figure, with no coordination
+  beyond the batch layout.
+- **Limits.** `num_kv_heads` must divide by `N` (Qwen2.5-1.5B: N = 2; 14B: N ∈ {2, 4, 8}).
+  All-reduces cannot be captured in a CUDA graph, so TP runs the eager decode path; and
+  draft-model speculation is not wired through TP.
+
+### M-008 Tensor parallelism: what could be verified on one GPU
+
+- `tests/test_tensor_parallel.py`: per-layer shard algebra (Σ over ranks of each
+  row-parallel output equals the unsharded layer, to 1e-5) and a two-process gloo group
+  whose engine output is identical to the single-process cache-free oracle — also with
+  the prefix cache, chunked prefill, a pool small enough to force preemption, and
+  prompt-lookup speculation.
+- `bench/tensor_parallel_check.py` → `bench/results/tensor_parallel_check.json`: 16
+  requests / 768 generated tokens identical between one process and two; KV store bytes
+  per rank exactly half; and the communication the design implies for the target models
+  (Qwen2.5-14B: 96 all-reduces and 0.98 MB all-reduced per token at bf16; KV 196.6 KB per
+  token on one device, 98.3 KB per rank at N = 2).
+- **Not measured: any speed-up.** The plan's target (Qwen2.5-14B on 2×H100 over NVLink)
+  needs a second GPU. The CPU timings in the results file are labelled as not a benchmark:
+  two CPU processes on one host say nothing about two H100s. The multi-GPU benchmark is an
+  open TODO in PROGRESS.md.
+
+### M-009 Agent workload and ShareGPT: minfer vs vLLM vs SGLang (Phase 6 acceptance)
+
+Script: `bench/run_matrix.py` → `bench/results/matrix/{minfer,vllm,sglang}.json` (plus
+vLLM's raw result files for ShareGPT); charts by `bench/plot.py` in `bench/plots/`; the
+README tables are generated from the same JSON by `bench/readme_tables.py`.
+Qwen2.5-1.5B-Instruct, bf16, greedy, one H100, one server at a time, all engines at
+defaults (D-028). Every run of every engine completed with **0 failed requests**, and all
+three replayed traces with identical SHA-256 per rate.
+
+This is the state of the engine *at the end of Phase 6*, before the profiling and
+optimization phase; the matrix is re-run on the final code in Phase 12.
+
+**Agent workload, rates 1–16 req/s (ranges over the five rates):**
+
+| | minfer | vLLM | SGLang |
+|---|---|---|---|
+| TTFT p50 (ms) | 38.5–45.2 | 46.1–64.5 | 45.6–49.3 |
+| TTFT p99 (ms) | 66.7–82.5 | 101.4–135.0 | 83.4–133.2 |
+| TPOT p50 (ms) | 4.09–5.78 | 2.22–2.37 | 2.25–2.58 |
+| TPOT p99 (ms) | 4.87–8.00 | 2.73–3.22 | 2.62–3.49 |
+| E2E p50 (ms) | 294.4–393.7 | 192.6–210.4 | 182.1–207.5 |
+| prefix hit rate | 93.0%–93.6% | 92.6%–93.2% | 93.1%–93.7% |
+
+**Agent workload, "max" (64 sessions at once):**
+
+| | minfer | vLLM | SGLang |
+|---|---|---|---|
+| output tok/s | 2654 | 5417 | 5017 |
+| TTFT p50 / p99 (ms) | 79 / 300 | 109 / 747 | 134 / 471 |
+| TPOT p50 / p99 (ms) | 18.8 / 21.0 | 7.2 / 8.4 | 8.0 / 10.4 |
+
+**ShareGPT (control), measured by `vllm bench serve`:** TTFT p50 at 1–16 req/s is
+21.1–23.6 ms (minfer), 22.8–27.5 (vLLM), 19.8–28.3 (SGLang); TPOT p50 is
+3.99–5.51, 2.15–2.27 and 2.18–2.65 ms; saturated throughput (1,000 requests at once) is
+13678, 20669 and 13484 output tok/s.
+
+**Reading it honestly:**
+
+- **Where minfer is ahead: time to first token on the agent workload**, at every rate,
+  p50 and p99. All three engines reuse ~93% of prompt tokens (their prefix caches are
+  equally effective on this workload), so the difference is not cache hit rate; it is the
+  cost of getting a mostly-cached request from the socket to its first token.
+- **Where minfer is behind: time per output token, by about 2×**, at every rate and on
+  both workloads, and therefore end-to-end latency (agent turns emit 33–240 tokens, so
+  TPOT dominates E2E) and saturated throughput (about half of vLLM's and SGLang's on the
+  agent workload; two thirds of vLLM's on ShareGPT).
+- **Why.** A single-token decode step in minfer replays a CUDA graph of roughly 1,200
+  kernels (every PyTorch operator of every layer is its own kernel: 8 for each RMSNorm,
+  ~12 for RoPE, …), and each costs a few microseconds whatever its size: 3.7 ms at batch 1
+  (M-004). vLLM (torch.compile + custom ops) and SGLang (fused norm/activation kernels)
+  launch a fraction of that. Under load the eager prefill pass adds its ~11 ms dispatch
+  floor to every step that admits a request, which is what drives TPOT to 19 ms at "max".
+- Both are engineering gaps in the forward pass, not in the design the project is about
+  (the cache, the scheduler); they are the subject of Phase 11.
+- SGLang's ShareGPT run at 1 req/s has a TTFT p99 of 245 ms against a p50 of 20 ms:
+  with 120 requests that is one or two slow requests, reported as measured.
+- One caveat on the minfer runs: a 28 GB model download (B-004 below) overlapped the end of
+  minfer's agent "max" run and the start of its ShareGPT runs. The "max" result matches an
+  earlier undisturbed run of the same trace (2,627 vs 2,654 tok/s, TTFT p50 79.0 vs
+  78.8 ms), so it was left in; the whole matrix is re-run in Phase 12 regardless.
+
+### B-004 A benchmark helper downloaded a 28 GB checkpoint mid-benchmark (process bug)
+
+`bench/tensor_parallel_check.py` resolved the Qwen2.5-14B model directory just to read its
+`config.json`, which fetched the weights too — while the matrix was measuring minfer. Fixed
+by fetching only `config.json`. Rule adopted: nothing that touches the network or the disk
+at scale runs while a benchmark holds the GPU.

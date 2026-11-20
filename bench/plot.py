@@ -64,7 +64,9 @@ def _line(ax: Axes, xs: list, ys: list, color: str, label: str) -> None:
     """One series: a thin line with ringed markers and a direct label at its end."""
     ring = {"markeredgecolor": SURFACE, "markeredgewidth": 1.5}
     ax.plot(xs, ys, color=color, marker="o", label=label, **ring)
-    ax.annotate(f" {ys[-1]:.3g}", (xs[-1], ys[-1]), color=MUTED, fontsize=8.5, va="center")
+    last = ys[-1]
+    text = f" {last:,.0f}" if abs(last) >= 100 else f" {last:.3g}"
+    ax.annotate(text, (xs[-1], last), color=MUTED, fontsize=8.5, va="center")
 
 
 def _finish(fig: plt.Figure, axes: list[Axes], title: str, note: str, name: str) -> None:

@@ -64,9 +64,11 @@ def _matrix_table(
         for index, engine in enumerate(present):
             row = [rate if index == 0 else "", ENGINES[engine]]
             for (_, _, fmt, lower), values in zip(columns, cells, strict=True):
-                value = values[index]
-                text = "—" if value is None else format(value, fmt)
-                row.append(f"**{text}**" if _best(values, lower) == index else text)
+                texts = ["—" if v is None else format(v, fmt) for v in values]
+                best = _best(values, lower)
+                # Bold only a best value that is distinguishable at the printed precision.
+                unique = best is not None and texts.count(texts[best]) == 1
+                row.append(f"**{texts[index]}**" if unique and best == index else texts[index])
             rows.append(row)
     return _table(["rate (req/s)", "engine", *[name for name, _, _, _ in columns]], rows)
 
@@ -160,8 +162,8 @@ def render(text: str) -> str:
     """Replace every generated section of ``text``."""
     for name, build in SECTIONS.items():
         body = build()
-        pattern = re.compile(rf"(<!-- BEGIN {name} -->\n).*?(\n<!-- END {name} -->)", re.DOTALL)
-        text, count = pattern.subn(lambda m, body=body: m[1] + body + m[2], text)
+        pattern = re.compile(rf"(<!-- BEGIN {name} -->\n).*?(<!-- END {name} -->)", re.DOTALL)
+        text, count = pattern.subn(lambda m, body=body: f"{m[1]}{body}\n{m[2]}", text)
         if count == 0:
             print(f"warning: README has no section {name!r}", file=sys.stderr)
     return text
