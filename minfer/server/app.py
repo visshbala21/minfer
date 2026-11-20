@@ -11,6 +11,7 @@ import asyncio
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -103,6 +104,59 @@ def _text_message(message: dict[str, Any]) -> dict[str, Any]:
     return {**message, "content": "".join(texts)}
 
 
+class BatchTokenizer:
+    """Tokenizes concurrent requests together, off the event loop.
+
+    Agent prompts are tens of kilobytes. Encoding one takes ~7 ms and holds the GIL, so
+    handing each request to a thread pool makes concurrent requests *slower* (measured:
+    25-29 ms each with 4-16 threads). ``encode_batch_fast`` releases the GIL and
+    parallelizes in Rust (0.6 ms per prompt in a batch of 64). Requests that arrive while
+    a batch is being encoded simply form the next batch, so batching adds no waiting.
+    """
+
+    def __init__(self, tokenizer: Any) -> None:
+        self.tokenizer = tokenizer
+        self._pending: dict[bool, list[tuple[str, asyncio.Future]]] = {False: [], True: []}
+        self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="minfer-tokenize")
+        self._drain_task: asyncio.Task | None = None
+
+    async def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
+        """Token ids of ``text``."""
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future = loop.create_future()
+        self._pending[add_special_tokens].append((text, future))
+        if self._drain_task is None:
+            self._drain_task = loop.create_task(self._drain())
+        return await future
+
+    async def _drain(self) -> None:
+        loop = asyncio.get_running_loop()
+        try:
+            while any(self._pending.values()):
+                for special, batch in self._pending.items():
+                    if not batch:
+                        continue
+                    self._pending[special] = []
+                    texts = [text for text, _ in batch]
+                    try:
+                        encodings = await loop.run_in_executor(
+                            self._worker,
+                            lambda t=texts, s=special: self.tokenizer.encode_batch_fast(
+                                t, add_special_tokens=s
+                            ),
+                        )
+                    except Exception as error:
+                        for _, future in batch:
+                            if not future.done():
+                                future.set_exception(error)
+                        continue
+                    for (_, future), encoding in zip(batch, encodings, strict=True):
+                        if not future.done():
+                            future.set_result(encoding.ids)
+        finally:
+            self._drain_task = None
+
+
 class StopStrings:
     """Incrementally applies stop strings to streamed text.
 
@@ -161,6 +215,7 @@ class Server:
         self.async_engine = AsyncEngine(engine_factory)
         self.tokenizer = tokenizer
         self.fast_tokenizer = tokenizer.backend_tokenizer
+        self.batch_tokenizer = BatchTokenizer(self.fast_tokenizer)
         self.model_name = model_name
         self.created = int(time.time())
         self._rate_mark = (time.monotonic(), 0.0)
@@ -178,12 +233,8 @@ class Server:
             raise APIError(404, f"model {name!r} does not exist", "model_not_found")
 
     async def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
-        """Tokenize off the event loop (long agent prompts take milliseconds)."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None,
-            lambda: self.fast_tokenizer.encode(text, add_special_tokens=add_special_tokens).ids,
-        )
+        """Tokenize ``text`` without blocking the event loop."""
+        return await self.batch_tokenizer.encode(text, add_special_tokens)
 
     def sampling(
         self, request: _GenerationRequest, prompt_len: int, limit: int | None

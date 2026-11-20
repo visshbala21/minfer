@@ -163,3 +163,54 @@ def test_false_start_is_released_later():
 
 def test_earliest_of_several_stops_wins():
     assert feed_all(["zzz", "b"], ["aabzzz"]) == ("aa", True)
+
+
+# ---------------------------------------------------------------- batch tokenizer
+
+
+class _FakeEncoding:
+    def __init__(self, ids):
+        self.ids = ids
+
+
+class _FakeTokenizer:
+    def __init__(self):
+        self.batches = []
+
+    def encode_batch_fast(self, texts, add_special_tokens=False):
+        self.batches.append((list(texts), add_special_tokens))
+        if any(text == "boom" for text in texts):
+            raise RuntimeError("cannot tokenize")
+        offset = 1000 if add_special_tokens else 0
+        return [_FakeEncoding([offset + len(text)]) for text in texts]
+
+
+def test_batch_tokenizer_groups_concurrent_requests():
+    from minfer.server.app import BatchTokenizer
+
+    fake = _FakeTokenizer()
+
+    async def scenario():
+        tokenizer = BatchTokenizer(fake)
+        texts = ["a" * n for n in range(1, 21)]
+        results = await asyncio.gather(*(tokenizer.encode(text) for text in texts))
+        special = await tokenizer.encode("abc", add_special_tokens=True)
+        return results, special
+
+    results, special = run(scenario())
+    assert results == [[n] for n in range(1, 21)]  # each caller gets its own result
+    assert special == [1003]
+    assert sum(len(texts) for texts, _ in fake.batches) == 21
+    assert len(fake.batches) < 21  # concurrent requests shared batches
+
+
+def test_batch_tokenizer_reports_errors_and_keeps_working():
+    from minfer.server.app import BatchTokenizer
+
+    async def scenario():
+        tokenizer = BatchTokenizer(_FakeTokenizer())
+        with pytest.raises(RuntimeError, match="cannot tokenize"):
+            await tokenizer.encode("boom")
+        return await tokenizer.encode("fine")
+
+    assert run(scenario()) == [4]
