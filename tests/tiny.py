@@ -7,6 +7,8 @@ import torch
 from minfer.attention import DenseCausalAttention
 from minfer.engine import Engine, EngineConfig
 from minfer.model import ModelConfig, Qwen2Model
+from minfer.model.loader import shard_state_dict
+from minfer.model.qwen2 import Shard
 
 
 def make_tiny_model(seed: int = 0) -> Qwen2Model:
@@ -67,3 +69,12 @@ def make_tiny_engine(**config: object) -> Engine:
     config.setdefault("num_blocks", 400)
     config.setdefault("block_size", 4)
     return Engine(make_tiny_model(), EngineConfig(attention_backend="reference", **config))
+
+
+def make_tiny_shard(shard: Shard, device: torch.device) -> Qwen2Model:
+    """One tensor-parallel rank of the tiny model (top-level: built in worker processes)."""
+    full = make_tiny_model()
+    state = shard_state_dict(full.state_dict(), full.config, shard.rank, shard.world_size)
+    model = Qwen2Model(full.config, shard)
+    model.load_state_dict(state)
+    return model.to(device).eval()
