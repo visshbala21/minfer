@@ -134,19 +134,17 @@ def test_a_mixed_step_is_one_pass_when_unified(model, oracle):
     for unified in (True, False):
         engine = make_engine(model, eos=eos, prefill_chunk_tokens=5, unified_batches=unified)
         counts = {"prefill": 0, "decode": 0, "mixed": 0}
-        run_prefill, run_decode = engine._run_prefill, engine._run_decode
 
-        def counted_prefill(prefill, verify, sampled, rows, counts=counts, run=run_prefill):
-            counts["prefill"] += 1
-            counts["mixed"] += any(count == 1 and len(seq.tokens) > seq.prompt_len
-                                   for seq, count in prefill)  # fmt: skip
-            return run(prefill, verify, sampled, rows)
+        def counted(kind, run, counts=counts):
+            def call(*args):
+                counts[kind] += 1
+                return run(*args)
 
-        def counted_decode(decode, sampled, rows, counts=counts, run=run_decode):
-            counts["decode"] += 1
-            return run(decode, sampled, rows)
+            return call
 
-        engine._run_prefill, engine._run_decode = counted_prefill, counted_decode
+        engine._run_prefill = counted("prefill", engine._run_prefill)
+        engine._run_decode = counted("decode", engine._run_decode)
+        engine._run_joint = counted("mixed", engine._run_joint)
         assert engine.generate(prompts, SamplingParams(max_tokens=24)) == expected
         assert_all_released(engine)
         stats = engine.stats
@@ -156,9 +154,8 @@ def test_a_mixed_step_is_one_pass_when_unified(model, oracle):
     (unified, steps), (split, split_steps) = passes[True], passes[False]
     assert steps == split_steps  # the schedule is the same; only the passes differ
     assert unified["mixed"] > 0 and split["mixed"] == 0
-    assert unified["prefill"] + unified["decode"] < split["prefill"] + split["decode"]
-    # Unified: a step runs the decode pass only when it has no prefill work at all.
-    assert unified["prefill"] + unified["decode"] == steps
+    # Unified: one pass per step, whatever the step holds.
+    assert sum(unified.values()) == steps < sum(split.values())
 
 
 def test_preemption_recomputes_to_the_same_output(model, oracle):

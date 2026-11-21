@@ -1,0 +1,236 @@
+{
+ "model": "Qwen/Qwen2.5-7B-Instruct",
+ "dtype": "bfloat16",
+ "gpu": "NVIDIA H100 80GB HBM3",
+ "code": {
+  "commit": "810c49a77a5cba7b074cbb06e90ddf7e6c0e0b94",
+  "dirty": false
+ },
+ "what": "wall-clock time of Engine.step() during steady-state decode; breakdown from a second set of steps with a device synchronization after the pass",
+ "configs": {
+  "separate_write": {
+   "label": "KV write as two index_copy_ per layer (before)",
+   "overrides": {
+    "fused_kv_write": false
+   },
+   "rows": [
+    {
+     "batch_size": 1,
+     "context_tokens": 1024,
+     "steps": 200,
+     "step_ms_p50": 6.253715982893482,
+     "step_ms_p99": 6.302731245523319,
+     "tokens_per_second": 159.90492736405307,
+     "breakdown_ms": {
+      "plan": 0.08259714959422126,
+      "pass": 6.135523903940339,
+      "other": 0.059180696553085
+     }
+    },
+    {
+     "batch_size": 8,
+     "context_tokens": 1024,
+     "steps": 200,
+     "step_ms_p50": 6.573027465492487,
+     "step_ms_p99": 6.751848116982728,
+     "tokens_per_second": 1217.095172962372,
+     "breakdown_ms": {
+      "plan": 0.08880414912709966,
+      "pass": 6.446581941854674,
+      "other": 0.08858442422933877
+     }
+    },
+    {
+     "batch_size": 32,
+     "context_tokens": 1024,
+     "steps": 200,
+     "step_ms_p50": 7.314525515539572,
+     "step_ms_p99": 7.5525773072149605,
+     "tokens_per_second": 4374.856568893854,
+     "breakdown_ms": {
+      "plan": 0.10230757063254714,
+      "pass": 7.246297780657187,
+      "other": 0.1880728136165999
+     }
+    },
+    {
+     "batch_size": 64,
+     "context_tokens": 1024,
+     "steps": 200,
+     "step_ms_p50": 8.433580514974892,
+     "step_ms_p99": 8.673580675385892,
+     "tokens_per_second": 7588.710380645549,
+     "breakdown_ms": {
+      "plan": 0.1102919306140393,
+      "pass": 8.316980316012632,
+      "other": 0.30794542835792527
+     }
+    },
+    {
+     "batch_size": 128,
+     "context_tokens": 1024,
+     "steps": 200,
+     "step_ms_p50": 10.52282250020653,
+     "step_ms_p99": 10.75589412706904,
+     "tokens_per_second": 12164.036787419702,
+     "breakdown_ms": {
+      "plan": 0.12860391434514895,
+      "pass": 10.40556957363151,
+      "other": 0.5520571969100274
+     }
+    },
+    {
+     "batch_size": 1,
+     "context_tokens": 8192,
+     "steps": 200,
+     "step_ms_p50": 6.429169996408746,
+     "step_ms_p99": 6.551630671019666,
+     "tokens_per_second": 155.54107304031277,
+     "breakdown_ms": {
+      "plan": 0.08780464791925624,
+      "pass": 6.331565550353844,
+      "other": 0.06838896166300401
+     }
+    },
+    {
+     "batch_size": 32,
+     "context_tokens": 8192,
+     "steps": 200,
+     "step_ms_p50": 12.17388000804931,
+     "step_ms_p99": 12.32098872133065,
+     "tokens_per_second": 2628.578561546669,
+     "breakdown_ms": {
+      "plan": 0.12891324702650309,
+      "pass": 11.821894112217706,
+      "other": 0.39535591087769717
+     }
+    },
+    {
+     "batch_size": 64,
+     "context_tokens": 8192,
+     "steps": 200,
+     "step_ms_p50": 18.02959101041779,
+     "step_ms_p99": 18.29507594986353,
+     "tokens_per_second": 3549.7200110096655,
+     "breakdown_ms": {
+      "plan": 0.13691841304535046,
+      "pass": 17.495599362882785,
+      "other": 0.7156078293337487
+     }
+    }
+   ]
+  },
+  "fused_write": {
+   "label": "KV write fused into the RoPE kernel",
+   "overrides": {
+    "fused_kv_write": true
+   },
+   "rows": [
+    {
+     "batch_size": 1,
+     "context_tokens": 1024,
+     "steps": 200,
+     "step_ms_p50": 6.101467035477981,
+     "step_ms_p99": 6.1780528607778225,
+     "tokens_per_second": 163.8950098698126,
+     "breakdown_ms": {
+      "plan": 0.08570964069804177,
+      "pass": 5.984806156193372,
+      "other": 0.06101747800130397
+     }
+    },
+    {
+     "batch_size": 8,
+     "context_tokens": 1024,
+     "steps": 200,
+     "step_ms_p50": 6.40955098788254,
+     "step_ms_p99": 6.590153312426992,
+     "tokens_per_second": 1248.1373523861898,
+     "breakdown_ms": {
+      "plan": 0.09450783574720845,
+      "pass": 6.282704065670259,
+      "other": 0.09095543879084289
+     }
+    },
+    {
+     "batch_size": 32,
+     "context_tokens": 1024,
+     "steps": 200,
+     "step_ms_p50": 7.150808960432187,
+     "step_ms_p99": 7.414560292381793,
+     "tokens_per_second": 4475.018166065781,
+     "breakdown_ms": {
+      "plan": 0.10810473700985312,
+      "pass": 7.0697139608091675,
+      "other": 0.19279486732557416
+     }
+    },
+    {
+     "batch_size": 64,
+     "context_tokens": 1024,
+     "steps": 200,
+     "step_ms_p50": 8.370972005650401,
+     "step_ms_p99": 8.725815365905873,
+     "tokens_per_second": 7645.468167472074,
+     "breakdown_ms": {
+      "plan": 0.11531628377269953,
+      "pass": 8.16137926391093,
+      "other": 0.31303269730415195
+     }
+    },
+    {
+     "batch_size": 128,
+     "context_tokens": 1024,
+     "steps": 200,
+     "step_ms_p50": 10.383094544522464,
+     "step_ms_p99": 10.94949112564791,
+     "tokens_per_second": 12327.731337814466,
+     "breakdown_ms": {
+      "plan": 0.13297796802362427,
+      "pass": 10.228235977410804,
+      "other": 0.5559695145348087
+     }
+    },
+    {
+     "batch_size": 1,
+     "context_tokens": 8192,
+     "steps": 200,
+     "step_ms_p50": 6.287088006502017,
+     "step_ms_p99": 6.415039467974566,
+     "tokens_per_second": 159.0561479282323,
+     "breakdown_ms": {
+      "plan": 0.09075717738596722,
+      "pass": 6.168686963792425,
+      "other": 0.06910557363880798
+     }
+    },
+    {
+     "batch_size": 32,
+     "context_tokens": 8192,
+     "steps": 200,
+     "step_ms_p50": 12.030719517497346,
+     "step_ms_p99": 12.173957496415824,
+     "tokens_per_second": 2659.8575383176003,
+     "breakdown_ms": {
+      "plan": 0.1332626777002588,
+      "pass": 11.668881057412364,
+      "other": 0.39646361488848925
+     }
+    },
+    {
+     "batch_size": 64,
+     "context_tokens": 8192,
+     "steps": 200,
+     "step_ms_p50": 17.802890011807904,
+     "step_ms_p99": 18.11154398485087,
+     "tokens_per_second": 3594.9219456813757,
+     "breakdown_ms": {
+      "plan": 0.14028505655005574,
+      "pass": 17.256985552667174,
+      "other": 0.7250825507799163
+     }
+    }
+   ]
+  }
+ }
+}

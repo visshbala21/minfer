@@ -129,6 +129,38 @@ def build_paged_batch(
     )
 
 
+def split_batch(batch: PagedBatch, num_spans: int) -> tuple[PagedBatch, PagedBatch]:
+    """``batch``'s first ``num_spans`` spans and the rest, as two batches.
+
+    The parts' per-token tensors are views of ``batch``'s; their page tables are rebased
+    so that each part describes itself. A joint pass uses this to plan one attention
+    kernel for its prefill spans and another for its decode rows.
+    """
+    rows = int(batch.qo_indptr[num_spans])
+    pages = int(batch.kv_indptr[num_spans])
+    head = PagedBatch(
+        token_ids=batch.token_ids[:rows],
+        positions=batch.positions[:rows],
+        slots=batch.slots[:rows],
+        qo_indptr=batch.qo_indptr[: num_spans + 1],
+        kv_indptr=batch.kv_indptr[: num_spans + 1],
+        kv_indices=batch.kv_indices[:pages],
+        kv_last_page_len=batch.kv_last_page_len[:num_spans],
+        block_size=batch.block_size,
+    )
+    tail = PagedBatch(
+        token_ids=batch.token_ids[rows:],
+        positions=batch.positions[rows:],
+        slots=batch.slots[rows:],
+        qo_indptr=batch.qo_indptr[num_spans:] - rows,
+        kv_indptr=batch.kv_indptr[num_spans:] - pages,
+        kv_indices=batch.kv_indices[pages:],
+        kv_last_page_len=batch.kv_last_page_len[num_spans:],
+        block_size=batch.block_size,
+    )
+    return head, tail
+
+
 def dense_block_table(batch: PagedBatch) -> tuple[Tensor, Tensor]:
     """The batch's page tables as a padded matrix, for kernels that index them directly.
 
@@ -151,6 +183,14 @@ class PagedAttentionBackend(Protocol):
 
     def decode(self, batch: PagedBatch) -> AttentionContext:
         """Context for a pass in which every span holds exactly one token."""
+        ...
+
+    def joint(self, batch: PagedBatch, num_prefill_spans: int) -> AttentionContext:
+        """Context for a pass whose spans after the first ``num_prefill_spans`` hold one token.
+
+        Those are decoding sequences sharing a pass with prefill chunks; a backend may
+        serve the two groups with different kernels.
+        """
         ...
 
 
@@ -212,4 +252,8 @@ class ReferencePagedBackend:
 
     def decode(self, batch: PagedBatch) -> AttentionContext:
         """See :meth:`PagedAttentionBackend.decode`."""
+        return _ReferenceContext(self.store, batch)
+
+    def joint(self, batch: PagedBatch, num_prefill_spans: int) -> AttentionContext:
+        """See :meth:`PagedAttentionBackend.joint`."""
         return _ReferenceContext(self.store, batch)

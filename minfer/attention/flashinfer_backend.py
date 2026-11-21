@@ -10,7 +10,7 @@ import torch
 from torch import Tensor
 
 from minfer.attention.base import AttentionContext
-from minfer.attention.paged import PagedBatch, dense_block_table
+from minfer.attention.paged import PagedBatch, dense_block_table, split_batch
 from minfer.cache.kv_store import PagedKVStore
 
 
@@ -46,6 +46,17 @@ def _destination(
     return None if target is None else (target[0], slots, target[1])
 
 
+def _run(
+    wrapper: Wrapper, store: PagedKVStore, layer: int, q: Tensor, out: Tensor | None = None
+) -> Tensor:
+    """Run a planned kernel over ``layer``'s cache (into ``out``, if given)."""
+    if not store.layer_is_fp8[layer]:
+        return wrapper.run(q, store.layer(layer), out=out)
+    # FP8 layer: the kernel multiplies the stored values back by the layer's scales.
+    k_scale, v_scale = store.scale_pairs[layer]
+    return wrapper.run(q, store.layer(layer), k_scale=k_scale, v_scale=v_scale, out=out)
+
+
 class KernelContext:
     """Writes the pass's K/V into the store, then runs a planned FlashInfer kernel.
 
@@ -71,13 +82,51 @@ class KernelContext:
 
     def attend_stored(self, layer: int, q: Tensor) -> Tensor:
         """See :meth:`minfer.attention.base.StoringAttentionContext.attend_stored`."""
-        store = self.store
-        wrapper = self.layer_wrappers[layer]
-        if not store.layer_is_fp8[layer]:
-            return wrapper.run(q, store.layer(layer))
-        # FP8 layer: the kernel multiplies the stored values back by the layer's scales.
-        k_scale, v_scale = store.scale_pairs[layer]
-        return wrapper.run(q, store.layer(layer), k_scale=k_scale, v_scale=v_scale)
+        return _run(self.layer_wrappers[layer], self.store, layer, q)
+
+
+class JointContext:
+    """One pass, two kernels: prefill spans first, then one-token decode rows.
+
+    The first ``num_prefill_rows`` queries go through a planned batch-prefill kernel, the
+    rest through a planned batch-decode kernel, each writing its part of one output. The
+    linear layers around attention see a single batch, so a step that both prefills and
+    decodes reads the weights once — and its decoding sequences keep the decode kernel,
+    which serves one-token queries over long contexts much better than the prefill kernel
+    does (DESIGN.md M-025, M-032).
+    """
+
+    def __init__(
+        self,
+        store: PagedKVStore,
+        slots: Tensor,
+        prefill: dict[torch.dtype, Wrapper],
+        decode: dict[torch.dtype, Wrapper],
+        num_prefill_rows: int,
+    ) -> None:
+        self.store = store
+        self.slots = slots
+        self.num_prefill_rows = num_prefill_rows
+        dtypes = [store.layer_dtype(i) for i in range(store.num_layers)]
+        self.prefill_wrappers = [prefill[dtype] for dtype in dtypes]
+        self.decode_wrappers = [decode[dtype] for dtype in dtypes]
+
+    def attend(self, layer: int, q: Tensor, k: Tensor, v: Tensor) -> Tensor:
+        """See :meth:`minfer.attention.base.AttentionContext.attend`."""
+        self.store.write(layer, self.slots, k, v)
+        return self.attend_stored(layer, q)
+
+    def kv_destination(self, layer: int) -> tuple[Tensor, Tensor, int] | None:
+        """See :meth:`minfer.attention.base.StoringAttentionContext.kv_destination`."""
+        return _destination(self.store, layer, self.slots)
+
+    def attend_stored(self, layer: int, q: Tensor) -> Tensor:
+        """See :meth:`minfer.attention.base.StoringAttentionContext.attend_stored`."""
+        rows = self.num_prefill_rows
+        out = torch.empty_like(q)
+        _run(self.prefill_wrappers[layer], self.store, layer, q[:rows], out[:rows])
+        _run(self.decode_wrappers[layer], self.store, layer, q[rows:], out[rows:])
+        return out
 
 
 def needs_tensor_cores(num_heads: int, num_kv_heads: int) -> bool:
@@ -123,8 +172,8 @@ class FlashInferBackend:
 
     One plan per forward pass is shared by all layers (the page tables are the same for
     every layer). RoPE is applied by the model, so the kernels run with no positional
-    encoding. Both wrappers share one float workspace buffer; they are never used at the
-    same time.
+    encoding. All wrappers share one float workspace buffer: kernels run one after another
+    on one stream, and none keeps state in it between runs.
 
     ``decode_kernel="triton"`` swaps FlashInfer's decode kernel for the one in
     :mod:`minfer.attention.triton_decode`; prefill always goes through FlashInfer.
@@ -154,8 +203,7 @@ class FlashInferBackend:
             for kv_dtype in store.tensors
         }
 
-    def prefill(self, batch: PagedBatch) -> AttentionContext:
-        """See :meth:`PagedAttentionBackend.prefill`."""
+    def _plan_prefill(self, batch: PagedBatch) -> None:
         for kv_dtype, wrapper in self._prefill.items():
             wrapper.plan(
                 batch.qo_indptr,
@@ -171,16 +219,8 @@ class FlashInferBackend:
                 q_data_type=self.dtype,
                 kv_data_type=kv_dtype,
             )
-        return KernelContext(self.store, batch.slots, self._prefill)
 
-    def decode(self, batch: PagedBatch) -> AttentionContext:
-        """See :meth:`PagedAttentionBackend.decode`."""
-        if self.decode_kernel == "triton":
-            table, lengths = dense_block_table(batch)
-            device = self.store.device
-            return TritonDecodeContext(
-                self.store, batch.slots, table.to(device), lengths.to(device)
-            )
+    def _plan_decode(self, batch: PagedBatch) -> None:
         for kv_dtype, wrapper in self._decode.items():
             wrapper.plan(
                 batch.kv_indptr,
@@ -194,4 +234,30 @@ class FlashInferBackend:
                 q_data_type=self.dtype,
                 kv_data_type=kv_dtype,
             )
+
+    def prefill(self, batch: PagedBatch) -> AttentionContext:
+        """See :meth:`PagedAttentionBackend.prefill`."""
+        self._plan_prefill(batch)
+        return KernelContext(self.store, batch.slots, self._prefill)
+
+    def decode(self, batch: PagedBatch) -> AttentionContext:
+        """See :meth:`PagedAttentionBackend.decode`."""
+        if self.decode_kernel == "triton":
+            table, lengths = dense_block_table(batch)
+            device = self.store.device
+            return TritonDecodeContext(
+                self.store, batch.slots, table.to(device), lengths.to(device)
+            )
+        self._plan_decode(batch)
         return KernelContext(self.store, batch.slots, self._decode)
+
+    def joint(self, batch: PagedBatch, num_prefill_spans: int) -> AttentionContext:
+        """See :meth:`PagedAttentionBackend.joint`.
+
+        The decode rows of a joint pass always take FlashInfer's decode kernel, whatever
+        ``decode_kernel`` selects for pure decode passes.
+        """
+        head, tail = split_batch(batch, num_prefill_spans)
+        self._plan_prefill(head)
+        self._plan_decode(tail)
+        return JointContext(self.store, batch.slots, self._prefill, self._decode, head.num_tokens)

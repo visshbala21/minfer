@@ -19,7 +19,7 @@ completes its sequence), gathered through a static index buffer.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Container, Sequence
 from dataclasses import dataclass
 
 import torch
@@ -51,7 +51,7 @@ class _Bucket:
     logits: Tensor | None = None
 
 
-def _padding(num_spans: int, num_tokens: int, block_size: int) -> list[SequenceSpan]:
+def padding_spans(num_spans: int, num_tokens: int, block_size: int) -> list[SequenceSpan]:
     """``num_spans`` spans totalling ``num_tokens`` tokens, all inside block 0."""
     if num_spans == 0:
         return []
@@ -59,6 +59,30 @@ def _padding(num_spans: int, num_tokens: int, block_size: int) -> list[SequenceS
     pages = -(-rest // block_size)
     single = SequenceSpan(token_ids=(0,), start=0, block_table=(0,))
     return [*([single] * (num_spans - 1)), SequenceSpan((0,) * rest, 0, (0,) * pages)]
+
+
+def fit_shape(
+    shapes: Container[tuple[int, int]],
+    sequence_buckets: Sequence[int],
+    token_buckets: Sequence[int],
+    num_spans: int,
+    num_tokens: int,
+) -> tuple[int, int] | None:
+    """The smallest ``(spans, tokens)`` in ``shapes`` that a batch can be padded to, or ``None``.
+
+    Padding needs at least one token per padding span, and a shape with spare tokens needs
+    at least one padding span to put them in. The bucket lists are sorted.
+    """
+    for seqs in sequence_buckets:
+        if seqs < num_spans:
+            continue
+        for tokens in token_buckets:
+            spare_spans, spare_tokens = seqs - num_spans, tokens - num_tokens
+            if (seqs, tokens) not in shapes or spare_tokens < spare_spans:
+                continue
+            if spare_spans > 0 or spare_tokens == 0:
+                return seqs, tokens
+    return None
 
 
 class PrefillGraphs:
@@ -119,21 +143,10 @@ class PrefillGraphs:
         self._capture_all()
 
     def bucket(self, num_spans: int, num_tokens: int) -> tuple[int, int] | None:
-        """The smallest captured shape that can hold a batch, or ``None``.
-
-        Padding needs at least one token per padding span, and a bucket with spare tokens
-        needs at least one padding span to put them in.
-        """
-        for seqs in self.sequence_buckets:
-            if seqs < num_spans:
-                continue
-            for tokens in self.token_buckets:
-                spare_spans, spare_tokens = seqs - num_spans, tokens - num_tokens
-                if (seqs, tokens) not in self._buckets or spare_tokens < spare_spans:
-                    continue
-                if spare_spans > 0 or spare_tokens == 0:
-                    return seqs, tokens
-        return None
+        """The smallest captured shape that can hold a batch, or ``None``."""
+        return fit_shape(
+            self._buckets, self.sequence_buckets, self.token_buckets, num_spans, num_tokens
+        )
 
     def _plan(self, bucket: _Bucket, batch: PagedBatch) -> None:
         bucket.wrapper.plan(
@@ -162,7 +175,7 @@ class PrefillGraphs:
         pool = torch.cuda.graph_pool_handle()
         size = self.store.block_size
         for (seqs, tokens), bucket in sorted(self._buckets.items(), key=lambda kv: -kv[0][1]):
-            batch = build_paged_batch(_padding(seqs, tokens, size), size, self.model.device)
+            batch = build_paged_batch(padding_spans(seqs, tokens, size), size, self.model.device)
             self._plan(bucket, batch)
             self._forward(bucket)  # lazy initialization must not be recorded
             torch.cuda.synchronize()
@@ -182,7 +195,7 @@ class PrefillGraphs:
         bucket = self._buckets[key]
         size = self.store.block_size
         real_tokens = sum(len(span.token_ids) for span in spans)
-        padded = [*spans, *_padding(seqs - len(spans), tokens - real_tokens, size)]
+        padded = [*spans, *padding_spans(seqs - len(spans), tokens - real_tokens, size)]
         batch = build_paged_batch(padded, size, self.model.device)
         bucket.token_ids.copy_(batch.token_ids)
         bucket.positions.copy_(batch.positions)
