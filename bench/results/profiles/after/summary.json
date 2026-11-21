@@ -6,9 +6,9 @@
  "scenarios": {
   "decode_graph_batch1": {
    "steps": 5,
-   "wall_ms_per_step": 3.1954860023688525,
+   "wall_ms_per_step": 3.2134850043803453,
    "cuda_kernels_per_step": 398.0,
-   "gpu_kernel_ms_per_step": 2.028877799999993,
+   "gpu_kernel_ms_per_step": 2.025170800000011,
    "top_kernels_by_launches": [
     {
      "kernel": "_add_rms_norm_kernel",
@@ -46,44 +46,44 @@
    "top_kernels_by_gpu_time": [
     {
      "kernel": "nvjet_sm90_tst_256x8_64x6_4x1_v_bz_TNT",
-     "ms_per_step": 0.6198063999999989
+     "ms_per_step": 0.6195681999999999
     },
     {
      "kernel": "nvjet_sm90_tst_64x8_64x16_4x1_v_bz_splitK_TNT",
-     "ms_per_step": 0.3328373999999976
+     "ms_per_step": 0.33148040000000173
     },
     {
      "kernel": "nvjet_sm90_tst_384x8_64x4_2x1_v_bz_TNT",
-     "ms_per_step": 0.16273219999999963
+     "ms_per_step": 0.16310339999999995
     },
     {
      "kernel": "nvjet_sm90_tst_64x8_64x16_4x1_v_bz_bias_TNT",
-     "ms_per_step": 0.15904000000000013
+     "ms_per_step": 0.15898840000000455
     },
     {
      "kernel": "nvjet_sm90_tst_64x8_64x16_4x1_v_bz_TNT",
-     "ms_per_step": 0.1382528000000003
+     "ms_per_step": 0.13776060000000134
     },
     {
      "kernel": "_merge_splits_kernel",
-     "ms_per_step": 0.12722479999999942
-    },
-    {
-     "kernel": "_paged_decode_kernel",
-     "ms_per_step": 0.10578539999999885
+     "ms_per_step": 0.12668800000000138
     },
     {
      "kernel": "_add_rms_norm_kernel",
-     "ms_per_step": 0.10538279999999778
+     "ms_per_step": 0.10577420000000011
+    },
+    {
+     "kernel": "_paged_decode_kernel",
+     "ms_per_step": 0.10511840000000265
     }
    ],
    "trace": "decode_graph_batch1.json.gz"
   },
   "decode_graph_batch64": {
    "steps": 5,
-   "wall_ms_per_step": 3.8736969989258796,
+   "wall_ms_per_step": 3.8539075991138816,
    "cuda_kernels_per_step": 399.0,
-   "gpu_kernel_ms_per_step": 2.5849006000000037,
+   "gpu_kernel_ms_per_step": 2.587255600000006,
    "top_kernels_by_launches": [
     {
      "kernel": "_add_rms_norm_kernel",
@@ -121,44 +121,44 @@
    "top_kernels_by_gpu_time": [
     {
      "kernel": "nvjet_sm90_tst_144x64_64x8_2x1_v_bz_TNN",
-     "ms_per_step": 0.6780121999999972
+     "ms_per_step": 0.6788104000000015
     },
     {
      "kernel": "_paged_decode_kernel",
-     "ms_per_step": 0.49900500000000114
+     "ms_per_step": 0.49939439999999663
     },
     {
      "kernel": "nvjet_sm90_tst_64x64_64x13_4x1_v_bz_splitK_TNT",
-     "ms_per_step": 0.3517162000000032
+     "ms_per_step": 0.3532330000000002
     },
     {
      "kernel": "nvjet_sm90_tst_64x32_64x16_4x2_h_bz_bias_TNT",
-     "ms_per_step": 0.1746997999999988
+     "ms_per_step": 0.17450080000000154
     },
     {
      "kernel": "nvjet_sm90_tst_384x64_64x3_2x1_v_bz_coopB_TNN",
-     "ms_per_step": 0.17468079999999991
+     "ms_per_step": 0.17449480000000056
     },
     {
      "kernel": "void at::native::index_elementwise_kernel<128, 4, at::native::index_copy_kernel_",
-     "ms_per_step": 0.15746619999999903
+     "ms_per_step": 0.15758499999999792
     },
     {
      "kernel": "nvjet_sm90_tst_24x64_64x16_4x1_v_bz_TNN",
-     "ms_per_step": 0.15033420000000122
+     "ms_per_step": 0.15071319999999824
     },
     {
      "kernel": "_add_rms_norm_kernel",
-     "ms_per_step": 0.11559019999999919
+     "ms_per_step": 0.11551260000000502
     }
    ],
    "trace": "decode_graph_batch64.json.gz"
   },
   "decode_eager_batch1": {
    "steps": 5,
-   "wall_ms_per_step": 10.08395780227147,
+   "wall_ms_per_step": 10.103710205294192,
    "cuda_kernels_per_step": 398.0,
-   "gpu_kernel_ms_per_step": 2.0369071999999786,
+   "gpu_kernel_ms_per_step": 2.0418656000000253,
    "top_kernels_by_launches": [
     {
      "kernel": "_add_rms_norm_kernel",
@@ -196,44 +196,44 @@
    "top_kernels_by_gpu_time": [
     {
      "kernel": "nvjet_sm90_tst_256x8_64x6_4x1_v_bz_TNT",
-     "ms_per_step": 0.6186399999999906
+     "ms_per_step": 0.6183466000000011
     },
     {
      "kernel": "nvjet_sm90_tst_64x8_64x16_4x1_v_bz_splitK_TNT",
-     "ms_per_step": 0.33407959999999776
+     "ms_per_step": 0.33358740000000575
     },
     {
      "kernel": "nvjet_sm90_tst_384x8_64x4_2x1_v_bz_TNT",
-     "ms_per_step": 0.1626618000000013
+     "ms_per_step": 0.162642400000001
     },
     {
      "kernel": "nvjet_sm90_tst_64x8_64x16_4x1_v_bz_bias_TNT",
-     "ms_per_step": 0.1598655999999968
+     "ms_per_step": 0.15955859999999364
     },
     {
      "kernel": "nvjet_sm90_tst_64x8_64x16_4x1_v_bz_TNT",
-     "ms_per_step": 0.14011460000000012
+     "ms_per_step": 0.13988480000000528
     },
     {
      "kernel": "_merge_splits_kernel",
-     "ms_per_step": 0.11914779999999768
+     "ms_per_step": 0.12277680000000282
     },
     {
      "kernel": "void at::native::index_elementwise_kernel<128, 4, at::native::index_copy_kernel_",
-     "ms_per_step": 0.11112679999999568
+     "ms_per_step": 0.11409260000001237
     },
     {
      "kernel": "_paged_decode_kernel",
-     "ms_per_step": 0.10816659999999347
+     "ms_per_step": 0.10730980000000637
     }
    ],
    "trace": "decode_eager_batch1.json.gz"
   },
   "prefill_2048_tokens": {
    "steps": 5,
-   "wall_ms_per_step": 13.610619201790541,
+   "wall_ms_per_step": 13.647709600627422,
    "cuda_kernels_per_step": 399.0,
-   "gpu_kernel_ms_per_step": 10.980018800000007,
+   "gpu_kernel_ms_per_step": 11.0637326,
    "top_kernels_by_launches": [
     {
      "kernel": "_add_rms_norm_kernel",
@@ -271,35 +271,35 @@
    "top_kernels_by_gpu_time": [
     {
      "kernel": "nvjet_sm90_tst_320x128_64x3_1x2_h_bz_coopB_TNT",
-     "ms_per_step": 4.173000199999985
+     "ms_per_step": 4.204928200000004
     },
     {
      "kernel": "nvjet_sm90_tst_192x128_64x5_1x2_h_bz_coopB_TNT",
-     "ms_per_step": 2.357795600000004
+     "ms_per_step": 2.37934899999999
     },
     {
      "kernel": "void flashinfer::PrefillWithKVCacheKernel<flashinfer::SparseCollectiveMainloop<P",
-     "ms_per_step": 1.3258398000000102
+     "ms_per_step": 1.3439743999999911
     },
     {
      "kernel": "_silu_mul_kernel",
-     "ms_per_step": 1.0426008000000087
+     "ms_per_step": 1.0421897999999898
     },
     {
      "kernel": "_rope_qkv_kernel",
-     "ms_per_step": 0.6004073999999963
+     "ms_per_step": 0.6005098000000006
     },
     {
      "kernel": "nvjet_sm90_tst_256x128_64x4_1x2_h_bz_coopA_bias_TNT",
-     "ms_per_step": 0.5754280000000137
+     "ms_per_step": 0.5824225999999927
     },
     {
      "kernel": "_add_rms_norm_kernel",
-     "ms_per_step": 0.3802795999999972
+     "ms_per_step": 0.38140120000000544
     },
     {
      "kernel": "void at::native::index_elementwise_kernel<128, 4, at::native::index_copy_kernel_",
-     "ms_per_step": 0.1922428000000009
+     "ms_per_step": 0.19406519999999855
     }
    ],
    "trace": "prefill_2048_tokens.json.gz"

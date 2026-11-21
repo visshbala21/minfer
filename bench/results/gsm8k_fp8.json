@@ -8,36 +8,36 @@
    "setting": "bf16",
    "engine_overrides": {},
    "generated_tokens": 58508,
-   "wall_seconds": 1.843339585000649,
-   "output_tokens_per_second": 31740.21785029881,
+   "wall_seconds": 1.8396319330204278,
+   "output_tokens_per_second": 31804.188082307173,
    "truncated_at_max_tokens": 12,
    "decode_step": [
     {
      "batch_size": 1,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 2.164429984986782,
-     "step_ms_p99": 2.1978958463296294,
-     "step_ms_mean": 2.1668956999201328,
-     "tokens_per_second": 462.0154067982508
+     "step_ms_p50": 2.161782525945455,
+     "step_ms_p99": 2.3942085535964,
+     "step_ms_mean": 2.1781902492512017,
+     "tokens_per_second": 462.58122082037386
     },
     {
      "batch_size": 64,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 2.9520175012294203,
-     "step_ms_p99": 3.305728864797862,
-     "step_ms_mean": 3.0165711909648962,
-     "tokens_per_second": 21680.088269580403
+     "step_ms_p50": 2.942735009128228,
+     "step_ms_p99": 3.1820648629218344,
+     "step_ms_mean": 2.999443793669343,
+     "tokens_per_second": 21748.475415378878
     },
     {
      "batch_size": 256,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 5.3101570083526894,
-     "step_ms_p99": 6.012778211734261,
-     "step_ms_mean": 5.323890189756639,
-     "tokens_per_second": 48209.497308143815
+     "step_ms_p50": 5.305362516082823,
+     "step_ms_p99": 6.480639141518624,
+     "step_ms_mean": 5.380570161505602,
+     "tokens_per_second": 48253.064559481936
     }
    ],
    "weight_bytes": 3104205824,
@@ -56,37 +56,37 @@
    "engine_overrides": {
     "kv_cache_dtype": "fp8"
    },
-   "generated_tokens": 55984,
-   "wall_seconds": 2.5254058389982674,
-   "output_tokens_per_second": 22168.318111676945,
+   "generated_tokens": 55720,
+   "wall_seconds": 2.169363604974933,
+   "output_tokens_per_second": 25684.95197034701,
    "truncated_at_max_tokens": 8,
    "decode_step": [
     {
      "batch_size": 1,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 2.7383604901842773,
-     "step_ms_p99": 2.7857732164557096,
-     "step_ms_mean": 2.7435644806246273,
-     "tokens_per_second": 365.18201441502146
+     "step_ms_p50": 2.6723189803306013,
+     "step_ms_p99": 2.7075888245599344,
+     "step_ms_mean": 2.67530428187456,
+     "tokens_per_second": 374.2068246195245
     },
     {
      "batch_size": 64,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 4.151689514401369,
-     "step_ms_p99": 4.459802212368231,
-     "step_ms_mean": 4.207963750814088,
-     "tokens_per_second": 15415.41094968614
+     "step_ms_p50": 3.6375469935592264,
+     "step_ms_p99": 3.9068480784771964,
+     "step_ms_mean": 3.683263337588869,
+     "tokens_per_second": 17594.27441441189
     },
     {
      "batch_size": 256,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 8.631823482573964,
-     "step_ms_p99": 9.90573796414541,
-     "step_ms_mean": 8.765086891653482,
-     "tokens_per_second": 29657.696373983563
+     "step_ms_p50": 5.876918003195897,
+     "step_ms_p99": 6.813829996390272,
+     "step_ms_mean": 5.960754142142832,
+     "tokens_per_second": 43560.24703097541
     }
    ],
    "weight_bytes": 3104205824,
@@ -95,10 +95,10 @@
    "kv_store_bytes": 71043284992,
    "kv_bytes_per_token": 14848.0,
    "gpu_free_bytes_before_load": 84121157632,
-   "correct": 137,
-   "accuracy": 0.685,
+   "correct": 138,
+   "accuracy": 0.69,
    "no_answer_extracted": 0,
-   "same_final_answer_as_first_setting": 145
+   "same_final_answer_as_first_setting": 149
   },
   "fp8_weights": {
    "setting": "fp8_weights",
@@ -106,36 +106,36 @@
     "weight_dtype": "fp8"
    },
    "generated_tokens": 57605,
-   "wall_seconds": 3.851426304987399,
-   "output_tokens_per_second": 14956.796635419063,
+   "wall_seconds": 3.876156314043328,
+   "output_tokens_per_second": 14861.371764419531,
    "truncated_at_max_tokens": 7,
    "decode_step": [
     {
      "batch_size": 1,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 4.421768506290391,
-     "step_ms_p99": 4.476522884506267,
-     "step_ms_mean": 4.429419710650109,
-     "tokens_per_second": 226.15385644395536
+     "step_ms_p50": 4.418502998305485,
+     "step_ms_p99": 4.612059340579436,
+     "step_ms_mean": 4.4342934066662565,
+     "tokens_per_second": 226.32099613455154
     },
     {
      "batch_size": 64,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 6.92469700879883,
-     "step_ms_p99": 7.91740325337742,
-     "step_ms_mean": 7.002168230828829,
-     "tokens_per_second": 9242.281636103173
+     "step_ms_p50": 6.959397491300479,
+     "step_ms_p99": 7.2268354590050885,
+     "step_ms_mean": 7.010362687869929,
+     "tokens_per_second": 9196.198389300585
     },
     {
      "batch_size": 256,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 9.6222895081155,
-     "step_ms_p99": 10.220217267633426,
-     "step_ms_mean": 9.649455400649458,
-     "tokens_per_second": 26604.894789757465
+     "step_ms_p50": 9.662668511737138,
+     "step_ms_p99": 10.579241750529038,
+     "step_ms_mean": 9.70486432488542,
+     "tokens_per_second": 26493.71648101553
     }
    ],
    "weight_bytes": 1794010896,
@@ -155,37 +155,37 @@
     "kv_cache_dtype": "fp8",
     "weight_dtype": "fp8"
    },
-   "generated_tokens": 55686,
-   "wall_seconds": 4.542169732012553,
-   "output_tokens_per_second": 12259.779639570303,
-   "truncated_at_max_tokens": 8,
+   "generated_tokens": 54338,
+   "wall_seconds": 4.176605989981908,
+   "output_tokens_per_second": 13010.085253513553,
+   "truncated_at_max_tokens": 11,
    "decode_step": [
     {
      "batch_size": 1,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 5.039244002546184,
-     "step_ms_p99": 5.101644447422586,
-     "step_ms_mean": 5.044124439300504,
-     "tokens_per_second": 198.44246468214854
+     "step_ms_p50": 4.966803971910849,
+     "step_ms_p99": 5.032980480464175,
+     "step_ms_mean": 4.975129488157108,
+     "tokens_per_second": 201.33671585497987
     },
     {
      "batch_size": 64,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 8.121367980493233,
-     "step_ms_p99": 8.390729785896838,
-     "step_ms_mean": 8.172171630722005,
-     "tokens_per_second": 7880.4457763423625
+     "step_ms_p50": 7.600891025504097,
+     "step_ms_p99": 8.000509853591215,
+     "step_ms_mean": 7.670402649091557,
+     "tokens_per_second": 8420.065461437855
     },
     {
      "batch_size": 256,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 12.822841497836635,
-     "step_ms_p99": 13.856098117830706,
-     "step_ms_mean": 12.947335489152465,
-     "tokens_per_second": 19964.37373441684
+     "step_ms_p50": 10.23754951893352,
+     "step_ms_p99": 11.016458388185129,
+     "step_ms_mean": 10.291931059909984,
+     "tokens_per_second": 25005.98405180348
     }
    ],
    "weight_bytes": 1794010896,
@@ -194,10 +194,10 @@
    "kv_store_bytes": 70850617344,
    "kv_bytes_per_token": 14848.0,
    "gpu_free_bytes_before_load": 83777224704,
-   "correct": 142,
-   "accuracy": 0.71,
+   "correct": 148,
+   "accuracy": 0.74,
    "no_answer_extracted": 0,
-   "same_final_answer_as_first_setting": 140
+   "same_final_answer_as_first_setting": 149
   }
  }
 }

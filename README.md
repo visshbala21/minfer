@@ -613,24 +613,24 @@ last rows constrain the engine so that the scheduling features have decisions to
 <!-- BEGIN ablations -->
 | configuration | flags | 16 req/s: tok/s | TTFT p50 / p99 (ms) | TPOT p50 / p99 (ms) | hit rate | max: tok/s | TTFT p50 / p99 (ms) | TPOT p50 / p99 (ms) | hit rate |
 |---|---|---|---|---|---|---|---|---|---|
-| full system (defaults) | — | 800 | 37 / 86 | 2.98 / 4.24 | 93.2% | 4208 | 83 / 234 | 11.08 / 12.83 | 92.8% |
-| − prefix cache | `--no-prefix-cache` | 762 | 109 / 438 | 6.21 / 17.72 | — | 1204 | 1715 / 2486 | 18.39 / 20.32 | — |
-| − cache-aware admission (FCFS) | `--no-cache-aware-scheduling` | 797 | 38 / 79 | 2.96 / 4.24 | 93.2% | 4298 | 76 / 147 | 10.97 / 12.18 | 92.8% |
-| − CUDA graphs (decode and prefill) | `--no-cuda-graphs` | 752 | 47 / 338 | 7.90 / 17.48 | 93.2% | 3361 | 73 / 270 | 13.07 / 14.64 | 92.8% |
-| − prefill graphs only | `--no-prefill-graphs` | 798 | 40 / 86 | 3.13 / 4.64 | 93.2% | 4042 | 75 / 270 | 11.64 / 13.78 | 92.8% |
-| − chunked prefill | `--no-chunked-prefill` | 800 | 37 / 80 | 2.98 / 4.25 | 93.2% | 4257 | 76 / 223 | 11.08 / 12.64 | 92.8% |
-| − fused kernels | `--no-fused-kernels` | 780 | 43 / 89 | 5.05 / 6.71 | 93.2% | 3207 | 78 / 266 | 14.81 / 16.85 | 92.8% |
-| − Triton decode (FlashInfer decode) | `--decode-kernel` `flashinfer` | 798 | 38 / 77 | 3.21 / 4.45 | 93.2% | 3485 | 69 / 241 | 14.03 / 16.93 | 92.8% |
-| + speculation: prompt lookup | `--speculation` `ngram` | 779 | 43 / 87 | 5.55 / 10.49 | 93.2% | 3297 | 76 / 241 | 13.19 / 21.90 | 92.8% |
-| + speculation: draft model | `--speculation` `draft` | 731 | 75 / 124 | 11.72 / 18.97 | 93.2% | 1852 | 141 / 424 | 22.29 / 39.75 | 92.8% |
-| + FP8 KV cache | `--kv-cache-dtype` `fp8` | 791 | 43 / 87 | 4.19 / 6.00 | 93.2% | 2646 | 78 / 264 | 19.46 / 23.32 | 92.8% |
-| + FP8 weights | `--weight-dtype` `fp8` | 765 | 49 / 97 | 6.88 / 11.27 | 93.2% | 2572 | 80 / 254 | 18.91 / 21.66 | 92.8% |
-| 16 running sequences max | `--max-num-seqs` `16` | 800 | 37 / 81 | 2.97 / 4.25 | 93.2% | 2848 | 1081 / 1649 | 5.17 / 7.80 | 92.8% |
-| 16 running sequences max, FCFS | `--max-num-seqs` `16` `--no-cache-aware-scheduling` | 799 | 40 / 79 | 2.96 / 4.19 | 93.2% | 2942 | 970 / 1204 | 5.08 / 7.21 | 92.8% |
-| KV cache 8% of GPU memory | `--kv-memory-fraction` `0.08` | 800 | 39 / 85 | 3.04 / 4.23 | 93.2% | 4054 | 81 / 252 | 11.21 / 15.18 | 92.1% |
-| KV cache 8%, FCFS | `--kv-memory-fraction` `0.08` `--no-cache-aware-scheduling` | 799 | 38 / 78 | 3.01 / 4.36 | 93.2% | 4128 | 74 / 228 | 11.42 / 14.69 | 92.3% |
-| KV cache 8%, FP8 KV | `--kv-memory-fraction` `0.08` `--kv-cache-dtype` `fp8` | 791 | 43 / 91 | 4.22 / 6.37 | 93.2% | 2679 | 76 / 293 | 19.09 / 21.12 | 92.8% |
-| KV cache 8%, no prefix cache | `--kv-memory-fraction` `0.08` `--no-prefix-cache` | 764 | 106 / 317 | 6.33 / 17.82 | — | 1201 | 1714 / 2512 | 18.39 / 20.25 | — |
+| full system (defaults) | — | 799 | 40 / 82 | 2.99 / 4.20 | 93.2% | 4199 | 87 / 262 | 10.91 / 12.87 | 92.8% |
+| − prefix cache | `--no-prefix-cache` | 765 | 112 / 332 | 6.11 / 17.51 | — | 1206 | 1708 / 2480 | 18.36 / 20.36 | — |
+| − cache-aware admission (FCFS) | `--no-cache-aware-scheduling` | 799 | 41 / 82 | 2.97 / 4.36 | 93.2% | 4235 | 86 / 219 | 10.85 / 12.30 | 92.8% |
+| − CUDA graphs (decode and prefill) | `--no-cuda-graphs` | 749 | 49 / 92 | 8.17 / 10.79 | 93.2% | 3258 | 74 / 264 | 13.57 / 14.98 | 92.8% |
+| − prefill graphs only | `--no-prefill-graphs` | 797 | 43 / 83 | 3.06 / 4.70 | 93.2% | 4084 | 81 / 264 | 11.54 / 13.08 | 92.8% |
+| − chunked prefill | `--no-chunked-prefill` | 798 | 41 / 85 | 2.97 / 4.24 | 93.2% | 4224 | 82 / 274 | 10.92 / 12.51 | 92.8% |
+| − fused kernels | `--no-fused-kernels` | 781 | 44 / 88 | 5.05 / 7.03 | 93.2% | 3213 | 82 / 283 | 14.67 / 16.34 | 92.8% |
+| − Triton decode (FlashInfer decode) | `--decode-kernel` `flashinfer` | 798 | 41 / 81 | 2.90 / 3.88 | 93.2% | 4691 | 89 / 268 | 9.44 / 11.35 | 92.8% |
+| + speculation: prompt lookup | `--speculation` `ngram` | 799 | 42 / 83 | 3.28 / 6.86 | 93.2% | 2706 | 93 / 237 | 17.07 / 28.63 | 92.8% |
+| + speculation: draft model | `--speculation` `draft` | 723 | 86 / 136 | 12.32 / 28.39 | 93.2% | 1675 | 142 / 292 | 22.26 / 59.21 | 92.8% |
+| + FP8 KV cache | `--kv-cache-dtype` `fp8` | 794 | 45 / 83 | 3.59 / 4.89 | 93.2% | 3776 | 85 / 271 | 12.88 / 14.96 | 92.8% |
+| + FP8 weights | `--weight-dtype` `fp8` | 766 | 50 / 97 | 6.83 / 11.03 | 93.2% | 2573 | 88 / 361 | 18.68 / 21.37 | 92.8% |
+| 16 running sequences max | `--max-num-seqs` `16` | 798 | 41 / 82 | 2.97 / 4.36 | 93.2% | 2858 | 1082 / 1517 | 5.12 / 6.22 | 92.8% |
+| 16 running sequences max, FCFS | `--max-num-seqs` `16` `--no-cache-aware-scheduling` | 797 | 41 / 81 | 2.99 / 4.38 | 93.2% | 2962 | 962 / 1132 | 5.07 / 6.46 | 92.8% |
+| KV cache 8% of GPU memory | `--kv-memory-fraction` `0.08` | 799 | 40 / 83 | 2.98 / 4.17 | 93.2% | 4057 | 83 / 270 | 11.32 / 14.88 | 92.2% |
+| KV cache 8%, FCFS | `--kv-memory-fraction` `0.08` `--no-cache-aware-scheduling` | 799 | 40 / 78 | 3.00 / 4.19 | 93.2% | 4095 | 87 / 199 | 11.29 / 14.28 | 92.2% |
+| KV cache 8%, FP8 KV | `--kv-memory-fraction` `0.08` `--kv-cache-dtype` `fp8` | 795 | 45 / 82 | 3.62 / 4.93 | 93.2% | 3661 | 88 / 262 | 12.99 / 17.92 | 92.8% |
+| KV cache 8%, no prefix cache | `--kv-memory-fraction` `0.08` `--no-prefix-cache` | 765 | 106 / 341 | 6.34 / 16.25 | — | 1207 | 1706 / 2459 | 18.36 / 20.25 | — |
 <!-- END ablations -->
 
 Reading the table:

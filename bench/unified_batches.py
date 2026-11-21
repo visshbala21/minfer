@@ -1,11 +1,16 @@
-"""Before/after of unified prefill+decode passes on the agent workload.
+"""A/B experiments on the engine's decode path, on the agent workload.
 
-    .venv/bin/python -m bench.unified_batches
+    .venv/bin/python -m bench.unified_batches                           # unified passes
+    .venv/bin/python -m bench.unified_batches --experiment decode_kernel
 
-A step that both prefills and decodes used to run two passes over the weights; with
-``--unified-batches`` it runs one ragged pass in which decoding sequences are one-token
-spans. A fresh ``minfer serve`` per setting replays the matrix's agent traces at 4 and 16
-req/s and "max". Writes ``bench/results/unified_batches_7b.json``.
+* ``unified_batches``: a step that both prefills and decodes used to run two passes over
+  the weights; with ``--unified-batches`` it runs one ragged pass in which decoding
+  sequences are one-token spans.
+* ``decode_kernel``: the Triton paged-decode kernel against FlashInfer's decode kernel
+  (tensor-core path).
+
+A fresh ``minfer serve`` per setting replays the matrix's agent traces at 4 and 16 req/s
+and "max". Writes ``bench/results/<experiment>_7b.json``.
 """
 
 from __future__ import annotations
@@ -22,15 +27,22 @@ from bench.run_matrix import run_agent
 from bench.servers import code_version, launch
 
 RATES = {"4": 2, "16": 4, "max": 5}  # rate -> trace seed (the matrix's seeds for these rates)
-CONFIGS = {
-    "split": ("separate prefill and decode passes (before)", ["--no-unified-batches"]),
-    "unified": ("one ragged pass per step (after)", ["--unified-batches"]),
+EXPERIMENTS = {
+    "unified_batches": {
+        "split": ("separate prefill and decode passes (before)", ["--no-unified-batches"]),
+        "unified": ("one ragged pass per step (after)", ["--unified-batches"]),
+    },
+    "decode_kernel": {
+        "triton": ("Triton paged-decode kernel", ["--decode-kernel", "triton"]),
+        "flashinfer": ("FlashInfer decode kernel", ["--decode-kernel", "flashinfer"]),
+    },
 }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--model", default=models.PRIMARY, help="model id, or 7b / 1.5b")
+    parser.add_argument("--experiment", default="unified_batches", choices=list(EXPERIMENTS))
     parser.add_argument("--port", type=int, default=8091)
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
@@ -39,11 +51,11 @@ def main() -> None:
     from transformers import AutoTokenizer
 
     model = models.resolve(args.model)
-    out = args.out or models.results_path("bench/results/unified_batches.json", model)
+    out = args.out or models.results_path(f"bench/results/{args.experiment}.json", model)
     tokenizer = AutoTokenizer.from_pretrained(model)
     results: dict[str, Any] = {"model": model, "rates": list(RATES), "configs": {}}
-    for name, (label, flags) in CONFIGS.items():
-        log = Path("bench/logs") / f"unified_{models.tag(model)}_{name}_server.log"
+    for name, (label, flags) in EXPERIMENTS[args.experiment].items():
+        log = Path("bench/logs") / f"{args.experiment}_{models.tag(model)}_{name}_server.log"
         entry: dict[str, Any] = {"label": label, "flags": flags}
         with launch("minfer", model, args.port, log, flags) as (url, argv):
             entry["command"] = argv
