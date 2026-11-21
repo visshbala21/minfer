@@ -78,10 +78,21 @@ class PagedBatch:
         return self.token_ids.shape[0]
 
 
-def build_paged_batch(
-    spans: Sequence[SequenceSpan], block_size: int, device: torch.device | str
-) -> PagedBatch:
-    """Assemble the batch layout for ``spans`` (vectorized with numpy)."""
+@dataclass(frozen=True)
+class HostLayout:
+    """A batch layout as host arrays (what :func:`build_paged_batch` uploads)."""
+
+    token_ids: np.ndarray
+    positions: np.ndarray
+    slots: np.ndarray
+    qo_indptr: np.ndarray
+    kv_indptr: np.ndarray
+    kv_indices: np.ndarray
+    kv_last_page_len: np.ndarray
+
+
+def paged_layout(spans: Sequence[SequenceSpan], block_size: int) -> HostLayout:
+    """The batch layout for ``spans`` as numpy arrays (vectorized)."""
     count = len(spans)
     lengths = np.fromiter((len(s.token_ids) for s in spans), dtype=np.int64, count=count)
     starts = np.fromiter((s.start for s in spans), dtype=np.int64, count=count)
@@ -116,15 +127,22 @@ def build_paged_batch(
     blocks = kv_indices[kv_indptr[span_of_token] + positions // block_size]
     slots = blocks * (2 * block_size) + positions % block_size
     last_page_len = (ends - 1) % block_size + 1
+    return HostLayout(token_ids, positions, slots, qo_indptr, kv_indptr, kv_indices, last_page_len)
 
+
+def build_paged_batch(
+    spans: Sequence[SequenceSpan], block_size: int, device: torch.device | str
+) -> PagedBatch:
+    """Assemble the batch layout for ``spans`` and upload its per-token tensors."""
+    layout = paged_layout(spans, block_size)
     return PagedBatch(
-        token_ids=torch.from_numpy(token_ids).to(device),
-        positions=torch.from_numpy(positions).to(device),
-        slots=torch.from_numpy(slots).to(device),
-        qo_indptr=torch.from_numpy(qo_indptr.astype(np.int32)),
-        kv_indptr=torch.from_numpy(kv_indptr.astype(np.int32)),
-        kv_indices=torch.from_numpy(kv_indices.astype(np.int32)),
-        kv_last_page_len=torch.from_numpy(last_page_len.astype(np.int32)),
+        token_ids=torch.from_numpy(layout.token_ids).to(device),
+        positions=torch.from_numpy(layout.positions).to(device),
+        slots=torch.from_numpy(layout.slots).to(device),
+        qo_indptr=torch.from_numpy(layout.qo_indptr.astype(np.int32)),
+        kv_indptr=torch.from_numpy(layout.kv_indptr.astype(np.int32)),
+        kv_indices=torch.from_numpy(layout.kv_indices.astype(np.int32)),
+        kv_last_page_len=torch.from_numpy(layout.kv_last_page_len.astype(np.int32)),
         block_size=block_size,
     )
 

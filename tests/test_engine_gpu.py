@@ -706,3 +706,56 @@ def test_engine_with_unified_batches(tokenizer):
         assert calls["graph" if graphs else "eager"] > 0
         del unified, joint
         torch.cuda.empty_cache()
+
+
+def test_async_decode_matches_synchronous_steps(tokenizer):
+    """Decode steps launched ahead of reading their predecessor's tokens change nothing.
+
+    Greedy requests of different lengths, some ending on EOS (the extra row launched for
+    them is discarded): the same tokens as synchronous steps. Then arrivals and an abort
+    while a step is in flight, and stochastic requests (which run synchronously), checked
+    for validity and for a clean block pool.
+    """
+    prompts = chat_prompts(tokenizer, 24)
+    params = [SamplingParams(max_tokens=8 + (i * 13) % 90) for i in range(24)]
+    outputs = {}
+    for flag in (False, True):
+        engine = Engine.from_pretrained(
+            PRIMARY_MODEL, EngineConfig(num_blocks=4096, async_decode=flag)
+        )
+        launched = {"async": 0}
+        run_async = engine.decode_graphs.run_async
+
+        def counted(*args, launched=launched, run=run_async):
+            launched["async"] += 1
+            return run(*args)
+
+        engine.decode_graphs.run_async = counted
+        outputs[flag] = engine.generate(prompts[:16], params[:16])
+        check_outputs(engine, outputs[flag], params[:16])
+        assert (launched["async"] > 0) is flag
+        if flag:
+            ids = [engine.add_request(p, sp) for p, sp in zip(prompts[:8], params[:8], strict=True)]
+            got: dict[int, list[int]] = {i: [] for i in ids}
+            steps = 0
+            while engine.has_work:
+                for out in engine.step():
+                    got[out.seq_id].append(out.token_id)
+                steps += 1
+                if steps == 12:
+                    extra = [
+                        engine.add_request(p, sp)
+                        for p, sp in zip(prompts[8:], params[8:], strict=True)
+                    ]
+                    got.update({i: [] for i in extra})
+                    ids += extra
+                if steps == 20:
+                    engine.abort(ids[1])
+            kept = [i for i in ids if i != ids[1]]
+            check_outputs(engine, [got[i] for i in kept], [params[i] for i in range(24) if i != 1])
+            assert len(got[ids[1]]) < params[1].max_tokens
+            sampled = [SamplingParams(max_tokens=24, temperature=0.8, seed=s) for s in (1, 2)]
+            check_outputs(engine, engine.generate(prompts[:2], sampled), sampled)
+        del engine
+        torch.cuda.empty_cache()
+    assert outputs[True] == outputs[False]

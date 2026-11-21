@@ -8,9 +8,13 @@
   sequences are one-token spans.
 * ``decode_kernel``: the Triton paged-decode kernel against FlashInfer's decode kernel
   (tensor-core path).
+* ``decode_path`` (Phase 18): the changes made to close the decode gap to vLLM, one at a
+  time and together — decode steps launched ahead of reading their predecessor's tokens
+  (``--async-decode``), and joint passes with a kernel per group (``--unified-batches``).
 
 A fresh ``minfer serve`` per setting replays the matrix's agent traces at 4 and 16 req/s
-and "max". Writes ``bench/results/<experiment>_7b.json``.
+and "max" (``--rates`` for others; every rate uses the matrix's trace seed for it). Writes
+``bench/results/<experiment>_7b.json``.
 """
 
 from __future__ import annotations
@@ -26,7 +30,8 @@ from bench import models
 from bench.run_matrix import run_agent
 from bench.servers import code_version, launch
 
-RATES = {"4": 2, "16": 4, "max": 5}  # rate -> trace seed (the matrix's seeds for these rates)
+SEEDS = {"1": 0, "2": 1, "4": 2, "8": 3, "16": 4, "max": 5}  # rate -> the matrix's trace seed
+RATES = ("4", "16", "max")
 EXPERIMENTS = {
     "unified_batches": {
         "split": (
@@ -42,6 +47,15 @@ EXPERIMENTS = {
         "triton": ("Triton paged-decode kernel", ["--decode-kernel", "triton"]),
         "flashinfer": ("FlashInfer decode kernel", ["--decode-kernel", "flashinfer"]),
     },
+    "decode_path": {
+        "before": ("synchronous steps, separate prefill and decode passes", []),
+        "async": ("+ decode steps launched ahead", ["--async-decode"]),
+        "joint": ("+ joint prefill+decode passes", ["--unified-batches"]),
+        "async_joint": (
+            "+ both",
+            ["--async-decode", "--unified-batches"],
+        ),
+    },
 }
 
 
@@ -51,6 +65,8 @@ def main() -> None:
     parser.add_argument("--experiment", default="unified_batches", choices=list(EXPERIMENTS))
     parser.add_argument("--port", type=int, default=8091)
     parser.add_argument("--out", type=Path, default=None)
+    parser.add_argument("--rates", nargs="+", default=list(RATES), choices=list(SEEDS))
+    parser.add_argument("--configs", nargs="+", default=None, help="subset of the experiment")
     args = parser.parse_args()
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
 
@@ -59,16 +75,18 @@ def main() -> None:
     model = models.resolve(args.model)
     out = args.out or models.results_path(f"bench/results/{args.experiment}.json", model)
     tokenizer = AutoTokenizer.from_pretrained(model)
-    results: dict[str, Any] = {"model": model, "rates": list(RATES), "configs": {}}
+    results: dict[str, Any] = {"model": model, "rates": args.rates, "configs": {}}
     for name, (label, flags) in EXPERIMENTS[args.experiment].items():
+        if args.configs is not None and name not in args.configs:
+            continue
         log = Path("bench/logs") / f"{args.experiment}_{models.tag(model)}_{name}_server.log"
         entry: dict[str, Any] = {"label": label, "flags": flags}
         with launch("minfer", model, args.port, log, flags) as (url, argv):
             entry["command"] = argv
             entry["code"] = code_version()
             run_agent("minfer", url, "max", 10_000, tokenizer, model)  # warm-up
-            for rate, seed in RATES.items():
-                row = entry[rate] = run_agent("minfer", url, rate, seed, tokenizer, model)
+            for rate in args.rates:
+                row = entry[rate] = run_agent("minfer", url, rate, SEEDS[rate], tokenizer, model)
                 print(
                     f"[{name}] rate={rate}: {row['output_tokens_per_second']:.0f} tok/s "
                     f"ttft {row['ttft_ms']['p50']:.1f}/{row['ttft_ms']['p99']:.1f} "

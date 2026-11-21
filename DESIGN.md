@@ -2535,3 +2535,44 @@ the Phase 12 reproduction check, the baselines' rows of the pressure sweep (meas
 2026-11-21, before this rerun; the baselines' software is unchanged), and the
 position-independent-reuse quality study and the host-tier cost measurement, which were
 not run again.
+
+---
+
+## Phase 18 — Closing the decode gap; agent job completion time
+
+Phase 18 (PLAN_V2.md) starts on a new pod: the virtualenvs were rebuilt from the pinned
+lock files (`MINFER_VENV_ROOT=/opt/venvs scripts/setup_envs.sh all`), and the work of the
+previous pod's last session, pushed as branch `wip-16b` ("pod lost mid-run"), was
+reviewed, re-tested and merged (`651f11d`): the CPU suite (246) and the GPU suite (72)
+pass on the merge. The branch held two things not yet written up here: the fused KV write
+(already on `main` as `810c49a`, measured on the branch) and the joint pass (M-032).
+
+### M-031 The RoPE kernel writes keys and values into the KV cache (Phase 16B item b)
+
+Before: per layer, the fused RoPE kernel returned rotated queries and keys, and the KV
+write was two `index_copy_` kernels (keys, values) plus an index computation.
+`rope_qkv_store` scatters the rotated keys and the values to their slots from the RoPE
+kernel itself: three fewer launches per layer, 84 fewer per 7B step. Bit-identical to the
+separate write (test), and the engine's outputs are unchanged (test). Layers stored in FP8
+keep the separate write (it quantizes). `--[no-]fused-kv-write`, on by default.
+
+`bench/decode_gap.py` → `bench/results/decode_gap_7b.json` (commit `810c49a`, clean tree):
+`Engine.step()` of steady-state decode at 7B, 200 steps per point, p50:
+
+| batch × context | separate write (ms) | fused write (ms) | change |
+|---|---|---|---|
+| 1 × 1k | 6.25 | 6.10 | −2.4% |
+| 8 × 1k | 6.57 | 6.41 | −2.5% |
+| 32 × 1k | 7.31 | 7.15 | −2.2% |
+| 64 × 1k | 8.43 | 8.37 | −0.7% |
+| 128 × 1k | 10.52 | 10.38 | −1.3% |
+| 1 × 8k | 6.43 | 6.29 | −2.2% |
+| 32 × 8k | 12.17 | 12.03 | −1.2% |
+| 64 × 8k | 18.03 | 17.80 | −1.3% |
+
+A small, consistent gain: the launches it removes are tiny kernels inside a CUDA graph,
+where each costs a few microseconds of GPU time rather than host dispatch. The breakdown
+of the same file shows where a step's time goes: host-side attention planning 0.08–0.14
+ms, the rest of the host work (scheduling, sampling, reading tokens back, bookkeeping)
+0.06 ms at batch 1 growing to 0.56–0.73 ms at batch 128 and 64 × 8k — time in which the
+GPU has nothing to do, because every step ends by reading its tokens back.

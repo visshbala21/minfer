@@ -33,6 +33,7 @@ from minfer.attention.paged import (
     SequenceSpan,
     build_paged_batch,
     dense_block_table,
+    paged_layout,
 )
 from minfer.cache.kv_store import PagedKVStore
 from minfer.model.qwen2 import Qwen2Model
@@ -56,6 +57,18 @@ class _Bucket:
     seq_lens: Tensor | None = None
     graph: torch.cuda.CUDAGraph | None = None
     logits: Tensor | None = None
+
+
+@dataclass
+class _Staging:
+    """Pinned host buffers for one pass's inputs, and their device-side copies."""
+
+    per_token: Tensor
+    tables: Tensor
+    indices: Tensor
+    device_indices: Tensor
+    device_per_token: Tensor
+    copied: torch.cuda.Event
 
 
 class DecodeGraphs:
@@ -127,6 +140,36 @@ class DecodeGraphs:
                 wrappers=wrappers,
             )
         self._capture_all()
+        # Recorded after each pass's inputs and plan are enqueued. FlashInfer's plan()
+        # stages its metadata in a pinned host buffer and copies it to the device
+        # asynchronously, so a pass may not be planned before the previous pass's copies
+        # have executed (only possible when passes are launched ahead: ``run_async``).
+        self._inputs_enqueued = torch.cuda.Event()
+        # ``run_async``'s inputs are staged in two alternating sets of pinned buffers,
+        # allocated once: allocating pinned memory per pass stalled the host for tens of
+        # milliseconds whenever the caching host allocator had to grow (DESIGN.md B-010).
+        largest = self.sizes[-1]
+        self._staging = [
+            _Staging(
+                per_token=torch.empty(3 * largest, dtype=torch.int64, pin_memory=True),
+                tables=torch.empty(2 * largest + 1, dtype=torch.int32, pin_memory=True),
+                indices=torch.empty(
+                    largest * max_pages_per_sequence, dtype=torch.int32, pin_memory=True
+                ),
+                device_indices=torch.empty(
+                    largest * max_pages_per_sequence, dtype=torch.int32, device=device
+                ),
+                device_per_token=torch.empty(3 * largest, dtype=torch.int64, device=device),
+                copied=torch.cuda.Event(),
+            )
+            for _ in range(2)
+        ]
+        self._next_staging = 0
+
+    @property
+    def supports_async(self) -> bool:
+        """Whether :meth:`run_async` is available (FlashInfer's decode kernel only)."""
+        return self.decode_kernel != "triton"
 
     @property
     def max_batch_size(self) -> int:
@@ -207,6 +250,69 @@ class DecodeGraphs:
         bucket.token_ids.copy_(batch.token_ids)
         bucket.positions.copy_(batch.positions)
         bucket.slots.copy_(batch.slots)
+        self._inputs_enqueued.synchronize()
         self._plan(bucket, batch)
+        self._inputs_enqueued.record()
+        bucket.graph.replay()
+        return bucket.logits[:count]
+
+    def run_async(self, spans: Sequence[SequenceSpan], token_ids: Tensor | None) -> Tensor:
+        """Enqueue one decode pass without waiting for the GPU; return its logits.
+
+        Unlike :meth:`run`, nothing here synchronizes with the device, so the pass can be
+        enqueued while the previous one is still executing: every input is staged in
+        pinned memory and copied asynchronously, and the page indices reach the planner
+        as a device tensor (FlashInfer copies host-side indices synchronously).
+
+        Args:
+            spans: One span per sequence; their token ids are used only if ``token_ids``
+                is ``None``.
+            token_ids: ``[len(spans)]`` int64 device tensor of the input tokens — the
+                previous pass's samples, which the host has not seen yet.
+        """
+        count = len(spans)
+        size = self.bucket_size(count)
+        if size is None or not self.supports_async:
+            raise ValueError(f"no captured graph runs a batch of {count} asynchronously")
+        bucket = self._buckets[size]
+        layout = paged_layout([*spans, *([_PAD] * (size - count))], self.store.block_size)
+        staging = self._staging[self._next_staging]
+        self._next_staging ^= 1
+        staging.copied.synchronize()  # its previous contents have reached the device
+        pages = len(layout.kv_indices)
+        per_token = staging.per_token.numpy()
+        per_token[:size] = layout.positions
+        per_token[size : 2 * size] = layout.slots
+        per_token[2 * size : 3 * size] = layout.token_ids
+        tables = staging.tables.numpy()
+        tables[: size + 1] = layout.kv_indptr
+        tables[size + 1 : 2 * size + 1] = layout.kv_last_page_len
+        staging.indices.numpy()[:pages] = layout.kv_indices
+        device_per_token = staging.device_per_token[: 3 * size]
+        device_per_token.copy_(staging.per_token[: 3 * size], non_blocking=True)
+        indices = staging.device_indices[:pages]
+        indices.copy_(staging.indices[:pages], non_blocking=True)
+        bucket.positions.copy_(device_per_token[:size])
+        bucket.slots.copy_(device_per_token[size : 2 * size])
+        if token_ids is None:
+            bucket.token_ids.copy_(device_per_token[2 * size :])
+        else:
+            bucket.token_ids[:count].copy_(token_ids)
+        self._inputs_enqueued.synchronize()
+        for kv_dtype, wrapper in bucket.wrappers.items():
+            wrapper.plan(
+                staging.tables[: size + 1],
+                indices,
+                staging.tables[size + 1 : 2 * size + 1],
+                self.model.num_heads,
+                self.model.num_kv_heads,
+                self.model.config.head_dim,
+                self.store.block_size,
+                pos_encoding_mode="NONE",
+                q_data_type=self.model.dtype,
+                kv_data_type=kv_dtype,
+            )
+        self._inputs_enqueued.record()
+        staging.copied.record()
         bucket.graph.replay()
         return bucket.logits[:count]

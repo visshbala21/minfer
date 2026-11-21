@@ -50,7 +50,7 @@ from minfer.quant.calibration import (
 from minfer.quant.fp8 import quantize_linears
 from minfer.sampling import SamplingParams
 from minfer.scheduler import Scheduler, SchedulerConfig, Sequence
-from minfer.scheduler.sequence import ReuseSpan
+from minfer.scheduler.sequence import ReuseSpan, SequenceStatus
 from minfer.spec.base import Draft, Drafter
 from minfer.spec.ngram import PromptLookupDrafter
 
@@ -97,6 +97,12 @@ class EngineConfig:
             (sequences, tokens) bucket (needs ``cuda_graphs``; not with an FP8 KV cache).
         cuda_graph_batch_sizes: Decode batch sizes to capture; sizes above ``max_num_seqs``
             are rounded down to it.
+        async_decode: Overlap the host side of consecutive decode steps with the GPU: when
+            a decode step's successor can be predicted to be a decode step of the same
+            sequences (nothing waiting, nothing prefilling), it is launched before the
+            step's tokens are read back, fed by them on the device. Needs
+            ``cuda_graphs``, FlashInfer's decode kernel and greedy requests; any other
+            step runs synchronously as before. Outputs are unchanged.
         unified_batches: In a step that has both prefill and decode work, run them as one
             ragged pass — decoding sequences as one-token spans next to the prefill chunks
             — instead of a prefill pass and a decode pass, each over all the weights. Off
@@ -167,6 +173,7 @@ class EngineConfig:
     cuda_graphs: bool = True
     prefill_graphs: bool = True
     cuda_graph_batch_sizes: tuple[int, ...] = (1, 2, 4, 8, 16, 32, 64, 128, 256)
+    async_decode: bool = False
     unified_batches: bool = False
     prefill_chunk_tokens: int | None = 2048
     prefix_cache: bool = True
@@ -187,6 +194,23 @@ class EngineConfig:
     draft_model: str = "Qwen/Qwen2.5-0.5B-Instruct"
     draft_num_blocks: int | None = None
     seed: int = 0
+
+
+@dataclass
+class _InFlight:
+    """A decode step that has been enqueued but whose tokens the host has not read.
+
+    Attributes:
+        seqs: The sequences it decodes, in row order.
+        tokens: Their sampled tokens, on the device.
+        host: Pinned buffer the tokens are being copied into.
+        done: Recorded after that copy.
+    """
+
+    seqs: list[Sequence]
+    tokens: Tensor
+    host: Tensor
+    done: torch.cuda.Event
 
 
 @dataclass(frozen=True)
@@ -433,6 +457,8 @@ class Engine:
         self._sequences: dict[int, Sequence] = {}
         self._next_id = 0
         self._rng = random.Random(config.seed)
+        self._in_flight: _InFlight | None = None
+        self._token_staging: list[Tensor] = []
 
     @classmethod
     def from_pretrained(
@@ -578,7 +604,11 @@ class Engine:
     @property
     def has_work(self) -> bool:
         """Whether any request is waiting or running, or a host-tier copy needs polling."""
-        return self.scheduler.has_work or (self.host_tier is not None and self.host_tier.busy)
+        return (
+            self.scheduler.has_work
+            or self._in_flight is not None
+            or (self.host_tier is not None and self.host_tier.busy)
+        )
 
     def metrics(self) -> dict[str, float]:
         """A snapshot of counters and gauges (what the server's ``/metrics`` exports)."""
@@ -644,10 +674,15 @@ class Engine:
     def step(self) -> list[StepOutput]:
         """Run one scheduling iteration and return the tokens it produced."""
         started = time.perf_counter()
+        if self._in_flight is not None:
+            return self._continue_async(started)
         plan = self.scheduler.schedule()
         self.idle = plan.empty
         if plan.empty:
             return []
+        if not plan.prefill and not plan.copies and self._async_eligible(plan.decode):
+            self._in_flight = self._launch_decode(plan.decode, None)
+            return self._continue_async(started)
         if plan.copies:
             self._run_copies(plan.copies)
         decode = plan.decode
@@ -878,6 +913,105 @@ class Engine:
         wanted = [*last_rows, *range(tokens, tokens + len(decode))]
         index = torch.tensor(wanted, device=self.device)
         rows.append(self.model.logits(hidden.index_select(0, index)))
+
+    # ---------------------------------------------------------- async decode
+
+    def _async_eligible(self, seqs: list[Sequence]) -> bool:
+        """Whether a decode step of ``seqs`` can run without synchronizing (``async_decode``)."""
+        graphs = self.decode_graphs
+        return (
+            self.config.async_decode
+            and graphs is not None
+            and graphs.supports_async
+            and self.drafter is None
+            and bool(seqs)
+            and len(seqs) <= graphs.max_batch_size
+            and all(seq.params.greedy for seq in seqs)
+        )
+
+    def _launch_decode(self, seqs: list[Sequence], token_ids: Tensor | None) -> _InFlight:
+        """Enqueue a graph decode step of ``seqs`` and the argmax of its logits.
+
+        ``token_ids`` (device) are the sequences' input tokens if the host does not have
+        them yet; otherwise each sequence's last token is used. Every sequence must have
+        a block for position ``num_cached``. Nothing waits for the GPU.
+        """
+        spans = []
+        for seq in seqs:
+            token = (0,) if token_ids is not None else seq.tokens[-1:]
+            spans.append(SequenceSpan(token, seq.num_cached, self.blocks.table(seq.seq_id)))
+            seq.num_cached += 1
+        self.stats.decode_tokens += len(spans)
+        logits = self.decode_graphs.run_async(spans, token_ids)
+        tokens = sampling.greedy(logits)
+        # Two pinned buffers, alternating: at most two steps are in flight, and the one
+        # that used a buffer before has been read when the buffer is reused.
+        if not self._token_staging:
+            size = self.decode_graphs.max_batch_size
+            self._token_staging = [
+                torch.empty(size, dtype=tokens.dtype, pin_memory=True) for _ in range(2)
+            ]
+        self._token_staging.reverse()
+        host = self._token_staging[0][: len(seqs)]
+        host.copy_(tokens, non_blocking=True)
+        done = torch.cuda.Event()
+        done.record()
+        return _InFlight(seqs, tokens, host, done)
+
+    def _successors(self, seqs: list[Sequence]) -> list[Sequence] | None:
+        """The sequences whose next decode step can be launched before ``seqs``' tokens are read.
+
+        ``None`` when the next step cannot be predicted to be a pure decode step: a
+        request is waiting (it may be admitted) or being restored, a running sequence is
+        not part of the step in flight, or a block for the next position would need an
+        eviction. Sequences that end by length with the step in flight are left out; one
+        that ends on a stop token is found only when its token is read, and its extra
+        row is discarded then.
+        """
+        scheduler = self.scheduler
+        if scheduler.waiting or scheduler.restoring or len(scheduler.running) != len(seqs):
+            return None
+        if any(seq.status is not SequenceStatus.RUNNING for seq in seqs):
+            return None
+        nxt = [seq for seq in seqs if seq.num_generated + 1 < seq.max_new_tokens]
+        if not nxt:
+            return None
+        blocks = self.blocks
+        missing = sum(blocks.blocks_missing(seq.seq_id, seq.num_cached + 1) for seq in nxt)
+        if missing > blocks.num_free:
+            return None
+        for seq in nxt:
+            blocks.ensure_capacity(seq.seq_id, seq.num_cached + 1)
+        return nxt
+
+    def _continue_async(self, started: float) -> list[StepOutput]:
+        """Launch the in-flight step's successor if possible, then read the step's tokens."""
+        self.idle = False
+        current = self._in_flight
+        successors = self._successors(current.seqs)
+        upcoming = None
+        if successors is not None:
+            token_ids = current.tokens
+            if len(successors) != len(current.seqs):
+                keep = {id(seq) for seq in successors}
+                rows = [i for i, seq in enumerate(current.seqs) if id(seq) in keep]
+                index = torch.tensor(rows, dtype=torch.int64, pin_memory=True)  # rare
+                token_ids = token_ids.index_select(0, index.to(self.device, non_blocking=True))
+            upcoming = self._launch_decode(successors, token_ids)
+        self._in_flight = upcoming
+        current.done.synchronize()
+        tokens = current.host.tolist()
+        live = []
+        for seq, token in zip(current.seqs, tokens, strict=True):
+            if seq.status is SequenceStatus.RUNNING:  # not aborted, not ended a step ago
+                seq.tokens.append(token)
+                live.append(seq)
+        self.scheduler.commit(live)
+        outputs = [self._emit(seq, seq.tokens[-1]) for seq in live]
+        self.stats.generated_tokens += len(outputs)
+        self.stats.steps += 1
+        self.stats.step_seconds += time.perf_counter() - started
+        return outputs
 
     # ------------------------------------------------------------ speculation
 

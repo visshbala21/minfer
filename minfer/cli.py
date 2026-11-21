@@ -71,6 +71,12 @@ def add_engine_arguments(parser: argparse.ArgumentParser) -> None:
         help="replay captured CUDA graphs for prefill passes that fit a bucket",
     )
     group.add_argument(
+        "--async-decode",
+        action=argparse.BooleanOptionalAction,
+        default=defaults.async_decode,
+        help="launch a decode step before the previous step's tokens are read back",
+    )
+    group.add_argument(
         "--unified-batches",
         action=argparse.BooleanOptionalAction,
         default=defaults.unified_batches,
@@ -162,6 +168,7 @@ def engine_config_from_args(args: argparse.Namespace) -> EngineConfig:
         decode_kernel=args.decode_kernel,
         cuda_graphs=args.cuda_graphs,
         prefill_graphs=args.prefill_graphs,
+        async_decode=args.async_decode,
         unified_batches=args.unified_batches,
         prefill_chunk_tokens=args.prefill_chunk_tokens,
         prefix_cache=args.prefix_cache,
