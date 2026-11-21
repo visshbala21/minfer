@@ -82,6 +82,9 @@ class EngineConfig:
         fused_kernels: Run the transformer blocks through merged projections and fused
             Triton kernels (:meth:`Qwen2Model.fuse`): about 4× fewer kernel launches per
             step. CUDA only; ignored for tensor-parallel shards and FP8 weights.
+        fused_kv_write: With ``fused_kernels``, the kernel that rotates queries and keys
+            also writes keys and values into the KV cache (three fewer launches per layer;
+            DESIGN.md M-031). Layers stored in FP8 keep the separate write.
         decode_kernel: Decode attention kernel of the FlashInfer backend: FlashInfer's own
             (its tensor-core path) or the Triton kernel in
             :mod:`minfer.attention.triton_decode`. ``"auto"`` is FlashInfer's: inside the
@@ -159,6 +162,7 @@ class EngineConfig:
     kv_cache_dtype: Literal["auto", "fp8"] = "auto"
     weight_dtype: Literal["auto", "fp8"] = "auto"
     fused_kernels: bool = True
+    fused_kv_write: bool = True
     decode_kernel: Literal["auto", "flashinfer", "triton"] = "auto"
     cuda_graphs: bool = True
     prefill_graphs: bool = True
@@ -265,7 +269,7 @@ class Engine:
         if config.weight_dtype == "fp8":
             quantize_linears(model)
         elif config.fused_kernels and self.device.type == "cuda" and model.shard is None:
-            model.fuse()
+            model.fuse(kv_write=config.fused_kv_write)
         calibration = self._calibrate_kv(calibration_prompts or ()) if fp8_kv else None
         self.kv_calibration = calibration
         sensitive = calibration.high_precision_layers if calibration else ()

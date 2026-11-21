@@ -9,6 +9,9 @@ collapse the three operator-heavy stages of a layer into one launch each:
   cast back, exactly as the reference module does) — two outputs, one kernel instead of 9.
 * ``rope_qkv``: split a merged q/k/v projection output and rotate q and k — one kernel
   instead of ~14.
+* ``rope_qkv_store``: the same, with the rotated keys and the values written straight into
+  the paged KV cache instead of into temporaries that two ``index_copy_`` kernels then
+  scatter — the write costs no launch of its own.
 * ``silu_mul``: split a merged gate/up projection output and compute ``silu(gate) * up``.
 
 Numerics relative to the reference modules, in bf16: the norm and the activation round
@@ -88,7 +91,10 @@ def _rope_qkv_kernel(
     q_ptr,
     k_ptr,
     v_ptr,
+    slots_ptr,
     stride_qkv,
+    VALUE_OFFSET: tl.constexpr,
+    SCATTER: tl.constexpr,
     NUM_HEADS: tl.constexpr,
     NUM_KV_HEADS: tl.constexpr,
     HEAD_DIM: tl.constexpr,
@@ -101,6 +107,14 @@ def _rope_qkv_kernel(
     source = qkv_ptr + row * stride_qkv + head * HEAD_DIM
     first = tl.load(source + half)
     second = tl.load(source + HALF + half)
+    # Where this row's key and value go: row ``row`` of the k and v outputs, or (SCATTER)
+    # the row's slot in the KV cache, whose k and v pointers are the same tensor.
+    if SCATTER:
+        key_row = tl.load(slots_ptr + row)
+        value_row = key_row + VALUE_OFFSET
+    else:
+        key_row = row.to(tl.int64)
+        value_row = key_row
     if head < NUM_HEADS + NUM_KV_HEADS:
         # Tables hold the frequency vector twice; one half is enough.
         cos = tl.load(cos_ptr + position * HEAD_DIM + half).to(tl.float32)
@@ -113,11 +127,11 @@ def _rope_qkv_kernel(
         if head < NUM_HEADS:
             target = q_ptr + (row * NUM_HEADS + head) * HEAD_DIM
         else:
-            target = k_ptr + (row * NUM_KV_HEADS + head - NUM_HEADS) * HEAD_DIM
+            target = k_ptr + (key_row * NUM_KV_HEADS + head - NUM_HEADS) * HEAD_DIM
         tl.store(target + half, out_first)
         tl.store(target + HALF + half, out_second)
     else:
-        target = v_ptr + (row * NUM_KV_HEADS + head - NUM_HEADS - NUM_KV_HEADS) * HEAD_DIM
+        target = v_ptr + (value_row * NUM_KV_HEADS + head - NUM_HEADS - NUM_KV_HEADS) * HEAD_DIM
         tl.store(target + half, first)
         tl.store(target + HALF + half, second)
 
@@ -154,13 +168,68 @@ def rope_qkv(
         q,
         k,
         v,
+        positions,  # unused without SCATTER
         qkv.stride(0),
+        VALUE_OFFSET=0,
+        SCATTER=False,
         NUM_HEADS=num_heads,
         NUM_KV_HEADS=num_kv_heads,
         HEAD_DIM=head_dim,
         HALF=head_dim // 2,
     )
     return q, k, v
+
+
+def rope_qkv_store(
+    qkv: Tensor,
+    positions: Tensor,
+    cos: Tensor,
+    sin: Tensor,
+    num_heads: int,
+    kv_flat: Tensor,
+    slots: Tensor,
+    value_offset: int,
+) -> Tensor:
+    """:func:`rope_qkv` with the KV-cache write fused in; returns the rotated q only.
+
+    Row ``i``'s rotated key is stored at ``kv_flat[slots[i]]`` and its value at
+    ``kv_flat[slots[i] + value_offset]``. Rows that share a slot (padding rows of a
+    captured graph) race, as they do in ``index_copy_``; nothing reads what they write.
+
+    Args:
+        qkv: Output of the merged q/k/v projection.
+        positions: ``[n]`` int64 absolute positions.
+        cos: ``[max_positions, d]`` RoPE cosine table in the model dtype.
+        sin: ``[max_positions, d]`` RoPE sine table.
+        num_heads: Query heads.
+        kv_flat: A layer of the paged cache as ``[slots, num_kv_heads, d]``, in the dtype
+            of ``qkv``.
+        slots: ``[n]`` int64 key slots.
+        value_offset: Distance in slots from a token's key to its value.
+    """
+    rows = qkv.shape[0]
+    _, num_kv_heads, head_dim = kv_flat.shape
+    if kv_flat.dtype != qkv.dtype or not kv_flat.is_contiguous():
+        raise ValueError("the fused KV write needs a contiguous cache in the model dtype")
+    q = torch.empty((rows, num_heads, head_dim), dtype=qkv.dtype, device=qkv.device)
+    _rope_qkv_kernel[(rows, num_heads + 2 * num_kv_heads)](
+        qkv,
+        positions,
+        cos,
+        sin,
+        q,
+        kv_flat,
+        kv_flat,
+        slots,
+        qkv.stride(0),
+        VALUE_OFFSET=value_offset,
+        SCATTER=True,
+        NUM_HEADS=num_heads,
+        NUM_KV_HEADS=num_kv_heads,
+        HEAD_DIM=head_dim,
+        HALF=head_dim // 2,
+    )
+    return q
 
 
 @triton.jit

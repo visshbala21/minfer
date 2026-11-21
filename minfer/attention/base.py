@@ -30,3 +30,26 @@ class AttentionContext(Protocol):
             Attention output, ``[n, num_heads, head_dim]``.
         """
         ...
+
+
+class StoringAttentionContext(AttentionContext, Protocol):
+    """A context over a KV cache that the caller may write into directly.
+
+    The fused execution path stores keys and values from the kernel that rotates them
+    (:func:`minfer.model.fused.rope_qkv_store`) and then calls :meth:`attend_stored`,
+    instead of handing ``k`` and ``v`` to :meth:`attend` to be written there.
+    """
+
+    def kv_destination(self, layer: int) -> tuple[Tensor, Tensor, int] | None:
+        """Where this pass's keys and values of ``layer`` belong, if the caller may write.
+
+        Returns ``(kv_flat, slots, value_offset)``: the layer's cache as
+        ``[slots, num_kv_heads, head_dim]``, each token's key slot (``[n]`` int64), and
+        the distance from a key slot to its value slot. ``None`` if the layer needs
+        :meth:`attend` to do the write (FP8 storage).
+        """
+        ...
+
+    def attend_stored(self, layer: int, q: Tensor) -> Tensor:
+        """:meth:`attend` for a pass whose keys and values are already in the cache."""
+        ...

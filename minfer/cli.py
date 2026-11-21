@@ -47,6 +47,12 @@ def add_engine_arguments(parser: argparse.ArgumentParser) -> None:
         help="merged projections and fused norm/RoPE/activation kernels",
     )
     group.add_argument(
+        "--fused-kv-write",
+        action=argparse.BooleanOptionalAction,
+        default=defaults.fused_kv_write,
+        help="write keys and values into the KV cache from the fused RoPE kernel",
+    )
+    group.add_argument(
         "--decode-kernel",
         choices=["auto", "flashinfer", "triton"],
         default=defaults.decode_kernel,
@@ -152,6 +158,7 @@ def engine_config_from_args(args: argparse.Namespace) -> EngineConfig:
         kv_cache_dtype=args.kv_cache_dtype,
         weight_dtype=args.weight_dtype,
         fused_kernels=args.fused_kernels,
+        fused_kv_write=args.fused_kv_write,
         decode_kernel=args.decode_kernel,
         cuda_graphs=args.cuda_graphs,
         prefill_graphs=args.prefill_graphs,

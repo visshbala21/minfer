@@ -38,6 +38,14 @@ Wrapper = (
 )
 
 
+def _destination(
+    store: PagedKVStore, layer: int, slots: Tensor
+) -> tuple[Tensor, Tensor, int] | None:
+    """A pass's write target in ``store`` (see ``StoringAttentionContext.kv_destination``)."""
+    target = store.write_target(layer)
+    return None if target is None else (target[0], slots, target[1])
+
+
 class KernelContext:
     """Writes the pass's K/V into the store, then runs a planned FlashInfer kernel.
 
@@ -54,8 +62,16 @@ class KernelContext:
 
     def attend(self, layer: int, q: Tensor, k: Tensor, v: Tensor) -> Tensor:
         """See :meth:`minfer.attention.base.AttentionContext.attend`."""
+        self.store.write(layer, self.slots, k, v)
+        return self.attend_stored(layer, q)
+
+    def kv_destination(self, layer: int) -> tuple[Tensor, Tensor, int] | None:
+        """See :meth:`minfer.attention.base.StoringAttentionContext.kv_destination`."""
+        return _destination(self.store, layer, self.slots)
+
+    def attend_stored(self, layer: int, q: Tensor) -> Tensor:
+        """See :meth:`minfer.attention.base.StoringAttentionContext.attend_stored`."""
         store = self.store
-        store.write(layer, self.slots, k, v)
         wrapper = self.layer_wrappers[layer]
         if not store.layer_is_fp8[layer]:
             return wrapper.run(q, store.layer(layer))
@@ -88,9 +104,17 @@ class TritonDecodeContext:
 
     def attend(self, layer: int, q: Tensor, k: Tensor, v: Tensor) -> Tensor:
         """See :meth:`minfer.attention.base.AttentionContext.attend`."""
+        self.store.write(layer, self.slots, k, v)
+        return self.attend_stored(layer, q)
+
+    def kv_destination(self, layer: int) -> tuple[Tensor, Tensor, int] | None:
+        """See :meth:`minfer.attention.base.StoringAttentionContext.kv_destination`."""
+        return _destination(self.store, layer, self.slots)
+
+    def attend_stored(self, layer: int, q: Tensor) -> Tensor:
+        """See :meth:`minfer.attention.base.StoringAttentionContext.attend_stored`."""
         from minfer.attention.triton_decode import paged_decode_attention
 
-        self.store.write(layer, self.slots, k, v)
         return paged_decode_attention(q, self.store.layer(layer), self.block_table, self.seq_lens)
 
 

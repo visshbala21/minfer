@@ -507,6 +507,51 @@ def test_fused_model_matches_the_unfused_model(tokenizer):
         del model
 
 
+def test_fused_kv_write_stores_what_the_separate_write_stores():
+    """``rope_qkv_store`` against ``rope_qkv`` followed by ``PagedKVStore.write``: same bits."""
+    from minfer.cache.kv_store import PagedKVStore
+    from minfer.model import fused
+
+    heads, kv_heads, dim, rows, size = 14, 2, 64, 53, 16
+    generator = torch.Generator().manual_seed(1)
+    width = (heads + 2 * kv_heads) * dim
+    qkv = torch.randn(rows, width, generator=generator).to("cuda", torch.bfloat16)
+    positions = torch.randint(0, 900, (rows,), generator=generator).to("cuda")
+    angles = torch.randn(1000, dim, generator=generator)
+    cos, sin = angles.cos().to("cuda", torch.bfloat16), angles.sin().to("cuda", torch.bfloat16)
+    # Distinct slots anywhere in the pool, including the last block.
+    blocks = 40
+    tokens = torch.randperm(blocks * size, generator=generator)[:rows]
+    slots = ((tokens // size) * (2 * size) + tokens % size).to("cuda")
+
+    stores = [
+        PagedKVStore(1, blocks, size, kv_heads, dim, "cuda", torch.bfloat16) for _ in range(2)
+    ]
+    q, k, v = fused.rope_qkv(qkv, positions, cos, sin, heads, kv_heads, dim)
+    stores[0].write(0, slots, k, v)
+    flat, offset = stores[1].write_target(0)
+    q_stored = fused.rope_qkv_store(qkv, positions, cos, sin, heads, flat, slots, offset)
+    assert torch.equal(q_stored, q)
+    assert torch.equal(stores[1].layer(0), stores[0].layer(0))
+    assert stores[0].layer(0).count_nonzero().item() > 0
+
+
+def test_fused_kv_write_does_not_change_outputs(tokenizer):
+    """The engine with and without the fused write: same tokens, and it is really used."""
+    prompts = chat_prompts(tokenizer, 12)
+    params = SamplingParams(max_tokens=24)
+    outputs = {}
+    for fused_write in (False, True):
+        engine = Engine.from_pretrained(
+            PRIMARY_MODEL, EngineConfig(num_blocks=4096, fused_kv_write=fused_write)
+        )
+        assert engine.model.fused_kv_write is fused_write
+        outputs[fused_write] = [engine.generate([prompt], params)[0] for prompt in prompts]
+        del engine
+        torch.cuda.empty_cache()
+    assert outputs[True] == outputs[False]
+
+
 # ------------------------------------------------------------ Phase 11: prefill graphs
 
 

@@ -214,6 +214,7 @@ class Qwen2Model(nn.Module):
         if config.tie_word_embeddings:
             self.lm_head.weight = self.embed_tokens.weight
         self.fused = False
+        self.fused_kv_write = False
         self.requires_grad_(False)
 
     @property
@@ -226,7 +227,7 @@ class Qwen2Model(nn.Module):
         """Floating-point dtype of the weights."""
         return self.embed_tokens.weight.dtype
 
-    def fuse(self) -> None:
+    def fuse(self, kv_write: bool = True) -> None:
         """Switch to the fused execution path (CUDA only; irreversible).
 
         Merges each layer's q/k/v projections into one matmul and its gate/up projections
@@ -234,7 +235,13 @@ class Qwen2Model(nn.Module):
         :mod:`minfer.model.fused`. Per layer that is 8 kernel launches plus attention,
         instead of about 45 — which is what a single-token decode step is bound by. The
         function computed is the same; the separate projection weights are released.
+
+        With ``kv_write`` the kernel that rotates q and k also stores k and v in the KV
+        cache, when the pass's attention context allows it
+        (:class:`minfer.attention.base.StoringAttentionContext`): three launches fewer per
+        layer.
         """
+        self.fused_kv_write = kv_write
         if self.fused:
             return
         if self.shard is not None:
@@ -265,17 +272,18 @@ class Qwen2Model(nn.Module):
             stream, None, layers[0].input_layernorm.weight, config.rms_norm_eps
         )
         last = len(layers) - 1
+        stores = self.fused_kv_write and hasattr(attn, "kv_destination")
         for index, layer in enumerate(layers):
-            q, k, v = fused.rope_qkv(
-                layer.qkv_proj(normed),
-                positions,
-                cos,
-                sin,
-                self.num_heads,
-                self.num_kv_heads,
-                config.head_dim,
-            )
-            attended = attn.attend(index, q, k, v)
+            qkv = layer.qkv_proj(normed)
+            destination = attn.kv_destination(index) if stores else None
+            if destination is None:
+                q, k, v = fused.rope_qkv(
+                    qkv, positions, cos, sin, self.num_heads, self.num_kv_heads, config.head_dim
+                )
+                attended = attn.attend(index, q, k, v)
+            else:
+                q = fused.rope_qkv_store(qkv, positions, cos, sin, self.num_heads, *destination)
+                attended = attn.attend_stored(index, q)
             projected = layer.self_attn.o_proj(attended.reshape(n, -1))
             stream, normed = fused.add_rms_norm(
                 stream, projected, layer.post_attention_layernorm.weight, config.rms_norm_eps

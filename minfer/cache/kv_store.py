@@ -127,6 +127,17 @@ class PagedKVStore:
         flat.index_copy_(0, slots, k)
         flat.index_copy_(0, slots + self.block_size, v)
 
+    def write_target(self, layer: int) -> tuple[Tensor, int] | None:
+        """Where a kernel can store layer ``layer``'s keys and values itself.
+
+        Returns the layer as ``[slots, num_kv_heads, head_dim]`` and the distance from a
+        token's key slot to its value slot, or ``None`` for an FP8 layer (whose values must
+        be scaled and cast on the way in: use :meth:`write`).
+        """
+        if self.layer_is_fp8[layer]:
+            return None
+        return self._flat[layer], self.block_size
+
     def copy_rotated(self, source: Tensor, target: Tensor, cos: Tensor, sin: Tensor) -> None:
         """Copy keys and values between slots in every layer, rotating the keys.
 
