@@ -1,20 +1,147 @@
 # minfer
 
-**minfer is a from-scratch LLM inference engine built for multi-turn agent workloads.**
-Agents resend almost everything they have already sent: the same system prompt and tool
-schemas on every request, and the whole conversation so far on every turn. minfer is
-organized around that fact — a paged KV cache whose blocks are shared between requests
-through a radix tree keyed on token prefixes, a scheduler that admits the requests whose
-prefixes are already cached, and continuous batching with CUDA-graph execution around it.
-It is a pure-PyTorch implementation of Qwen2.5 with its own Triton kernels (paged decode
-attention, fused norm/RoPE/activation) next to FlashInfer's, an OpenAI-compatible server,
-and a benchmark suite that compares it with vLLM and SGLang on identical traces. It is
-not a wrapper around another serving engine.
+**minfer is a from-scratch LLM inference engine, used here as a controlled testbed: it
+measures, on real coding-agent traces, what each agent-serving technique contributes alone
+and in combination.** Agents resend almost everything they have already sent — the same
+system prompt and tool schemas on every request, the whole conversation on every turn —
+and between turns they wait for tools while their history sits in GPU memory. The
+techniques that exploit this have each been published by others
+([related work](#related-work-and-what-is-and-is-not-new-here)); none is new here. What
+this repository adds is all of them in one engine where each is a flag — a radix-tree
+prefix cache over paged KV, session-aware retention, a host-memory KV tier,
+position-independent KV reuse, prompt-lookup speculative decoding — measured on the same
+traces, next to vLLM and SGLang in their best configurations. The engine itself is a
+pure-PyTorch implementation of Qwen2.5 with its own Triton kernels next to FlashInfer's,
+continuous batching with CUDA-graph execution, and an OpenAI-compatible server; it is not
+a wrapper around another serving engine.
 
 > Phase-by-phase status with each acceptance result: [PROGRESS.md](PROGRESS.md).
 > Every design decision, bug, root cause and measurement: [DESIGN.md](DESIGN.md).
 
 ## Headline result
+
+**On real coding-agent traces at 7B, once concurrent sessions exceed GPU memory, one
+technique decides the outcome — a host-memory tier for the KV cache — and vLLM with its own
+offloading is the fastest system measured. minfer with every exact technique enabled
+recomputes the least and is still about 20% behind vLLM in throughput.**
+
+Each engine in its best measured configuration, 64–128 concurrent sessions (one H100 holds
+the KV of about 55–65):
+
+<!-- BEGIN full-stack -->
+| concurrent sessions | metric | minfer: prefix cache + session-aware retention + host tier | vLLM + native KV offloading | SGLang + hierarchical cache |
+|---|---|---|---|---|
+| 64 | TTFT p50 (ms) | 128 | 174 | **126** |
+|  | TTFT p99 (ms) | 478 | **392** | 528 |
+|  | prefill tokens computed per call | **962** | 1,002 | 1,053 |
+|  | TPOT p50 (ms) | 25.7 | **16.5** | 16.9 |
+|  | output tok/s | 604 | 717 | **729** |
+|  | calls completed in 240 s | 1,101 | **1,272** | 1,264 |
+|  | failed requests | 0 | 0 | 0 |
+| 96 | TTFT p50 (ms) | 266 | 206 | **153** |
+|  | TTFT p99 (ms) | 3,913 | **1,091** | 1,409 |
+|  | prefill tokens computed per call | **985** | 1,545 | 1,702 |
+|  | TPOT p50 (ms) | 46.8 | **27.2** | 29.7 |
+|  | output tok/s | 641 | **809** | 772 |
+|  | calls completed in 240 s | 1,194 | **1,494** | 1,446 |
+|  | failed requests | 0 | 0 | 0 |
+| 128 | TTFT p50 (ms) | 3,501 | **704** | 3,071 |
+|  | TTFT p99 (ms) | 14,640 | **7,278** | 12,147 |
+|  | prefill tokens computed per call | **1,655** | 2,472 | 2,486 |
+|  | TPOT p50 (ms) | 55.0 | **45.4** | 45.8 |
+|  | output tok/s | 605 | **765** | 694 |
+|  | calls completed in 240 s | 1,183 | **1,484** | 1,356 |
+|  | failed requests | 0 | 0 | 0 |
+
+Real coding-agent trace, Qwen2.5-7B-Instruct, one H100, 96 GB of host memory for each engine's KV tier. No approximate technique is in any of these configurations, so output quality is that of exact bf16 inference in all three.
+<!-- END full-stack -->
+
+Where minfer's numbers come from — every valid combination of the five techniques at 96
+sessions ([`bench/composition.py`](bench/composition.py)):
+
+![What each technique adds](bench/plots/composition_7b.png)
+
+<!-- BEGIN composition -->
+| techniques | calls completed | prefill tokens computed per call | prompt tokens not computed | TTFT p50 / p99 (ms) | TPOT p50 (ms) | out tok/s |
+|---|---|---|---|---|---|---|
+| none | 513 | 13,281 | 0.0% | 23088 / 30311 | 74.8 | 228 |
+| prefix cache | 787 | 6,850 | 55.7% | 866 / 34093 | 63.0 | 391 |
+| prompt-lookup speculation | 428 | 12,614 | 0.0% | 32370 / 43931 | 84.6 | 166 |
+| prefix cache + session-aware retention | 795 | 6,260 | 59.5% | 1258 / 28920 | 71.0 | 388 |
+| prefix cache + position-independent reuse | 789 | 6,414 | 58.5% | 811 / 32312 | 63.8 | 387 |
+| prefix cache + prompt-lookup speculation | 572 | 5,723 | 59.9% | 2047 / 46053 | 132.0 | 272 |
+| prefix cache + session-aware retention + host-memory tier | 1228 | 1,002 | 93.9% | 257 / 2906 | 45.5 | 661 |
+| prefix cache + session-aware retention + position-independent reuse | 792 | 5,967 | 61.4% | 978 / 28246 | 69.1 | 397 |
+| prefix cache + session-aware retention + prompt-lookup speculation | 595 | 5,120 | 64.4% | 2018 / 32444 | 134.3 | 278 |
+| prefix cache + position-independent reuse + prompt-lookup speculation | 575 | 5,262 | 63.3% | 1521 / 41748 | 134.9 | 264 |
+| prefix cache + session-aware retention + host-memory tier + prompt-lookup speculation | 699 | 1,027 | 93.0% | 538 / 11194 | 131.3 | 350 |
+| prefix cache + session-aware retention + position-independent reuse + prompt-lookup speculation | 589 | 4,877 | 66.2% | 2569 / 34261 | 133.9 | 280 |
+| prefix cache + session-aware retention + host-memory tier + position-independent reuse | 1169 | 942 | 94.3% | 289 / 4563 | 48.1 | 630 |
+| prefix cache + session-aware retention + host-memory tier + position-independent reuse + prompt-lookup speculation | 694 | 997 | 93.2% | 635 / 11104 | 133.7 | 352 |
+
+96 concurrent sessions of the real trace, 240 s measured after 120 s of warm-up, whole GPU.
+<!-- END composition -->
+
+What the composition shows:
+
+- **The prefix cache is necessary and far from sufficient under pressure.** Without it a
+  call prefills 13k tokens and median time-to-first-token is 23 s. With it, at 96 sessions
+  the cache thrashes: 56% of prompt tokens are served from cache where an unlimited cache
+  would serve 94%.
+- **The host-memory tier is the technique that matters**: prefill per call falls from
+  6,260 to 1,002 tokens (the 94% ceiling), throughput rises 1.7×, median TTFT falls 5×.
+  Copying a session's KV back from host memory is 18–29× cheaper than recomputing it.
+- **Session-aware retention is a small gain** (9% fewer prefill tokens than LRU, a lower
+  TTFT tail) that does not prevent the collapse by itself; the host tier needs its
+  eviction order, so the two are measured together.
+- **Position-independent reuse is nearly irrelevant on this trace** (6% fewer prefill
+  tokens, no change in latency or throughput) because only 0.8% of the trace's tokens are
+  shifted duplicates, and it costs output fidelity (about 3% of next-token predictions
+  change).
+- **Prompt-lookup speculation hurts at this load**: it doubles per-token latency and costs
+  30–47% of throughput in every combination. It lowers per-token latency by 8–14% on a
+  lightly loaded server ([below](#component-measurements)); a saturated one has no spare
+  rows to verify drafts with.
+- **Interactions.** Techniques that save prefill work do not add up — retention and reuse
+  together save less than the sum of each, since both recover some of the same evicted
+  history — and speculation competes with all of them for the compute their savings free.
+
+<!-- BEGIN interactions -->
+| pair (on top of what both need) | metric | without either | first alone | second alone | both | both − sum of each |
+|---|---|---|---|---|---|---|
+| session-aware retention × position-independent reuse | prefill tokens / call | 6,850 | -590 | -435 | -883 | +143 |
+| session-aware retention × position-independent reuse | TTFT p50 (ms) | 866 | +392 | -56 | +112 | -224 |
+| session-aware retention × position-independent reuse | TPOT p50 (ms) | 62.96 | +8.02 | +0.85 | +6.10 | -2.77 |
+| session-aware retention × prompt-lookup speculation | prefill tokens / call | 6,850 | -590 | -1,126 | -1,730 | -13 |
+| session-aware retention × prompt-lookup speculation | TTFT p50 (ms) | 866 | +392 | +1181 | +1152 | -421 |
+| session-aware retention × prompt-lookup speculation | TPOT p50 (ms) | 62.96 | +8.02 | +69.07 | +71.33 | -5.75 |
+| position-independent reuse × prompt-lookup speculation | prefill tokens / call | 6,850 | -435 | -1,126 | -1,587 | -26 |
+| position-independent reuse × prompt-lookup speculation | TTFT p50 (ms) | 866 | -56 | +1181 | +655 | -471 |
+| position-independent reuse × prompt-lookup speculation | TPOT p50 (ms) | 62.96 | +0.85 | +69.07 | +71.94 | +2.02 |
+| host-memory tier × position-independent reuse | prefill tokens / call | 6,260 | -5,258 | -292 | -5,318 | +233 |
+| host-memory tier × position-independent reuse | TTFT p50 (ms) | 1258 | -1001 | -279 | -968 | +312 |
+| host-memory tier × position-independent reuse | TPOT p50 (ms) | 70.98 | -25.51 | -1.92 | -22.86 | +4.56 |
+| host-memory tier × prompt-lookup speculation | prefill tokens / call | 6,260 | -5,258 | -1,140 | -5,233 | +1,165 |
+| host-memory tier × prompt-lookup speculation | TTFT p50 (ms) | 1258 | -1001 | +760 | -719 | -479 |
+| host-memory tier × prompt-lookup speculation | TPOT p50 (ms) | 70.98 | -25.51 | +63.31 | +60.34 | +22.54 |
+<!-- END interactions -->
+
+Single runs; repeating a configuration moved its throughput and hit rate by about 1%
+(the prefix-only and the retention + host-tier configurations were each measured twice,
+in this table and in the [pressure sweep](#real-coding-agent-traces-under-memory-pressure)).
+Per-call figures in collapsing configurations also depend on which calls complete, so
+differences of a few percent between them are not findings.
+
+**Why minfer is behind vLLM with everything on.** Not KV management — it recomputes
+33–42% fewer prefill tokens than either baseline at 96 and 128 sessions — but its decode
+path: per-token latency is 1.56× vLLM's at 64 sessions where both are at the hit-rate
+ceiling ([details](#where-minfer-loses-to-vllm-and-sglang-and-why)).
+
+## Engine comparison on a synthetic agent workload
+
+The same three engines on a generated agent workload that fits in GPU memory
+(`bench/agent_workload.py`), where the differences are in the engines' request paths
+rather than in KV management.
 
 <!-- BEGIN headline -->
 On the multi-turn agent workload at 1–16 req/s (Qwen2.5-7B-Instruct, bf16, one H100, greedy, identical traces):

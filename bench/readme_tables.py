@@ -611,6 +611,57 @@ def pressure_table(name: str = "pressure_7b.json") -> str:
     return _table([*header, "out tok/s", "failed"], rows)
 
 
+def full_stack_table() -> str:
+    """Each engine in its best measured configuration under memory pressure."""
+    data = _load("pressure_7b.json")
+    if not data:
+        return MISSING
+    best = {
+        "minfer": "minfer/session_host",
+        "vLLM": "vllm/offload",
+        "SGLang": "sglang/hicache",
+    }
+    configs = data["configs"]
+    if any(name not in configs for name in best.values()):
+        return MISSING
+    levels = [c for c in ("64", "96", "128") if all(c in configs[n]["runs"] for n in best.values())]
+    metrics: list[tuple[str, Callable[[dict], float], str, bool]] = [
+        ("TTFT p50 (ms)", lambda r: r["ttft_ms"]["p50"], ",.0f", True),
+        ("TTFT p99 (ms)", lambda r: r["ttft_ms"]["p99"], ",.0f", True),
+        (
+            "prefill tokens computed per call",
+            lambda r: r["prefill_tokens_computed"] / max(1, r["completed"]),
+            ",.0f",
+            True,
+        ),
+        ("TPOT p50 (ms)", lambda r: r["tpot_ms"]["p50"], ".1f", True),
+        ("output tok/s", lambda r: r["output_tokens_per_second"], ",.0f", False),
+        ("calls completed in 240 s", lambda r: r["completed"], ",d", False),
+        ("failed requests", lambda r: r["failed"], "d", True),
+    ]
+    rows = []
+    for level in levels:
+        for index, (label, get, fmt, lower) in enumerate(metrics):
+            values = [get(configs[name]["runs"][level]) for name in best.values()]
+            texts = [format(value, fmt) for value in values]
+            winner = _best(values, lower)
+            if winner is not None and texts.count(texts[winner]) == 1:
+                texts[winner] = f"**{texts[winner]}**"
+            rows.append([level if index == 0 else "", label, *texts])
+    header = ["concurrent sessions", "metric"]
+    header += [
+        "minfer: prefix cache + session-aware retention + host tier",
+        "vLLM + native KV offloading",
+        "SGLang + hierarchical cache",
+    ]
+    footer = (
+        "\n\nReal coding-agent trace, Qwen2.5-7B-Instruct, one H100, 96 GB of host memory for "
+        "each engine's KV tier. No approximate technique is in any of these configurations, so "
+        "output quality is that of exact bf16 inference in all three."
+    )
+    return _table(header, rows) + footer
+
+
 def host_tier_cost_table() -> str:
     """Restoring KV from host memory vs recomputing it."""
     data = _load("host_tier_cost_7b.json")
@@ -816,6 +867,7 @@ SECTIONS: dict[str, Callable[[], str]] = {
     "fp8": fp8_table,
     "triton": triton_table,
     "fairness-audit": fairness_audit_table,
+    "full-stack": full_stack_table,
     "real-trace": real_trace_table,
     "pressure": pressure_table,
     "host-tier-cost": host_tier_cost_table,
