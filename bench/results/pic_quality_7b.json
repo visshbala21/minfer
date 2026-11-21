@@ -1,0 +1,93 @@
+{
+ "model": "Qwen/Qwen2.5-7B-Instruct",
+ "trace_sha256": "8e636a795dbcaf52f16525edc64d1ea9b1940bef6167ad96fd5ef769ab2d5e6c",
+ "warm_sessions": 16,
+ "measured_calls": 48,
+ "reply_tokens_compared_per_call": 128,
+ "exact": {
+  "prompt_tokens_computed": 68652,
+  "computed_fraction": 0.937100737100737,
+  "top1_is_recorded_token": 0.7104082068818124,
+  "mean_recorded_token_logprob": -1.7123480118296803
+ },
+ "variants": [
+  {
+   "variant": "exact, prefill in 1,024-token chunks (noise floor)",
+   "prompt_tokens": 73260,
+   "prompt_tokens_computed": 68652,
+   "computed_fraction": 0.937100737100737,
+   "positions": 4679,
+   "top1_same_as_exact": 0.9970079076725796,
+   "top1_is_recorded_token": 0.7093396024791622,
+   "mean_kl": 0.0002743449435513813,
+   "max_kl": 0.015672113746404648,
+   "mean_recorded_token_logprob": -1.7129996573474067,
+   "calls_with_any_top1_change": 12
+  },
+  {
+   "variant": "reuse, recompute 0% of each run",
+   "prompt_tokens": 73260,
+   "prompt_tokens_computed": 20268,
+   "computed_fraction": 0.27665847665847665,
+   "positions": 4679,
+   "top1_same_as_exact": 0.969224193203676,
+   "top1_is_recorded_token": 0.7095533233596922,
+   "mean_kl": 0.014287118614675347,
+   "max_kl": 1.0145316123962402,
+   "mean_recorded_token_logprob": -1.7476073556742269,
+   "calls_with_any_top1_change": 44
+  },
+  {
+   "variant": "reuse, recompute 5% of each run",
+   "prompt_tokens": 73260,
+   "prompt_tokens_computed": 22716,
+   "computed_fraction": 0.3100737100737101,
+   "positions": 4679,
+   "top1_same_as_exact": 0.969010472323146,
+   "top1_is_recorded_token": 0.7095533233596922,
+   "mean_kl": 0.012200363771761043,
+   "max_kl": 0.7329511642456055,
+   "mean_recorded_token_logprob": -1.7402031432361933,
+   "calls_with_any_top1_change": 45
+  },
+  {
+   "variant": "reuse, recompute 15% of each run",
+   "prompt_tokens": 73260,
+   "prompt_tokens_computed": 27564,
+   "computed_fraction": 0.37624897624897624,
+   "positions": 4679,
+   "top1_same_as_exact": 0.9711476811284463,
+   "top1_is_recorded_token": 0.7095533233596922,
+   "mean_kl": 0.009839584829206521,
+   "max_kl": 0.8131629228591919,
+   "mean_recorded_token_logprob": -1.729164402361073,
+   "calls_with_any_top1_change": 44
+  },
+  {
+   "variant": "reuse, recompute 30% of each run",
+   "prompt_tokens": 73260,
+   "prompt_tokens_computed": 34812,
+   "computed_fraction": 0.4751842751842752,
+   "positions": 4679,
+   "top1_same_as_exact": 0.9743534943363966,
+   "top1_is_recorded_token": 0.7095533233596922,
+   "mean_kl": 0.008293996263095573,
+   "max_kl": 1.103750467300415,
+   "mean_recorded_token_logprob": -1.7286505685909408,
+   "calls_with_any_top1_change": 44
+  },
+  {
+   "variant": "reuse, recompute 50% of each run",
+   "prompt_tokens": 73260,
+   "prompt_tokens_computed": 44460,
+   "computed_fraction": 0.6068796068796068,
+   "positions": 4679,
+   "top1_same_as_exact": 0.9809788416328276,
+   "top1_is_recorded_token": 0.707843556315452,
+   "mean_kl": 0.005174440224472848,
+   "max_kl": 0.46637576818466187,
+   "mean_recorded_token_logprob": -1.725803888055549,
+   "calls_with_any_top1_change": 38
+  }
+ ]
+}
