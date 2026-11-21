@@ -583,10 +583,12 @@ def pressure_table(name: str = "pressure_7b.json") -> str:
     if not data:
         return MISSING
     levels = sorted({int(c) for entry in data["configs"].values() for c in entry["runs"]})
+    engines = ("minfer", "vllm", "sglang")
+    entries = sorted(data["configs"].values(), key=lambda e: engines.index(e["engine"]))
     rows = []
     for level in levels:
         first = True
-        for entry in data["configs"].values():
+        for entry in entries:
             run = entry["runs"].get(str(level))
             if run is None:
                 continue
@@ -619,9 +621,8 @@ def full_stack_table() -> str:
     if not data:
         return MISSING
     configs = data["configs"]
-    newest = "minfer/session_host_fi"
     best = {
-        "minfer": newest if newest in configs else "minfer/session_host",
+        "minfer": "minfer/session_host",
         "vLLM": "vllm/offload",
         "SGLang": "sglang/hicache",
     }

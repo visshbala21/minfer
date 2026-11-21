@@ -273,7 +273,6 @@ PRESSURE_STYLE = {
     "minfer/lru": ("#9ec5f0", "minfer, LRU"),
     "minfer/session": ("#2a78d6", "minfer, session-aware"),
     "minfer/session_host": ("#0b3d7a", "minfer, session-aware + host tier"),
-    "minfer/session_host_fi": ("#7b3fb5", "minfer, + host tier, FlashInfer decode"),
     "vllm/default": ("#eb6834", "vLLM"),
     "vllm/offload": ("#8f3410", "vLLM + KV offloading"),
     "sglang/default": ("#1baf7a", "SGLang"),
@@ -298,7 +297,8 @@ def plot_pressure(name: str = "pressure_7b") -> None:
     fig, axes = plt.subplots(1, 4, figsize=(17, 5.2))
     ring = {"markeredgecolor": SURFACE, "markeredgewidth": 1.5}
     for ax, (metric, label) in zip(axes, panels, strict=True):
-        for config, entry in data["configs"].items():
+        for config in sorted(data["configs"], key=list(PRESSURE_STYLE).index):
+            entry = data["configs"][config]
             runs = {int(c): r for c, r in entry["runs"].items() if "error" not in r}
             xs = sorted(runs)
             ys = [_agent_value(runs[x], metric) for x in xs]
