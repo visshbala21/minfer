@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import time
 
 import pytest
 from tiny import dense_greedy, make_tiny_engine, make_tiny_model
@@ -32,6 +33,43 @@ async def collect(engine: AsyncEngine, prompt: list[int], **params) -> tuple[lis
 
 
 PROMPTS = [[5 + i, 40 + 2 * i, 77, 120 - i, 9 + 3 * i] * (1 + i % 3) for i in range(12)]
+
+
+def test_commands_sent_while_results_are_backed_up_do_not_deadlock():
+    """A front end that falls behind on results must still be able to submit requests.
+
+    The engine blocks writing results once the 64 KB pipe is full. When the event loop
+    wrote commands itself, a command larger than what was left of the *command* pipe then
+    blocked the loop too — and a blocked loop reads no results: both ends waited on each
+    other forever (DESIGN.md B-007, found by 1,000 simultaneous requests at 7B).
+    """
+    prompts = [[4 + (i * 7 + j) % 190 for j in range(8)] for i in range(164)]
+    # Stop tokens outside the vocabulary: they never fire, they only make each command
+    # several kilobytes, so the second wave is far more than a pipe holds.
+    bulk = tuple(range(1000, 3000))
+
+    async def scenario():
+        engine = await started(num_blocks=4000)
+        try:
+            first = [
+                asyncio.ensure_future(collect(engine, p, max_tokens=200, ignore_eos=True))
+                for p in prompts[:64]
+            ]
+            await asyncio.sleep(0.2)
+            # The loop is busy elsewhere for 8 s. The first wave produces ~130 KB of results at
+            # ~60 ms a step, so well before that the results pipe is full and the engine blocked.
+            time.sleep(8.0)
+            second = [
+                collect(engine, p, max_tokens=4, ignore_eos=True, stop_token_ids=bulk)
+                for p in prompts[64:]
+            ]
+            return await asyncio.wait_for(asyncio.gather(*first, *second), timeout=120)
+        finally:
+            await engine.stop()
+
+    results = run(scenario())
+    assert [len(tokens) for tokens, _ in results] == [200] * 64 + [4] * 100
+    assert all(reason == "length" for _, reason in results)
 
 
 def test_concurrent_requests_match_the_oracle():

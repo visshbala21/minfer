@@ -9,12 +9,20 @@ of its own, as in vLLM and SGLang.
 The two processes talk over a pair of pipes. Requests travel as token ids; results come
 back as one message per engine step carrying every token that step produced, so the
 cross-process cost is per step, not per token.
+
+Commands are written to the engine by a dedicated thread, never by the event loop. A pipe
+holds 64 KB; a write beyond that blocks until the engine reads, and the engine reads only
+between steps. An event loop blocked in such a write cannot read results, and an engine
+whose results are not read eventually blocks writing them: with a burst of a thousand
+requests both ends stopped for good (DESIGN.md B-007).
 """
 
 from __future__ import annotations
 
 import asyncio
 import multiprocessing
+import queue
+import threading
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from multiprocessing.connection import Connection
@@ -77,6 +85,8 @@ def engine_main(factory: Callable[[], Engine], commands: Connection, results: Co
             if not engine.has_work:
                 continue
             outputs = engine.step()
+            if engine.idle:
+                time.sleep(0.0002)  # only copies in flight: poll them without spinning
             if outputs:
                 batch = []
                 for out in outputs:
@@ -112,6 +122,8 @@ class AsyncEngine:
         self._process: multiprocessing.Process | None = None
         self._commands: Connection | None = None
         self._results: Connection | None = None
+        self._outbox: queue.SimpleQueue[tuple | None] = queue.SimpleQueue()
+        self._writer: threading.Thread | None = None
 
     async def start(self) -> None:
         """Spawn the engine process and wait until the model is loaded."""
@@ -137,6 +149,24 @@ class AsyncEngine:
             raise EngineDeadError(payload)
         self.info = payload
         loop.add_reader(self._results.fileno(), self._on_results)
+        self._writer = threading.Thread(target=self._write_commands, name="minfer-commands")
+        self._writer.daemon = True
+        self._writer.start()
+
+    def _send(self, command: tuple) -> None:
+        """Queue a command for the engine process (never blocks the caller)."""
+        self._outbox.put(command)
+
+    def _write_commands(self) -> None:
+        """Writer thread: blocking pipe writes, in the order the commands were queued."""
+        while True:
+            command = self._outbox.get()
+            if command is None:
+                return
+            try:
+                self._commands.send(command)
+            except (OSError, ValueError):
+                return  # the engine process is gone; its death is reported by the reader
 
     async def stop(self) -> None:
         """Ask the engine process to exit and wait for it."""
@@ -145,10 +175,11 @@ class AsyncEngine:
         loop = asyncio.get_running_loop()
         loop.remove_reader(self._results.fileno())
         if self._process.is_alive():
-            self._commands.send(("stop",))
+            self._send(("stop",))
             await loop.run_in_executor(None, self._process.join, 10)
             if self._process.is_alive():
                 self._process.terminate()
+        self._outbox.put(None)
 
     @property
     def healthy(self) -> bool:
@@ -158,7 +189,7 @@ class AsyncEngine:
     def note_session(self, session_id: str, tools: Sequence[str] | None, final: bool) -> None:
         """Tell the engine what a session went on to do (inferred from its response)."""
         if self.healthy:
-            self._commands.send(("session", session_id, tools, final))
+            self._send(("session", session_id, tools, final))
 
     async def generate(
         self,
@@ -183,7 +214,7 @@ class AsyncEngine:
         self._next_id += 1
         tokens: asyncio.Queue[StepOutput | BaseException] = asyncio.Queue()
         self._queues[request_id] = tokens
-        self._commands.send(("add", request_id, list(prompt_ids), params, session))
+        self._send(("add", request_id, list(prompt_ids), params, session))
         try:
             while True:
                 item = await tokens.get()
@@ -195,7 +226,7 @@ class AsyncEngine:
         finally:
             # Still registered means the engine has not finished the request: cancel it.
             if self._queues.pop(request_id, None) is not None and self.healthy:
-                self._commands.send(("abort", request_id))
+                self._send(("abort", request_id))
 
     def _on_results(self) -> None:
         """Event-loop callback: the results pipe is readable."""
