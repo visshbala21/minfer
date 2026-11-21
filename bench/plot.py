@@ -292,25 +292,43 @@ def plot_pressure(name: str = "pressure_7b") -> None:
         ("ttft_ms.p99", "TTFT p99 (ms)"),
         ("output_tokens_per_second", "Output throughput (tok/s)"),
     ]
-    fig, axes = plt.subplots(1, 4, figsize=(17, 4.4))
+    levels = sorted({int(c) for entry in data["configs"].values() for c in entry["runs"]})
+    position = {level: index for index, level in enumerate(levels)}
+    fig, axes = plt.subplots(1, 4, figsize=(17, 5.2))
+    ring = {"markeredgecolor": SURFACE, "markeredgewidth": 1.5}
     for ax, (metric, label) in zip(axes, panels, strict=True):
         for config, entry in data["configs"].items():
             runs = {int(c): r for c, r in entry["runs"].items() if "error" not in r}
             xs = sorted(runs)
             ys = [_agent_value(runs[x], metric) for x in xs]
             color, text = PRESSURE_STYLE.get(config, (MUTED, entry["label"]))
-            _line(ax, [str(x) for x in xs], ys, color, text)
+            ax.plot([position[x] for x in xs], ys, color=color, marker="o", label=text, **ring)
         ax.set_title(label)
         ax.set_xlabel("concurrent sessions")
-        ax.set_ylim(bottom=0)
-        ax.margins(x=0.1)
+        ax.set_xticks(range(len(levels)), [str(level) for level in levels])
+        if metric.startswith("ttft"):
+            ax.set_yscale("log")
+        else:
+            ax.set_ylim(bottom=0)
+        ax.margins(x=0.08)
     budget = data.get("kv_budget_gb")
     note = (
         "Real coding-agent trace (Open-SWE-Traces content, TraceLab tool-call pauses), "
-        f"{data['model'].rsplit('/', 1)[-1]}, closed loop; "
+        f"{data['model'].rsplit('/', 1)[-1]}, closed loop; TTFT on a log scale; "
         + (f"KV cache limited to {budget:g} GB for every engine." if budget else "whole GPU.")
     )
-    _finish(fig, list(axes), "KV memory pressure: sessions past GPU capacity", note, f"{name}.png")
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper center", ncol=4, bbox_to_anchor=(0.5, 0.93))
+    fig.suptitle(
+        "KV memory pressure: sessions past GPU capacity",
+        x=0.01, ha="left", fontsize=13, fontweight="bold",
+    )  # fmt: skip
+    fig.text(0.01, 0.005, note, color=MUTED, fontsize=8, ha="left", va="bottom")
+    fig.tight_layout(rect=(0, 0.03, 1, 0.8))
+    PLOTS.mkdir(parents=True, exist_ok=True)
+    fig.savefig(PLOTS / f"{name}.png", dpi=160)
+    plt.close(fig)
+    print(f"wrote {PLOTS / f'{name}.png'}")
 
 
 COMPOSITION_PATH = [
