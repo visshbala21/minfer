@@ -10,22 +10,24 @@ The two processes talk over a pair of pipes. Requests travel as token ids; resul
 back as one message per engine step carrying every token that step produced, so the
 cross-process cost is per step, not per token.
 
-Commands are written to the engine by a dedicated thread, never by the event loop. A pipe
-holds 64 KB; a write beyond that blocks until the engine reads, and the engine reads only
-between steps. An event loop blocked in such a write cannot read results, and an engine
-whose results are not read eventually blocks writing them: with a burst of a thousand
-requests both ends stopped for good (DESIGN.md B-007).
+Commands are written to the engine without ever blocking the event loop: the command pipe
+is non-blocking on this side, and whatever a write cannot take is buffered and flushed when
+the pipe becomes writable. A pipe holds 64 KB; a blocking write beyond that waits until the
+engine reads, and the engine reads only between steps. An event loop stuck in such a write
+cannot read results, and an engine whose results are not read eventually blocks writing
+them: with a burst of a thousand requests both ends stopped for good (DESIGN.md B-007).
 """
 
 from __future__ import annotations
 
 import asyncio
 import multiprocessing
-import queue
-import threading
+import os
+import struct
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from multiprocessing.connection import Connection
+from multiprocessing.reduction import ForkingPickler
 from typing import Any
 
 from minfer.cache.retention import SessionHint
@@ -122,8 +124,8 @@ class AsyncEngine:
         self._process: multiprocessing.Process | None = None
         self._commands: Connection | None = None
         self._results: Connection | None = None
-        self._outbox: queue.SimpleQueue[tuple | None] = queue.SimpleQueue()
-        self._writer: threading.Thread | None = None
+        self._outbox = bytearray()  # command bytes the pipe has not taken yet
+        self._flushing = False
 
     async def start(self) -> None:
         """Spawn the engine process and wait until the model is loaded."""
@@ -149,24 +151,38 @@ class AsyncEngine:
             raise EngineDeadError(payload)
         self.info = payload
         loop.add_reader(self._results.fileno(), self._on_results)
-        self._writer = threading.Thread(target=self._write_commands, name="minfer-commands")
-        self._writer.daemon = True
-        self._writer.start()
+        os.set_blocking(self._commands.fileno(), False)
 
     def _send(self, command: tuple) -> None:
-        """Queue a command for the engine process (never blocks the caller)."""
-        self._outbox.put(command)
+        """Send a command to the engine process without blocking.
 
-    def _write_commands(self) -> None:
-        """Writer thread: blocking pipe writes, in the order the commands were queued."""
-        while True:
-            command = self._outbox.get()
-            if command is None:
-                return
-            try:
-                self._commands.send(command)
-            except (OSError, ValueError):
-                return  # the engine process is gone; its death is reported by the reader
+        The bytes are framed exactly as ``Connection.send`` frames them (a 4-byte length,
+        then the pickle), so the engine reads them with ``Connection.recv``.
+        """
+        payload = ForkingPickler.dumps(command)
+        self._outbox += struct.pack("!i", len(payload))
+        self._outbox += payload
+        if not self._flushing:
+            self._flush()
+
+    def _flush(self) -> None:
+        """Write as much of the outbox as the pipe takes; come back when it takes more."""
+        fd = self._commands.fileno()
+        loop = asyncio.get_running_loop()
+        try:
+            while self._outbox:
+                written = os.write(fd, self._outbox[:65536])
+                del self._outbox[:written]
+        except BlockingIOError:
+            if not self._flushing:
+                self._flushing = True
+                loop.add_writer(fd, self._flush)
+            return
+        except OSError:
+            self._outbox.clear()  # the engine process is gone; the reader reports its death
+        if self._flushing:
+            self._flushing = False
+            loop.remove_writer(fd)
 
     async def stop(self) -> None:
         """Ask the engine process to exit and wait for it."""
@@ -179,7 +195,9 @@ class AsyncEngine:
             await loop.run_in_executor(None, self._process.join, 10)
             if self._process.is_alive():
                 self._process.terminate()
-        self._outbox.put(None)
+        if self._flushing:
+            self._flushing = False
+            loop.remove_writer(self._commands.fileno())
 
     @property
     def healthy(self) -> bool:
@@ -257,7 +275,12 @@ class AsyncEngine:
     def _fail(self, reason: str) -> None:
         """Mark the engine dead and fail every in-flight request."""
         self.error = reason
-        asyncio.get_running_loop().remove_reader(self._results.fileno())
+        loop = asyncio.get_running_loop()
+        loop.remove_reader(self._results.fileno())
+        if self._flushing:
+            self._flushing = False
+            loop.remove_writer(self._commands.fileno())
+        self._outbox.clear()
         queues, self._queues = self._queues, {}
         for tokens in queues.values():
             tokens.put_nowait(EngineDeadError(reason))
