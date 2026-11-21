@@ -313,6 +313,56 @@ def plot_pressure(name: str = "pressure_7b") -> None:
     _finish(fig, list(axes), "KV memory pressure: sessions past GPU capacity", note, f"{name}.png")
 
 
+COMPOSITION_PATH = [
+    ("base", "no cache"),
+    ("prefix", "+ prefix\ncache"),
+    ("prefix+session", "+ session-aware\nretention"),
+    ("prefix+session+host", "+ host-memory\ntier"),
+    ("prefix+session+host+reuse", "+ position-\nindependent reuse"),
+    ("prefix+session+host+reuse+spec", "+ prompt-lookup\nspeculation"),
+]
+
+
+def plot_composition(name: str = "composition_7b") -> None:
+    """Decomposition: the techniques added one at a time, on three measures."""
+    path = RESULTS / f"{name}.json"
+    if not path.exists():
+        return
+    data = json.loads(path.read_text())
+    configs = data["configs"]
+    steps = [(key, label) for key, label in COMPOSITION_PATH if key in configs]
+    if len(steps) < 2:
+        return
+    panels = [
+        (
+            "Prefill tokens computed per call",
+            lambda r: r["prefill_tokens_computed"] / r["completed"],
+        ),
+        ("TTFT p50 (ms)", lambda r: r["ttft_ms"]["p50"]),
+        ("TTFT p99 (ms)", lambda r: r["ttft_ms"]["p99"]),
+        ("TPOT p50 (ms)", lambda r: r["tpot_ms"]["p50"]),
+    ]
+    fig, axes = plt.subplots(1, 4, figsize=(18, 4.6))
+    labels = [label for _, label in steps]
+    for ax, (title, get) in zip(axes, panels, strict=True):
+        values = [get(configs[key]) for key, _ in steps]
+        bars = ax.bar(range(len(values)), values, color=SERIES["minfer"], width=0.62)
+        bars[0].set_color(MUTED)
+        for index, value in enumerate(values):
+            text = f"{value:,.0f}" if value >= 100 else f"{value:.1f}"
+            ax.annotate(text, (index, value), ha="center", va="bottom", fontsize=8.5, color=INK)
+        ax.set_xticks(range(len(values)), labels, fontsize=7.5)
+        ax.set_title(title)
+        ax.set_ylim(bottom=0)
+    budget = data.get("kv_budget_gb")
+    note = (
+        f"Real coding-agent trace, {data['model'].rsplit('/', 1)[-1]}, {data['concurrency']} "
+        "concurrent sessions, techniques added left to right; "
+        + (f"KV cache limited to {budget:g} GB." if budget else "whole GPU.")
+    )
+    _finish(fig, list(axes), "What each technique adds", note, f"{name}.png")
+
+
 def main() -> None:
     argparse.ArgumentParser(description=__doc__.split("\n\n")[0]).parse_args()
     # The 7B model's charts carry the plain file names; the 1.5B model's a suffix.
@@ -336,6 +386,7 @@ def main() -> None:
     plot_chunked_prefill()
     plot_triton_kernel()
     plot_pressure()
+    plot_composition()
 
 
 if __name__ == "__main__":

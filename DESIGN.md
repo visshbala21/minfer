@@ -1927,7 +1927,7 @@ switched off, measured on the same real trace next to the baselines' own offload
   ago, and those are the last to be demoted in the first place. What is implemented is
   overlap rather than anticipation: a restore runs concurrently with the engine's other
   work and only its own request waits for it.
-- **Restore or recompute.** Measured, not assumed: M-022.
+- **Restore or recompute.** Measured, not assumed: M-023.
 - **Correctness.** On the CPU float32 model, a randomized test with eight sessions, a GPU
   pool and a host pool both too small for them asserts every output equal to the cache-free
   oracle and the tree/pool invariants after every step. On the GPU, an evicted and restored

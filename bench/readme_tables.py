@@ -611,6 +611,196 @@ def pressure_table(name: str = "pressure_7b.json") -> str:
     return _table([*header, "out tok/s", "failed"], rows)
 
 
+def host_tier_cost_table() -> str:
+    """Restoring KV from host memory vs recomputing it."""
+    data = _load("host_tier_cost_7b.json")
+    if not data:
+        return MISSING
+    rows = [
+        [
+            f"{r['tokens']:,}",
+            f"{r['megabytes']:,.0f}",
+            f"{r['restore_ms']:.1f}",
+            f"{r['restore_gb_per_s']:.0f}",
+            f"{r['recompute_ms']:.0f}",
+            f"{r['recompute_over_restore']:.0f}×",
+        ]
+        for r in data["rows"]
+    ]
+    header = ["history (tokens)", "KV (MB)", "restore from host (ms)", "GB/s"]
+    return _table([*header, "recompute (ms)", "recompute / restore"], rows)
+
+
+def pic_quality_table() -> str:
+    """Output quality of position-independent reuse at several recompute ratios."""
+    data = _load("pic_quality_7b.json")
+    if not data:
+        return MISSING
+    exact = data["exact"]
+    rows = [
+        [
+            "exact prefill (reference)",
+            f"{exact['computed_fraction']:.1%}",
+            "—",
+            f"{exact['top1_is_recorded_token']:.1%}",
+            "—",
+            "—",
+        ]
+    ]
+    for r in data["variants"]:
+        rows.append(
+            [
+                r["variant"],
+                f"{r['computed_fraction']:.1%}",
+                f"{r['top1_same_as_exact']:.2%}",
+                f"{r['top1_is_recorded_token']:.1%}",
+                f"{r['mean_kl']:.4f}",
+                f"{r['max_kl']:.2f}",
+            ]
+        )
+    header = ["prefill of a session's first call", "prompt tokens computed"]
+    header += ["next-token top-1 same as exact", "top-1 = recorded token"]
+    footer = (
+        f"\n\n{data['measured_calls']} first calls after {data['warm_sessions']} cached "
+        f"sessions; the first {data['reply_tokens_compared_per_call']} tokens of each "
+        "recorded reply, teacher-forced."
+    )
+    return _table([*header, "mean KL from exact (nats)", "max KL"], rows) + footer
+
+
+def speculation_serve_table() -> str:
+    """Prompt-lookup speculation through the server at low and medium request rates."""
+    data = _load("speculation_serve_7b.json")
+    if not data:
+        return MISSING
+    rates = data["rates"]
+    base = data["configs"].get("off")
+    rows = []
+    for entry in data["configs"].values():
+        cells = [entry["label"]]
+        for rate in rates:
+            run = entry[rate]
+            tpot = run["tpot_ms"]["p50"]
+            relative = f" ({tpot / base[rate]['tpot_ms']['p50']:.2f}×)" if base else ""
+            cells.append(f"{tpot:.2f}{relative}")
+        for rate in rates:
+            cells.append(f"{entry[rate]['e2e_ms']['p50']:.0f}")
+        accepted = [entry[rate]["acceptance_rate"] for rate in rates]
+        share = [entry[rate]["drafted_share_of_output"] for rate in rates]
+        if accepted[0] is None:
+            cells += ["—", "—"]
+        else:
+            cells.append(_span([a * 100 for a in accepted], ".0f") + "%")
+            cells.append(_span([a * 100 for a in share], ".0f") + "%")
+        rows.append(cells)
+    header = ["configuration"]
+    header += [f"TPOT p50 at {rate} req/s (ms)" for rate in rates]
+    header += [f"E2E p50 at {rate} req/s (ms)" for rate in rates]
+    return _table([*header, "drafted tokens accepted", "output tokens from drafts"], rows)
+
+
+_TECHNIQUE_LABEL = {
+    "prefix": "prefix cache",
+    "session": "session-aware retention",
+    "host": "host-memory tier",
+    "reuse": "position-independent reuse",
+    "spec": "prompt-lookup speculation",
+}
+
+
+def _composition_name(techniques: list[str]) -> str:
+    order = [t for t in _TECHNIQUE_LABEL if t in techniques]
+    return " + ".join(_TECHNIQUE_LABEL[t] for t in order) or "none"
+
+
+def composition_table() -> str:
+    """Every valid combination of techniques on the real trace under memory pressure."""
+    data = _load("composition_7b.json")
+    if not data:
+        return MISSING
+    rows = []
+    for row in data["configs"].values():
+        calls = max(1, row["completed"])
+        rows.append(
+            [
+                _composition_name(row["techniques"]),
+                f"{row['completed']}",
+                f"{row['prefill_tokens_computed'] / calls:,.0f}",
+                f"{row['cache_hit_rate']:.1%}",
+                f"{row['ttft_ms']['p50']:.0f} / {row['ttft_ms']['p99']:.0f}",
+                f"{row['tpot_ms']['p50']:.1f}",
+                f"{row['output_tokens_per_second']:.0f}",
+            ]
+        )
+    header = ["techniques", "calls completed", "prefill tokens computed per call"]
+    header += ["prompt tokens not computed", "TTFT p50 / p99 (ms)", "TPOT p50 (ms)", "out tok/s"]
+    budget = data.get("kv_budget_gb")
+    footer = (
+        f"\n\n{data['concurrency']} concurrent sessions of the real trace, "
+        f"{data['duration_s'] - data['warmup_s']:.0f} s measured after "
+        f"{data['warmup_s']:.0f} s of warm-up"
+        + (f", KV cache limited to {budget:g} GB." if budget else ", whole GPU.")
+    )
+    return _table(header, rows) + footer
+
+
+def interaction_table() -> str:
+    """Pairwise interactions: is the effect of two techniques together the sum of each alone?"""
+    data = _load("composition_7b.json")
+    if not data:
+        return MISSING
+    configs = data["configs"]
+
+    def metric(names: tuple[str, ...], key: str) -> float | None:
+        name = "+".join(t for t in _TECHNIQUE_LABEL if t in names) or "base"
+        row = configs.get(name)
+        if row is None:
+            return None
+        if key == "prefill":
+            return row["prefill_tokens_computed"] / max(1, row["completed"])
+        if key == "ttft":
+            return row["ttft_ms"]["p50"]
+        return row["tpot_ms"]["p50"]
+
+    pairs = [
+        (("prefix",), "session", "reuse"),
+        (("prefix",), "session", "spec"),
+        (("prefix",), "reuse", "spec"),
+        (("prefix", "session"), "host", "reuse"),
+        (("prefix", "session"), "host", "spec"),
+    ]
+    rows = []
+    for context, a, b in pairs:
+        for key, label, fmt in (
+            ("prefill", "prefill tokens / call", ",.0f"),
+            ("ttft", "TTFT p50 (ms)", ".0f"),
+            ("tpot", "TPOT p50 (ms)", ".2f"),
+        ):
+            values = [
+                metric(context, key),
+                metric((*context, a), key),
+                metric((*context, b), key),
+                metric((*context, a, b), key),
+            ]
+            if any(v is None for v in values):
+                continue
+            base, with_a, with_b, both = values
+            additive = with_a + with_b - base
+            rows.append(
+                [
+                    f"{_TECHNIQUE_LABEL[a]} × {_TECHNIQUE_LABEL[b]}",
+                    label,
+                    format(base, fmt),
+                    f"{with_a - base:+{fmt}}",
+                    f"{with_b - base:+{fmt}}",
+                    f"{both - base:+{fmt}}",
+                    f"{both - additive:+{fmt}}",
+                ]
+            )
+    header = ["pair (on top of what both need)", "metric", "without either", "first alone"]
+    return _table([*header, "second alone", "both", "both − sum of each"], rows)
+
+
 SECTIONS: dict[str, Callable[[], str]] = {
     "headline": headline,
     "agent-results": agent_table,
@@ -628,6 +818,11 @@ SECTIONS: dict[str, Callable[[], str]] = {
     "fairness-audit": fairness_audit_table,
     "real-trace": real_trace_table,
     "pressure": pressure_table,
+    "host-tier-cost": host_tier_cost_table,
+    "pic-quality": pic_quality_table,
+    "speculation-serve": speculation_serve_table,
+    "composition": composition_table,
+    "interactions": interaction_table,
     "equivalence": equivalence_table,
     "profile": profile_table,
     "reproduction": reproduction_table,
