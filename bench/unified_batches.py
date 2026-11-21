@@ -31,11 +31,11 @@ EXPERIMENTS = {
     "unified_batches": {
         "split": (
             "separate prefill and decode passes (before)",
-            ["--no-unified-batches", "--decode-kernel", "triton"],
+            ["--no-unified-batches"],
         ),
         "unified": (
             "one ragged pass per step (after)",
-            ["--unified-batches", "--decode-kernel", "triton"],
+            ["--unified-batches"],
         ),
     },
     "decode_kernel": {

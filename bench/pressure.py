@@ -42,20 +42,11 @@ HOST_GB = 96
 CONCURRENCY = (16, 32, 48, 64, 96)
 
 # "<engine>/<name>": (label, server flags, send session hints)
-# The sweep was measured when the Triton decode kernel was minfer's default; those
-# configurations keep it explicitly. ``session_host_fi`` is the same full stack on the
-# current default (FlashInfer's decode kernel), measured after the default changed.
-_TRITON = ["--decode-kernel", "triton"]
 CONFIGS: dict[str, tuple[str, list[str], bool]] = {
-    "minfer/lru": ("minfer, LRU eviction", ["--eviction-policy", "lru", *_TRITON], False),
-    "minfer/session": ("minfer, session-aware retention", _TRITON, True),
+    "minfer/lru": ("minfer, LRU eviction", ["--eviction-policy", "lru"], False),
+    "minfer/session": ("minfer, session-aware retention", [], True),
     "minfer/session_host": (
         f"minfer, session-aware retention + {HOST_GB} GB host tier",
-        ["--host-kv-gb", str(HOST_GB), *_TRITON],
-        True,
-    ),
-    "minfer/session_host_fi": (
-        f"minfer, session-aware retention + {HOST_GB} GB host tier, FlashInfer decode (default)",
         ["--host-kv-gb", str(HOST_GB)],
         True,
     ),
@@ -108,6 +99,11 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8061)
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--resume", action="store_true", help="keep results already on disk")
+    parser.add_argument(
+        "--remeasure",
+        action="store_true",
+        help="with --resume: measure the selected configurations again, keep the others",
+    )
     args = parser.parse_args()
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
 
@@ -132,6 +128,10 @@ def main() -> None:
     }
     if args.resume and out.exists():
         results = json.loads(out.read_text())
+        if args.remeasure:
+            for name in list(results["configs"]):
+                if name in args.configs or name not in CONFIGS:
+                    del results["configs"][name]
     for name in args.configs:
         engine, variant = name.split("/")
         label, flags, hints = CONFIGS[name]
