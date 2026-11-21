@@ -602,8 +602,9 @@ this benchmark cannot credit any engine for caching.
 
 ### Ablations
 
-The agent workload against `minfer serve` with one feature changed at a time
-([`bench/ablations.py`](bench/ablations.py)). The first row is the default system; the
+The synthetic agent workload against `minfer serve` at 1.5B with one engine feature changed
+at a time ([`bench/ablations.py`](bench/ablations.py)); the KV-management techniques are
+ablated on real traces at 7B in the [headline](#headline-result) instead. The first row is the default system; the
 last rows constrain the engine so that the scheduling features have decisions to make.
 
 <!-- BEGIN ablations -->
@@ -933,12 +934,21 @@ make bench                     # every benchmark above, the plots, and the table
 ```
 
 `make bench` needs one H100-class GPU, nvcc on `PATH` (FlashInfer compiles its kernels on
-first use) and about three hours; it runs one server at a time. Individual pieces:
-`make bench-micro`, `make bench-agent`, `make bench-ablations`, `make plots`. To run it on
+first use), about 100 GB of free `/dev/shm` for vLLM's KV offloading, and most of a day:
+it runs one server at a time, and nothing else may run on the machine meanwhile (a test
+suite running next to it visibly corrupted a baseline's numbers once; DESIGN.md B-006).
+Individual pieces: `make bench-micro` (engine-level, 1.5B), `make bench-agent` (the
+three-engine matrix at 7B and 1.5B), `make bench-ablations`, `make bench-audit`,
+`make bench-real` (real traces: pressure sweep, host tier, reuse quality, speculation,
+composition), `make plots`. Every results file written since the 7B phase records the
+commit it was measured at. To run it on
 a fresh H100 without a local GPU: `modal run bench/modal_bench.py` (written but not
 executed from the development machine, which has no Modal credentials).
 
 ### Reproduction check
+
+This check was made at the end of Phase 12, on the 1.5B results as they were then; the
+tables it refers to as "the README run" have since been re-measured.
 
 The commands above were run once more from a fresh `git clone` in a new directory, with an
 empty `HOME` (no JIT caches for FlashInfer, Triton, vLLM or SGLang) and an empty `HF_HOME`
@@ -995,7 +1005,7 @@ against any OpenAI-compatible server.
 ## Serving
 
 ```bash
-.venv/bin/minfer serve --model Qwen/Qwen2.5-1.5B-Instruct --port 8000
+.venv/bin/minfer serve --model Qwen/Qwen2.5-7B-Instruct --port 8000 --host-kv-gb 96
 curl localhost:8000/v1/chat/completions -H 'content-type: application/json' \
   -d '{"messages":[{"role":"user","content":"Say hi."}],"max_tokens":16}'
 ```
@@ -1006,7 +1016,14 @@ usage), `/tokenize`, `/detokenize`. Every feature has a flag (`minfer serve --he
 `--[no-]prefix-cache`, `--[no-]cache-aware-scheduling`, `--[no-]cuda-graphs`,
 `--[no-]prefill-graphs`, `--prefill-chunk-tokens N`, `--[no-]fused-kernels`,
 `--decode-kernel {auto,triton,flashinfer}`, `--speculation {none,ngram,draft}`,
-`--kv-cache-dtype {auto,fp8}`, `--weight-dtype {auto,fp8}`.
+`--kv-cache-dtype {auto,fp8}`, `--weight-dtype {auto,fp8}`, `--eviction-policy
+{session,lru}`, `--host-kv-gb N`, `--[no-]position-independent-reuse`,
+`--[no-]unified-batches`.
+
+A request can name the agent session it belongs to, which is what session-aware retention
+and the host tier act on: `"session_id": "..."`, and optionally `"session_tools": ["Bash"]`
+(the tools the client is about to run) or `"session_final": true`. Without the last two
+the server reads the tool calls off its own response.
 
 `modal deploy deploy/modal_app.py` puts the same server behind a scale-to-zero endpoint on
 an H100 (written, not deployed: no Modal credentials on the development machine, so there

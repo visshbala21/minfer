@@ -2314,10 +2314,10 @@ session), `reuse` (position-independent reuse at 15% recomputation; needs prefix
   offloading delivers 809 tok/s and a TTFT of 206 / 1,091 ms, SGLang with its hierarchical
   cache 772 tok/s and 153 / 1,409 ms, full-stack minfer 641–661 tok/s and 257–266 /
   2,906–3,913 ms while computing 985–1,002 prefill tokens per call against their 1,545 and
-  1,702. `vllm-continuum` was not installed: its repository describes itself as a preview
-  that omits the paper's TTL estimator, and it is based on a vLLM release far older than
-  the pinned 0.34.0, so it would have been neither Continuum as published nor a fair
-  second vLLM.
+  1,702. `vllm-continuum` was not installed: its repository describes itself as preview
+  code that omits the paper's TTL estimation, and does not state which vLLM release it is
+  based on (the paper's experiments used vLLM 0.10.2, against the 0.34.0 pinned here), so
+  it would have been neither Continuum as published nor a like-for-like second vLLM.
 
 ### B-009 A reuse copy ran for a sequence that had just been preempted (fixed)
 
