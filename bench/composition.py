@@ -28,6 +28,7 @@ import argparse
 import asyncio
 import itertools
 import json
+import shlex
 import signal
 import sys
 from pathlib import Path
@@ -90,7 +91,7 @@ def main() -> None:
     parser.add_argument("--warmup", type=float, default=60.0)
     parser.add_argument("--ramp", type=float, default=30.0)
     parser.add_argument("--kv-gb", type=float, default=None, help="KV budget (as in pressure.py)")
-    parser.add_argument("--spec-flags", nargs="*", default=[], help="extra flags with 'spec'")
+    parser.add_argument("--spec-flags", default="", help="extra server flags with 'spec'")
     parser.add_argument("--port", type=int, default=8081)
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--resume", action="store_true", help="keep results already on disk")
@@ -123,7 +124,7 @@ def main() -> None:
         combination = every[name]
         flags = flags_of(combination)
         if "spec" in combination:
-            flags += args.spec_flags
+            flags += shlex.split(args.spec_flags)
         if args.kv_gb is not None:
             flags += kv_budget_flags("minfer", args.kv_gb, kv_bytes_per_token(model))
         options = rt.ReplayOptions(
