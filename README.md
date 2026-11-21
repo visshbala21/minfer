@@ -610,6 +610,41 @@ In the prefix-cache run the cache served 74.7% of prompt tokens and cut the toke
   radix tree, scheduler, sampling, engine vs oracle, speculation, tensor parallelism, FP8
   storage, workload generator, server bridge) runs in CI on every push.
 
+## Related work, and what is and is not new here
+
+Nothing in this repository is a new mechanism. Each technique it implements was published
+by others; the citations below were checked against the papers' own pages (details and
+caveats in DESIGN.md, "Related work").
+
+| technique here | where it comes from |
+|---|---|
+| Radix-tree prefix cache over paged KV | SGLang's RadixAttention; vLLM's automatic prefix caching |
+| Session-aware retention (keep the KV of a session paused in a tool call) | **Continuum** (Li et al., arXiv 2511.02230): KV time-to-live from per-tool durations; **InferCept** (Abhyankar et al., ICML 2024): tool calls as interceptions; **CacheWise** (Tiwari et al., arXiv 2606.16824): eviction by predicted time to next reuse |
+| Host-memory KV tier | LMCache; vLLM's native KV offloading; SGLang's hierarchical cache; sized for agents by **EfficientAgent** (Shao et al., arXiv 2609.33762) |
+| Position-independent KV reuse with selective recomputation | **CacheBlend** (Yao et al., EuroSys 2025); **EPIC** (Hu et al., ICML 2025); **MiniPIC** (Ordonez and Parnell, arXiv 2606.13126); for agents: **CacheSlide** (Liu et al., FAST '26), **Irminsul** and **Leyline** (Ma et al., arXiv 2605.05696, 2606.01065) |
+| Prompt-lookup speculative decoding | prompt lookup decoding as shipped in transformers and vLLM |
+| The workload's timings | **TraceLab** (Zhu et al., arXiv 2606.30560) |
+
+What this repository contributes is a measurement: these techniques in **one** engine
+where each is a flag, run alone and in every valid combination on the **same** real
+coding-agent trace, under memory pressure, next to vLLM and SGLang with their own
+offloading. A literature search (five queries, listed in DESIGN.md) found no published
+evaluation that composes prefix caching, tool-call-aware retention, a host-memory tier,
+position-independent reuse and speculative decoding on real agent traces and reports how
+they interact. That is a negative search result, not proof: the closest work found —
+Continuum (retention + DRAM/SSD offload), CacheWise (eviction + DRAM swap on real Claude
+Code traces), "Stateful Inference for Low-Latency Multi-Agent Tool Calling"
+(arXiv 2605.26289: persistent KV + prefix cache + prompt lookup on generated workflows)
+and the vLLM × AgentX write-up of September 2026 — each covers a subset, and four more
+recent preprints that might overlap (arXiv 2610.13060, 2610.01108, 2611.18459, 2605.00528)
+were found by title only and not read.
+
+Two limits on what the measurement can claim. The trace is assembled from two public
+sources because no public dataset has both content and timing (real token sequences from
+Open-SWE-Traces, real tool-call latencies from TraceLab, paired by tool name), and it is
+cut at this model's 32k-token context, a fraction of real Claude Code sessions. And it is
+one model on one GPU.
+
 ## What is not done
 
 - **Tensor parallelism has never run on two GPUs.** The development machine has one H100.
