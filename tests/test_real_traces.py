@@ -180,3 +180,71 @@ def test_trace_statistics_on_a_tiny_trace():
     assert stats["total_prompt_tokens"] == sum(
         c.prompt_tokens for s in trace.sessions for c in s.calls
     )
+
+
+def test_replay_until_the_measured_sessions_finish():
+    """Sessions are timed whole; the replay stops once every measured one has finished."""
+    import asyncio
+    import socket
+
+    from aiohttp import web
+
+    from bench.jct import summarize_sessions
+
+    tokenizer = WordTokenizer()
+    trace = rt.RealTrace({"version": rt.TRACE_VERSION, "model": "tiny"})
+    for index in range(12):
+        session = rt.compile_session(
+            f"s{index}", conversation(2), [], tokenizer, 10_000, rt.PauseSampler(TABLE, 0.05, 0.01),
+            random.Random(index),
+        )  # fmt: skip
+        trace.sessions.append(session)
+
+    async def completions(request: web.Request) -> web.StreamResponse:
+        body = await request.json()
+        response = web.StreamResponse()
+        await response.prepare(request)
+        for _ in range(body["max_tokens"]):
+            await asyncio.sleep(0.002)
+            await response.write(b'data: {"choices": [{"text": "x"}]}\n\n')
+        usage = {"prompt_tokens": 10, "completion_tokens": body["max_tokens"],
+                 "prompt_tokens_details": {"cached_tokens": 4}}  # fmt: skip
+        await response.write(f"data: {json.dumps({'usage': usage})}\n\n".encode())
+        await response.write(b"data: [DONE]\n\n")
+        return response
+
+    async def main() -> tuple[list, list, float]:
+        app = web.Application()
+        app.router.add_post("/v1/completions", completions)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        site = web.TCPSite(runner, "127.0.0.1", port)
+        await site.start()
+        sessions: list[rt.SessionRecord] = []
+        options = rt.ReplayOptions(2, measured=range(2, 5))
+        try:
+            records, elapsed = await rt.replay(
+                trace, tokenizer, f"http://127.0.0.1:{port}", "tiny", options,
+                session_records=sessions,
+            )  # fmt: skip
+        finally:
+            await runner.cleanup()
+        return records, sessions, elapsed
+
+    records, sessions, elapsed = asyncio.run(main())
+    by_index = {s.index: s for s in sessions}
+    assert all(by_index[i].finished is not None and not by_index[i].failed for i in range(2, 5))
+    assert len(sessions) < len(trace.sessions)  # stopped before the trace ran out
+    for index in range(2, 5):
+        record, session = by_index[index], trace.sessions[index]
+        assert record.calls == len(session.calls)
+        assert record.pause_s == pytest.approx(sum(call.pause for call in session.calls))
+        assert record.completion_time > record.pause_s
+    row = summarize_sessions(sessions, records, range(2, 5), elapsed)
+    assert row["completed_sessions"] == 3 and row["failed_sessions"] == 0
+    assert [s["index"] for s in row["per_session"]] == [2, 3, 4]
+    assert row["requests"]["failed"] == 0 and row["cache_hit_rate"] == pytest.approx(0.4)
+    assert row["jct_s"]["p50"] >= row["model_time_s"]["p50"] > 0

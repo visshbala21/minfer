@@ -520,6 +520,9 @@ class ReplayOptions:
             flight complete). ``None``: until the sessions run out.
         ramp: Seconds over which the workers' first sessions are started, evenly spaced,
             instead of all at once.
+        measured: Indices (in trace order) of sessions whose completion ends the replay:
+            once every one of them has finished, the replay stops and requests still in
+            flight are abandoned. ``None``: no such condition.
     """
 
     concurrency: int
@@ -528,6 +531,35 @@ class ReplayOptions:
     max_sessions: int | None = None
     duration: float | None = None
     ramp: float = 0.0
+    measured: range | None = None
+
+
+@dataclass
+class SessionRecord:
+    """Client-side timing of one whole session (seconds since replay start).
+
+    Attributes:
+        index: Position of the session in the trace.
+        session_id: The session's id.
+        started: When its first call was sent.
+        finished: When its last call completed (``None``: it did not complete).
+        calls: Calls sent.
+        failed: Whether a call failed (the session is then abandoned).
+        pause_s: Total tool-call pause time the replay waited between its calls.
+    """
+
+    index: int
+    session_id: str
+    started: float
+    finished: float | None = None
+    calls: int = 0
+    failed: bool = False
+    pause_s: float = 0.0
+
+    @property
+    def completion_time(self) -> float:
+        """Job completion time: first call sent to last call done."""
+        return self.finished - self.started
 
 
 async def replay(
@@ -537,19 +569,23 @@ async def replay(
     model: str,
     options: ReplayOptions,
     on_session_done: Callable[[int], None] | None = None,
+    session_records: list[SessionRecord] | None = None,
 ) -> tuple[list[aw.RequestRecord], float]:
     """Replay ``trace`` closed-loop against an OpenAI-compatible server.
 
-    Returns the per-request records and the wall-clock duration.
+    Returns the per-request records and the wall-clock duration. If ``session_records``
+    is given, one :class:`SessionRecord` per started session is appended to it.
     """
     import aiohttp
 
     url = f"{base_url.rstrip('/')}/v1/completions"
     sessions = trace.sessions[: options.max_sessions]
-    queue: Iterator[RealSession] = iter(sessions)
+    queue: Iterator[tuple[int, RealSession]] = iter(enumerate(sessions))
     records: list[aw.RequestRecord] = []
     origin = time.perf_counter()
     finished = 0
+    pending = set(options.measured or ())
+    all_measured = asyncio.Event()
 
     def expired() -> bool:
         return options.duration is not None and time.perf_counter() - origin >= options.duration
@@ -557,7 +593,10 @@ async def replay(
     async def worker(index: int, http: aiohttp.ClientSession) -> None:
         nonlocal finished
         await asyncio.sleep(options.ramp * index / options.concurrency)
-        for session in queue:
+        for position, session in queue:
+            timing = SessionRecord(position, session.session_id, time.perf_counter() - origin)
+            if session_records is not None:
+                session_records.append(timing)
             for turn, call in enumerate(session.calls):
                 if expired():
                     return
@@ -578,18 +617,38 @@ async def replay(
                     body["session_final"] = last
                 record = aw.RequestRecord(session.session_id, "real", turn, 0.0)
                 records.append(record)
+                timing.calls += 1
                 await aw._one_request(http, url, body, record, origin)
                 if record.error is not None:
+                    timing.failed = True
                     break  # the rest of the session depends on this call
-                await asyncio.sleep(call.pause)
+                if turn == len(session.calls) - 1:
+                    timing.finished = record.finished
+                else:
+                    timing.pause_s += call.pause
+                    await asyncio.sleep(call.pause)
             finished += 1
+            pending.discard(position)
+            if options.measured is not None and not pending:
+                all_measured.set()
             if on_session_done is not None:
                 on_session_done(finished)
+
+    async def run_workers(http: aiohttp.ClientSession) -> None:
+        workers = [asyncio.create_task(worker(index, http)) for index in range(options.concurrency)]
+        if options.measured is None:
+            await asyncio.gather(*workers)
+            return
+        done = asyncio.create_task(all_measured.wait())
+        await asyncio.wait([done, asyncio.gather(*workers)], return_when=asyncio.FIRST_COMPLETED)
+        for task in [*workers, done]:
+            task.cancel()
+        await asyncio.gather(*workers, done, return_exceptions=True)
 
     timeout = aiohttp.ClientTimeout(total=None, sock_read=900)
     connector = aiohttp.TCPConnector(limit=0)
     async with aiohttp.ClientSession(timeout=timeout, connector=connector) as http:
-        await asyncio.gather(*(worker(index, http) for index in range(options.concurrency)))
+        await run_workers(http)
     return records, time.perf_counter() - origin
 
 
