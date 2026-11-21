@@ -5,56 +5,101 @@
   "sessions": 16,
   "turns_per_session": 4,
   "requests": 64,
-  "prompt_tokens": 56983,
+  "prompt_tokens": 56994,
   "max_tokens": 64
  },
- "identical_outputs": 46,
- "diverged_outputs": 18,
- "max_fp32_margin_at_divergence": 0.13251876831054688,
+ "identical_outputs": 37,
+ "diverged_outputs": 27,
+ "max_fp32_margin_at_divergence": 0.1579608917236328,
  "divergences": [
+  {
+   "session": 0,
+   "turn": 3,
+   "first_divergence": 27,
+   "cache_on_token": 279,
+   "cache_off_token": 7032,
+   "fp32_top2_margin": 0.11861038208007812,
+   "both_in_fp32_top2": true
+  },
   {
    "session": 1,
    "turn": 1,
-   "first_divergence": 25,
-   "cache_on_token": 576,
-   "cache_off_token": 5692,
-   "fp32_top2_margin": 0.1067047119140625,
+   "first_divergence": 52,
+   "cache_on_token": 10820,
+   "cache_off_token": 279,
+   "fp32_top2_margin": 0.08425521850585938,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 1,
+   "turn": 2,
+   "first_divergence": 21,
+   "cache_on_token": 4625,
+   "cache_off_token": 2038,
+   "fp32_top2_margin": 0.04806709289550781,
    "both_in_fp32_top2": true
   },
   {
    "session": 2,
-   "turn": 3,
-   "first_divergence": 31,
-   "cache_on_token": 26364,
-   "cache_off_token": 3238,
-   "fp32_top2_margin": 0.0024356842041015625,
+   "turn": 1,
+   "first_divergence": 61,
+   "cache_on_token": 1477,
+   "cache_off_token": 24523,
+   "fp32_top2_margin": 0.055004119873046875,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 2,
+   "turn": 2,
+   "first_divergence": 1,
+   "cache_on_token": 1598,
+   "cache_off_token": 5978,
+   "fp32_top2_margin": 0.06373405456542969,
    "both_in_fp32_top2": true
   },
   {
    "session": 3,
    "turn": 2,
-   "first_divergence": 53,
-   "cache_on_token": 438,
-   "cache_off_token": 12440,
-   "fp32_top2_margin": 0.013103485107421875,
+   "first_divergence": 10,
+   "cache_on_token": 374,
+   "cache_off_token": 448,
+   "fp32_top2_margin": 0.06974220275878906,
    "both_in_fp32_top2": true
   },
   {
    "session": 4,
    "turn": 1,
-   "first_divergence": 48,
+   "first_divergence": 37,
    "cache_on_token": 624,
-   "cache_off_token": 382,
-   "fp32_top2_margin": 0.025011062622070312,
+   "cache_off_token": 448,
+   "fp32_top2_margin": 0.09060096740722656,
    "both_in_fp32_top2": true
   },
   {
-   "session": 5,
+   "session": 4,
    "turn": 2,
-   "first_divergence": 20,
-   "cache_on_token": 2038,
-   "cache_off_token": 1273,
-   "fp32_top2_margin": 0.04352569580078125,
+   "first_divergence": 8,
+   "cache_on_token": 448,
+   "cache_off_token": 1380,
+   "fp32_top2_margin": 0.15677642822265625,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 6,
+   "turn": 1,
+   "first_divergence": 22,
+   "cache_on_token": 729,
+   "cache_off_token": 22683,
+   "fp32_top2_margin": 0.03686714172363281,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 7,
+   "turn": 1,
+   "first_divergence": 19,
+   "cache_on_token": 12218,
+   "cache_off_token": 16953,
+   "fp32_top2_margin": 0.1315937042236328,
    "both_in_fp32_top2": true
   },
   {
@@ -70,9 +115,18 @@
    "session": 8,
    "turn": 1,
    "first_divergence": 22,
-   "cache_on_token": 22683,
-   "cache_off_token": 729,
+   "cache_on_token": 729,
+   "cache_off_token": 22683,
    "fp32_top2_margin": 0.023092269897460938,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 8,
+   "turn": 2,
+   "first_divergence": 1,
+   "cache_on_token": 1598,
+   "cache_off_token": 1477,
+   "fp32_top2_margin": 0.10511016845703125,
    "both_in_fp32_top2": true
   },
   {
@@ -81,70 +135,106 @@
    "first_divergence": 25,
    "cache_on_token": 60601,
    "cache_off_token": 279,
-   "fp32_top2_margin": 0.13251876831054688,
+   "fp32_top2_margin": 0.08352279663085938,
    "both_in_fp32_top2": true
   },
   {
    "session": 9,
    "turn": 2,
-   "first_divergence": 36,
-   "cache_on_token": 429,
-   "cache_off_token": 2615,
-   "fp32_top2_margin": 0.03723907470703125,
+   "first_divergence": 40,
+   "cache_on_token": 358,
+   "cache_off_token": 432,
+   "fp32_top2_margin": 0.13908004760742188,
    "both_in_fp32_top2": true
   },
   {
    "session": 10,
    "turn": 0,
-   "first_divergence": 14,
-   "cache_on_token": 990,
-   "cache_off_token": 1795,
-   "fp32_top2_margin": 0.06743240356445312,
+   "first_divergence": 56,
+   "cache_on_token": 7740,
+   "cache_off_token": 334,
+   "fp32_top2_margin": 0.15648460388183594,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 10,
+   "turn": 3,
+   "first_divergence": 27,
+   "cache_on_token": 7032,
+   "cache_off_token": 279,
+   "fp32_top2_margin": 0.09782981872558594,
    "both_in_fp32_top2": true
   },
   {
    "session": 11,
+   "turn": 1,
+   "first_divergence": 56,
+   "cache_on_token": 220,
+   "cache_off_token": 1378,
+   "fp32_top2_margin": 0.1579608917236328,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 12,
    "turn": 0,
-   "first_divergence": 8,
-   "cache_on_token": 323,
-   "cache_off_token": 11,
-   "fp32_top2_margin": 0.026510238647460938,
+   "first_divergence": 38,
+   "cache_on_token": 3395,
+   "cache_off_token": 23643,
+   "fp32_top2_margin": 0.10133171081542969,
    "both_in_fp32_top2": true
   },
   {
    "session": 12,
    "turn": 1,
-   "first_divergence": 13,
-   "cache_on_token": 3728,
+   "first_divergence": 22,
+   "cache_on_token": 729,
    "cache_off_token": 22683,
-   "fp32_top2_margin": 0.0621185302734375,
+   "fp32_top2_margin": 0.08666419982910156,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 12,
+   "turn": 2,
+   "first_divergence": 8,
+   "cache_on_token": 1380,
+   "cache_off_token": 448,
+   "fp32_top2_margin": 0.03719329833984375,
    "both_in_fp32_top2": true
   },
   {
    "session": 13,
    "turn": 0,
-   "first_divergence": 19,
-   "cache_on_token": 1849,
-   "cache_off_token": 4625,
-   "fp32_top2_margin": 0.011249542236328125,
-   "both_in_fp32_top2": true
-  },
-  {
-   "session": 13,
-   "turn": 1,
-   "first_divergence": 25,
-   "cache_on_token": 279,
-   "cache_off_token": 60601,
-   "fp32_top2_margin": 0.05888938903808594,
+   "first_divergence": 8,
+   "cache_on_token": 323,
+   "cache_off_token": 11,
+   "fp32_top2_margin": 0.013580322265625,
    "both_in_fp32_top2": true
   },
   {
    "session": 14,
    "turn": 1,
    "first_divergence": 22,
-   "cache_on_token": 22683,
-   "cache_off_token": 729,
+   "cache_on_token": 729,
+   "cache_off_token": 22683,
    "fp32_top2_margin": 0.04366302490234375,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 14,
+   "turn": 2,
+   "first_divergence": 8,
+   "cache_on_token": 448,
+   "cache_off_token": 1380,
+   "fp32_top2_margin": 0.002056121826171875,
+   "both_in_fp32_top2": true
+  },
+  {
+   "session": 14,
+   "turn": 3,
+   "first_divergence": 11,
+   "cache_on_token": 8129,
+   "cache_off_token": 624,
+   "fp32_top2_margin": 0.08858299255371094,
    "both_in_fp32_top2": true
   },
   {
@@ -159,45 +249,36 @@
   {
    "session": 15,
    "turn": 1,
-   "first_divergence": 25,
-   "cache_on_token": 279,
+   "first_divergence": 45,
+   "cache_on_token": 57532,
    "cache_off_token": 60601,
-   "fp32_top2_margin": 0.057689666748046875,
-   "both_in_fp32_top2": true
-  },
-  {
-   "session": 15,
-   "turn": 2,
-   "first_divergence": 20,
-   "cache_on_token": 358,
-   "cache_off_token": 498,
-   "fp32_top2_margin": 0.04034233093261719,
+   "fp32_top2_margin": 0.027957916259765625,
    "both_in_fp32_top2": true
   }
  ],
  "noise_floor_cache_off_vs_cache_off_rebatched": {
   "what": "both runs without the cache; second run limited to 5 concurrent sequences",
-  "identical_outputs": 46,
-  "diverged_outputs": 18,
-  "max_fp32_margin_at_divergence": 0.2040252685546875
+  "identical_outputs": 58,
+  "diverged_outputs": 6,
+  "max_fp32_margin_at_divergence": 0.11861038208007812
  },
  "prefix_cache": {
-  "hit_rate": 0.7471670268275971,
+  "hit_rate": 0.7439311435095731,
   "lookups": 64,
   "hits": 48,
-  "lookup_tokens": 56919,
-  "hit_tokens": 42528,
+  "lookup_tokens": 56930,
+  "hit_tokens": 42352,
   "catchup_tokens": 3568,
-  "prefill_tokens_saved": 46096,
-  "cached_blocks_at_end": 460,
-  "nodes_at_end": 52
+  "prefill_tokens_saved": 45920,
+  "cached_blocks_at_end": 476,
+  "nodes_at_end": 64
  },
  "tokens_through_the_model": {
-  "cache_off": 60572,
-  "cache_on": 14302
+  "cache_off": 60651,
+  "cache_on": 14548
  },
  "wall_seconds": {
-  "cache_off": 1.0737644140026532,
-  "cache_on": 0.6714679449796677
+  "cache_off": 1.1244877750286832,
+  "cache_on": 0.7372396009741351
  }
 }

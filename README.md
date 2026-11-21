@@ -24,7 +24,7 @@ a wrapper around another serving engine.
 technique decides the outcome — a host-memory tier for the KV cache — and vLLM with its own
 offloading is the fastest system measured. minfer with every exact technique enabled
 recomputes the least (30–39% fewer prefill tokens per call than either baseline past
-capacity), is level with SGLang, and is 6–11% behind vLLM in throughput.**
+capacity), is level with SGLang there, and is 6–11% behind vLLM in throughput.**
 
 Each engine in its best measured configuration, 64–128 concurrent sessions (one H100 holds
 the KV of about 55–65):
@@ -243,7 +243,7 @@ flowchart LR
         prefill[prefill pass<br/>ragged spans · CUDA graph ≤ 1k tokens]
         decode[decode pass<br/>CUDA graph per batch bucket]
         model[Qwen2 layers<br/>merged projections + fused kernels]
-        attn[paged attention<br/>Triton decode · FlashInfer prefill]
+        attn[paged attention<br/>FlashInfer prefill + decode<br/>Triton decode as an option]
         kv[(paged KV store<br/>bf16 or mixed FP8)]
         prefill --> model
         decode --> model
@@ -277,14 +277,16 @@ How a request flows:
 |---|---|---|
 | Qwen2 forward pass, safetensors loading | `minfer/model/` | verified against `transformers` (fp32 max abs logit diff 8e-5); fused path in `fused.py` |
 | Block manager, paged KV store | `minfer/cache/` | 16-token blocks, ref counts, O(1) evictable count, optional mixed-precision FP8 |
-| Radix-tree prefix cache | `minfer/cache/radix_tree.py` | block-aligned edges, split on divergence, LRU leaf eviction |
+| Radix-tree prefix cache | `minfer/cache/radix_tree.py` | block-aligned edges, split on divergence, leaf eviction by LRU or by expected time to next use; content index for position-independent reuse |
+| Session-aware retention | `minfer/cache/retention.py` | per-tool pause model learned online; eviction order by expected remaining pause |
+| Host-memory KV tier | `minfer/cache/host_tier.py` | pinned block-major pool, asynchronous offload and restore on a side CUDA stream |
 | Scheduler | `minfer/scheduler/` | cache-aware admission with starvation guard, chunked prefill, preemption by recompute |
-| Attention | `minfer/attention/` | Triton paged decode kernel, FlashInfer prefill, CUDA graphs for decode and prefill |
+| Attention | `minfer/attention/` | FlashInfer prefill and decode kernels, a Triton paged decode kernel as an option, CUDA graphs for decode, prefill and speculative verification |
 | Speculative decoding | `minfer/spec/` | prompt-lookup and draft-model drafters; exact for greedy, unbiased for sampling |
 | Tensor parallelism | `minfer/parallel/` | Megatron-style shards, head-sharded KV cache (CPU-verified only) |
 | FP8 | `minfer/quant/` | E4M3 weights + activations; E4M3 KV cache with calibrated scales |
 | Server | `minfer/server/` | OpenAI-compatible; engine in its own process |
-| Benchmarks | `bench/` | agent workload generator + replay client, three-engine matrix, ablations, plots |
+| Benchmarks | `bench/` | synthetic agent workload and real-trace replay, three-engine matrix, pressure sweep, composition study, ablations, plots |
 
 ## Real coding-agent traces under memory pressure
 
@@ -628,24 +630,24 @@ last rows constrain the engine so that the scheduling features have decisions to
 <!-- BEGIN ablations -->
 | configuration | flags | 16 req/s: tok/s | TTFT p50 / p99 (ms) | TPOT p50 / p99 (ms) | hit rate | max: tok/s | TTFT p50 / p99 (ms) | TPOT p50 / p99 (ms) | hit rate |
 |---|---|---|---|---|---|---|---|---|---|
-| full system (defaults) | — | 799 | 40 / 82 | 2.99 / 4.20 | 93.2% | 4199 | 87 / 262 | 10.91 / 12.87 | 92.8% |
-| − prefix cache | `--no-prefix-cache` | 765 | 112 / 332 | 6.11 / 17.51 | — | 1206 | 1708 / 2480 | 18.36 / 20.36 | — |
-| − cache-aware admission (FCFS) | `--no-cache-aware-scheduling` | 799 | 41 / 82 | 2.97 / 4.36 | 93.2% | 4235 | 86 / 219 | 10.85 / 12.30 | 92.8% |
-| − CUDA graphs (decode and prefill) | `--no-cuda-graphs` | 749 | 49 / 92 | 8.17 / 10.79 | 93.2% | 3258 | 74 / 264 | 13.57 / 14.98 | 92.8% |
-| − prefill graphs only | `--no-prefill-graphs` | 797 | 43 / 83 | 3.06 / 4.70 | 93.2% | 4084 | 81 / 264 | 11.54 / 13.08 | 92.8% |
-| − chunked prefill | `--no-chunked-prefill` | 798 | 41 / 85 | 2.97 / 4.24 | 93.2% | 4224 | 82 / 274 | 10.92 / 12.51 | 92.8% |
-| − fused kernels | `--no-fused-kernels` | 781 | 44 / 88 | 5.05 / 7.03 | 93.2% | 3213 | 82 / 283 | 14.67 / 16.34 | 92.8% |
-| − Triton decode (FlashInfer decode) | `--decode-kernel` `flashinfer` | 798 | 41 / 81 | 2.90 / 3.88 | 93.2% | 4691 | 89 / 268 | 9.44 / 11.35 | 92.8% |
-| + speculation: prompt lookup | `--speculation` `ngram` | 799 | 42 / 83 | 3.28 / 6.86 | 93.2% | 2706 | 93 / 237 | 17.07 / 28.63 | 92.8% |
-| + speculation: draft model | `--speculation` `draft` | 723 | 86 / 136 | 12.32 / 28.39 | 93.2% | 1675 | 142 / 292 | 22.26 / 59.21 | 92.8% |
-| + FP8 KV cache | `--kv-cache-dtype` `fp8` | 794 | 45 / 83 | 3.59 / 4.89 | 93.2% | 3776 | 85 / 271 | 12.88 / 14.96 | 92.8% |
-| + FP8 weights | `--weight-dtype` `fp8` | 766 | 50 / 97 | 6.83 / 11.03 | 93.2% | 2573 | 88 / 361 | 18.68 / 21.37 | 92.8% |
-| 16 running sequences max | `--max-num-seqs` `16` | 798 | 41 / 82 | 2.97 / 4.36 | 93.2% | 2858 | 1082 / 1517 | 5.12 / 6.22 | 92.8% |
-| 16 running sequences max, FCFS | `--max-num-seqs` `16` `--no-cache-aware-scheduling` | 797 | 41 / 81 | 2.99 / 4.38 | 93.2% | 2962 | 962 / 1132 | 5.07 / 6.46 | 92.8% |
-| KV cache 8% of GPU memory | `--kv-memory-fraction` `0.08` | 799 | 40 / 83 | 2.98 / 4.17 | 93.2% | 4057 | 83 / 270 | 11.32 / 14.88 | 92.2% |
-| KV cache 8%, FCFS | `--kv-memory-fraction` `0.08` `--no-cache-aware-scheduling` | 799 | 40 / 78 | 3.00 / 4.19 | 93.2% | 4095 | 87 / 199 | 11.29 / 14.28 | 92.2% |
-| KV cache 8%, FP8 KV | `--kv-memory-fraction` `0.08` `--kv-cache-dtype` `fp8` | 795 | 45 / 82 | 3.62 / 4.93 | 93.2% | 3661 | 88 / 262 | 12.99 / 17.92 | 92.8% |
-| KV cache 8%, no prefix cache | `--kv-memory-fraction` `0.08` `--no-prefix-cache` | 765 | 106 / 341 | 6.34 / 16.25 | — | 1207 | 1706 / 2459 | 18.36 / 20.25 | — |
+| full system (defaults) | — | 800 | 41 / 84 | 2.92 / 3.94 | 93.2% | 4671 | 92 / 290 | 9.45 / 11.41 | 92.8% |
+| − prefix cache | `--no-prefix-cache` | 770 | 102 / 370 | 6.12 / 17.80 | — | 1226 | 1693 / 2439 | 18.16 / 19.76 | — |
+| − cache-aware admission (FCFS) | `--no-cache-aware-scheduling` | 798 | 37 / 82 | 2.92 / 3.94 | 93.2% | 4694 | 90 / 209 | 9.54 / 10.98 | 92.8% |
+| − CUDA graphs (decode and prefill) | `--no-cuda-graphs` | 748 | 48 / 86 | 8.08 / 9.74 | 93.2% | 3300 | 74 / 210 | 13.25 / 15.07 | 92.8% |
+| − prefill graphs only | `--no-prefill-graphs` | 799 | 42 / 80 | 2.99 / 4.03 | 93.2% | 4576 | 84 / 228 | 9.84 / 11.85 | 92.8% |
+| − chunked prefill | `--no-chunked-prefill` | 800 | 41 / 84 | 2.93 / 3.93 | 93.2% | 4794 | 87 / 249 | 9.23 / 11.08 | 92.8% |
+| − fused kernels | `--no-fused-kernels` | 782 | 45 / 85 | 4.92 / 6.29 | 93.2% | 3471 | 83 / 261 | 13.25 / 19.33 | 92.8% |
+| Triton decode kernel instead of FlashInfer's | `--decode-kernel` `triton` | 799 | 40 / 81 | 2.97 / 4.30 | 93.2% | 4196 | 84 / 256 | 11.04 / 12.68 | 92.8% |
+| + speculation: prompt lookup | `--speculation` `ngram` | 798 | 43 / 80 | 3.30 / 7.49 | 93.2% | 2694 | 93 / 265 | 17.02 / 28.69 | 92.8% |
+| + speculation: draft model | `--speculation` `draft` | 716 | 84 / 136 | 12.14 / 28.69 | 93.2% | 1631 | 142 / 297 | 22.43 / 58.57 | 92.8% |
+| + FP8 KV cache | `--kv-cache-dtype` `fp8` | 794 | 45 / 88 | 3.61 / 4.98 | 93.2% | 3771 | 89 / 261 | 12.58 / 15.35 | 92.8% |
+| + FP8 weights | `--weight-dtype` `fp8` | 768 | 49 / 103 | 6.66 / 9.51 | 93.2% | 2733 | 83 / 344 | 17.70 / 20.39 | 92.8% |
+| 16 running sequences max | `--max-num-seqs` `16` | 797 | 41 / 83 | 2.92 / 4.08 | 93.2% | 2980 | 1067 / 1469 | 4.96 / 6.33 | 92.8% |
+| 16 running sequences max, FCFS | `--max-num-seqs` `16` `--no-cache-aware-scheduling` | 797 | 40 / 85 | 2.91 / 3.88 | 93.2% | 3067 | 931 / 1105 | 4.92 / 6.07 | 92.8% |
+| KV cache 8% of GPU memory | `--kv-memory-fraction` `0.08` | 799 | 41 / 85 | 2.91 / 3.80 | 93.2% | 4564 | 91 / 279 | 9.90 / 11.74 | 92.4% |
+| KV cache 8%, FCFS | `--kv-memory-fraction` `0.08` `--no-cache-aware-scheduling` | 800 | 41 / 75 | 2.94 / 3.92 | 93.2% | 4531 | 90 / 224 | 9.79 / 13.28 | 92.1% |
+| KV cache 8%, FP8 KV | `--kv-memory-fraction` `0.08` `--kv-cache-dtype` `fp8` | 795 | 44 / 83 | 3.65 / 5.17 | 93.2% | 3613 | 89 / 286 | 13.46 / 18.30 | 92.8% |
+| KV cache 8%, no prefix cache | `--kv-memory-fraction` `0.08` `--no-prefix-cache` | 767 | 105 / 352 | 6.10 / 17.40 | — | 1224 | 1702 / 2438 | 18.20 / 19.81 | — |
 <!-- END ablations -->
 
 Reading the table:
@@ -653,8 +655,10 @@ Reading the table:
 - **The prefix cache is what the engine is for.** Turning it off costs a factor of several
   in saturated throughput and in time-to-first-token (second row), and the same again when
   memory is tight (last row).
-- **The execution-path work matters next**: fused kernels, CUDA graphs and the Triton
-  decode kernel each account for a visible share of per-token latency and throughput.
+- **The execution-path work matters next**: fused kernels and CUDA graphs each account for
+  a visible share of per-token latency and throughput. The custom Triton decode kernel
+  does not: swapping it in for FlashInfer's costs 10% of saturated throughput, which is
+  why it is not the default.
 - **Cache-aware admission shows no benefit in any scenario measured** — within noise with
   the default limits, and slightly worse than FCFS when a queue is forced. Every waiting
   request on this workload already has a long cached prefix, so the policy has little to
@@ -677,7 +681,7 @@ _Not measured yet._
 
 **What the profiler showed** ([`bench/profile_engine.py`](bench/profile_engine.py), traces
 in `bench/results/profiles/`): the decode step was bound by kernel count. "Before" is the
-engine without fused kernels, Triton decode or prefill graphs.
+engine without fused kernels or prefill graphs.
 
 <!-- BEGIN profile -->
 | scenario | CUDA kernels/step before | after | GPU ms/step before | after |
@@ -743,8 +747,17 @@ An earlier version of this table reported the Triton kernel as 1.35–3.5× fast
 FlashInfer's tensor-core path (the one SGLang selects) is faster everywhere, and against
 it the honest summary is the sentence under the table: a clear win only for many
 sequences with short contexts, parity from 4k-token contexts up, and a loss at batch 1
-with a very long context. minfer's own FlashInfer decode option now uses the tensor-core
-path too.
+with a very long context.
+
+**Inside the engine the Triton kernel loses, and it is no longer the default.** Parity in
+isolation did not carry over: with the same engine, traces and server, FlashInfer's
+tensor-core decode kernel gives 4,671 tok/s saturated at 1.5B against 4,196 with the
+Triton kernel (ablation table), and at 7B 2,046 against 1,852 with per-token latency 8.84
+vs 9.67 ms at 16 req/s (`bench/results/decode_kernel_7b.json`). The microbenchmark uses
+equal-length contexts and one batch shape at a time; the engine's batches are ragged, and
+the Triton path uploads a padded block table every step. Which of the two accounts for
+the difference was not measured. The kernel stays as an option (`--decode-kernel triton`)
+and as a tested, documented piece of work; `auto` selects FlashInfer's.
 
 **Chunked prefill** on a mixed long/short workload
 ([`bench/chunked_prefill.py`](bench/chunked_prefill.py)): smaller chunks bound the stalls

@@ -2339,3 +2339,69 @@ session), `reuse` (position-independent reuse at 15% recomputation; needs prefix
   been preempted, since the pinned sources may be exactly the memory it lacked.
   Regression test `test_a_sequence_preempted_after_its_copy_was_queued` (fails before,
   passes after). Only configurations with `--position-independent-reuse` were exposed.
+
+### M-029 Final re-measurement, and the Triton decode kernel loses its place as the default
+
+**Final reruns on the final code** (Phase 17): the three-engine matrix at 1.5B with the
+baselines' audit-selected flags; minfer's rows at 7B; the 1.5B ablations; the 1.5B
+micro-benchmarks (`make bench-micro`). The first pass of these reruns exposed the next
+finding, after which everything labelled "default" was measured once more.
+
+**In-engine A/B of the decode kernels.** The ablation "FlashInfer decode instead of Triton"
+had always been measured against FlashInfer's plain decode path. With the tensor-core path
+(M-019) it came out *faster* than the default: 4,691 vs 4,199 tok/s saturated at 1.5B.
+Checked at 7B on identical traces (`bench/unified_batches.py --experiment decode_kernel`
+→ `bench/results/decode_kernel_7b.json`):
+
+| 7B, agent workload | 4 req/s | 16 req/s | "max" |
+|---|---|---|---|
+| Triton decode: TPOT p50 (ms) | 7.29 | 9.67 | 26.81 |
+| FlashInfer decode: TPOT p50 (ms) | 7.18 | 8.84 | 23.97 |
+| Triton decode: output tok/s | 256 | 743 | 1,852 |
+| FlashInfer decode: output tok/s | 256 | 746 | 2,046 |
+
+- **The custom kernel underperforms the library kernel in the engine at both model sizes**
+  (−10% saturated throughput), although in isolation it matches or beats it at most shapes
+  (M-019). Not determined: whether the difference is ragged context lengths (the
+  microbenchmark uses equal ones), the per-step upload of a padded `[batch, max_pages]`
+  block table, or the kernels' behaviour at group size 7 (the microbenchmark is group
+  size 6).
+- **Decision.** `decode_kernel="auto"` now selects FlashInfer's kernel. The Triton kernel
+  stays: tested, documented, selectable, and reported as slower. This reverses D-036.
+- **What was re-measured on the new default:** minfer's matrix rows at 7B and 1.5B, the
+  1.5B ablations (their "Triton decode kernel instead" row is now the option, not the
+  default), the micro-benchmarks, and the full stack under memory pressure
+  (`minfer/session_host_fi` in `pressure_7b.json`).
+- **What was not, and is labelled so:** the pressure sweep's three minfer rows, the
+  composition study, the serve-level speculation benchmark and the unified-pass A/B were
+  measured with the Triton kernel, which their scripts now request explicitly. Their
+  conclusions are comparisons within one engine configuration and do not depend on it; the
+  absolute numbers do.
+
+**Final numbers** (all from the committed results files):
+
+| | minfer | vLLM | SGLang |
+|---|---|---|---|
+| 7B agent, 1–16 req/s: TTFT p50 (ms) | 47–58 | 78–81 | 57–67 |
+| 7B agent, 1–16 req/s: TPOT p50 (ms) | 6.62–8.95 | 6.26–7.88 | 6.27–8.20 |
+| 7B agent, saturated tok/s | 2,049 | 2,258 | 2,264 |
+| 1.5B agent, 1–16 req/s: TTFT p50 (ms) | 37–40 | 62–65 | 47–55 |
+| 1.5B agent, 1–16 req/s: TPOT p50 (ms) | 2.49–2.89 | 2.41–2.50 | 2.25–2.59 |
+| 1.5B agent, saturated tok/s | 4,744 | 4,890 | 5,741 |
+| real trace, 96 sessions, host tiers: tok/s | 759 | 809 | 772 |
+| real trace, 96 sessions, host tiers: TTFT p50 / p99 (ms) | 169 / 1,270 | 206 / 1,091 | 153 / 1,409 |
+| real trace, 96 sessions, host tiers: prefill tokens / call | 1,041 | 1,545 | 1,702 |
+| real trace, 128 sessions, host tiers: tok/s | 684 | 765 | 694 |
+
+The decode gap of M-022 is smaller with the default kernel (TPOT 1.06–1.14× of vLLM at
+1–16 req/s at 7B instead of 1.06–1.24×; saturated 0.91× instead of 0.81×) and is still
+there. With host tiers on the real trace, minfer is at 0.94× / 0.94× / 0.89× of vLLM's
+throughput at 64 / 96 / 128 sessions and level with SGLang at 96 and 128, while computing
+30–39% fewer prefill tokens per call than either past capacity.
+
+**Phase 17 acceptance.** Every number in the README is generated from a committed results
+file by `bench/readme_tables.py` (`--check` runs in CI), or quoted from one in prose that
+was re-checked against the final files. Not re-measured at the end, and so older than the
+final commit: the fairness audit (Phase 13 code, 1.5B), the Phase 12 reproduction check,
+and the Triton-kernel-era benchmarks listed above; each results file since Phase 14
+records its commit.
