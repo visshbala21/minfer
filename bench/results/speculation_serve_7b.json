@@ -1,0 +1,1659 @@
+{
+ "model": "Qwen/Qwen2.5-7B-Instruct",
+ "rates": [
+  "1",
+  "4",
+  "8"
+ ],
+ "configs": {
+  "off": {
+   "label": "no speculation",
+   "flags": [],
+   "command": [
+    ".venv/bin/python",
+    "-m",
+    "minfer.cli",
+    "serve",
+    "--model",
+    "Qwen/Qwen2.5-7B-Instruct",
+    "--port",
+    "8071",
+    "--log-level",
+    "warning"
+   ],
+   "code": {
+    "commit": "47e54eed31e9bd3e36bf3d20f712a86be0141551",
+    "dirty": false
+   },
+   "1": {
+    "rate": "1",
+    "seed": 0,
+    "sessions": 24,
+    "trace_sha256": "232e4535ec3f91495bd1b1afec28da7642ea9bdc4849db98a1130b370b9f7d27",
+    "server_prefix_cache_hit_rate": 0.9358884923331728,
+    "requests": 268,
+    "completed": 268,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 224.94846798898652,
+    "prompt_tokens": 1777796,
+    "completion_tokens": 19903,
+    "request_throughput": 1.19138397516502,
+    "output_tokens_per_second": 88.47804200637833,
+    "total_tokens_per_second": 7991.603659590228,
+    "ttft_ms": {
+     "p50": 47.62910649878904,
+     "p90": 69.88730841549113,
+     "p99": 90.67530921602155,
+     "mean": 49.84300232878122,
+     "max": 94.88433104706928
+    },
+    "ttft_first_turn_ms": {
+     "p50": 32.25212049437687,
+     "p90": 40.36946009728126,
+     "p99": 41.69028175470885,
+     "mean": 33.15049707695531,
+     "max": 41.999841982033104
+    },
+    "ttft_later_turns_ms": {
+     "p50": 48.542346979957074,
+     "p90": 70.19818999688141,
+     "p99": 90.79474064928945,
+     "mean": 51.4848880912559,
+     "max": 94.88433104706928
+    },
+    "tpot_ms": {
+     "p50": 6.629464649416012,
+     "p90": 7.179914849062824,
+     "p99": 7.829279337699637,
+     "mean": 6.72219653287947,
+     "max": 8.242844207484698
+    },
+    "e2e_ms": {
+     "p50": 440.5922224977985,
+     "p90": 899.0781223867089,
+     "p99": 1486.5191681205756,
+     "mean": 543.2156944951936,
+     "max": 1518.3370580198243
+    },
+    "client_reported_cached_token_fraction": 0.9357474085890619,
+    "drafted_tokens": 0.0,
+    "accepted_tokens": 0.0,
+    "acceptance_rate": null,
+    "drafted_share_of_output": 0.0,
+    "tokens_per_step": 1.3017855974883903
+   },
+   "4": {
+    "rate": "4",
+    "seed": 2,
+    "sessions": 24,
+    "trace_sha256": "6d3b12a9d4e1ec9c7dbd61188e152cc8139f196c6073dd6389bf33953aef6a68",
+    "server_prefix_cache_hit_rate": 0.9309297868665207,
+    "requests": 231,
+    "completed": 231,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 67.09082643600414,
+    "prompt_tokens": 1464900,
+    "completion_tokens": 17189,
+    "request_throughput": 3.4430936727295163,
+    "output_tokens_per_second": 256.2049226863535,
+    "total_tokens_per_second": 22090.784668060674,
+    "ttft_ms": {
+     "p50": 52.78837797231972,
+     "p90": 72.79639196349308,
+     "p99": 91.4116257277783,
+     "mean": 54.00393682948285,
+     "max": 94.40940397325903
+    },
+    "ttft_first_turn_ms": {
+     "p50": 36.591927957488224,
+     "p90": 51.44928322988562,
+     "p99": 74.5845129614463,
+     "mean": 39.33843120466918,
+     "max": 79.34580597793683
+    },
+    "ttft_later_turns_ms": {
+     "p50": 53.981507022399455,
+     "p90": 72.89645100245252,
+     "p99": 91.49141637491994,
+     "mean": 55.704285307722124,
+     "max": 94.40940397325903
+    },
+    "tpot_ms": {
+     "p50": 7.264763085255796,
+     "p90": 8.270012702465662,
+     "p99": 9.013979076532278,
+     "mean": 7.35778559716959,
+     "max": 9.17543748893993
+    },
+    "e2e_ms": {
+     "p50": 493.08806797489524,
+     "p90": 965.8724950277247,
+     "p99": 1413.8268380076615,
+     "mean": 594.0663205062591,
+     "max": 1501.0657230159268
+    },
+    "client_reported_cached_token_fraction": 0.9307829885999044,
+    "drafted_tokens": 0.0,
+    "accepted_tokens": 0.0,
+    "acceptance_rate": null,
+    "drafted_share_of_output": 0.0,
+    "tokens_per_step": 2.325666350967393
+   },
+   "8": {
+    "rate": "8",
+    "seed": 3,
+    "sessions": 48,
+    "trace_sha256": "684eeec3fcd41ad6daf749f974b08616cb5632b39c5b1ce23b8f2d962e3c882a",
+    "server_prefix_cache_hit_rate": 0.9297968709107537,
+    "requests": 469,
+    "completed": 469,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 84.97535409603734,
+    "prompt_tokens": 3091656,
+    "completion_tokens": 35274,
+    "request_throughput": 5.519247374596947,
+    "output_tokens_per_second": 415.1085967836518,
+    "total_tokens_per_second": 36798.08143507128,
+    "ttft_ms": {
+     "p50": 56.45336100133136,
+     "p90": 83.06438041618094,
+     "p99": 110.36709853447972,
+     "mean": 59.8517795374343,
+     "max": 310.2557569509372
+    },
+    "ttft_first_turn_ms": {
+     "p50": 38.810921483673155,
+     "p90": 61.77801378653386,
+     "p99": 81.94227089930794,
+     "mean": 41.75705774954016,
+     "max": 91.22773801209405
+    },
+    "ttft_later_turns_ms": {
+     "p50": 57.85414099227637,
+     "p90": 85.0962630356662,
+     "p99": 110.94594639725985,
+     "mean": 61.91483570327495,
+     "max": 310.2557569509372
+    },
+    "tpot_ms": {
+     "p50": 7.87912163851333,
+     "p90": 9.43163993541734,
+     "p99": 12.2749905215712,
+     "mean": 8.1074192413816,
+     "max": 18.864925425132796
+    },
+    "e2e_ms": {
+     "p50": 545.0784669956192,
+     "p90": 1081.909713789355,
+     "p99": 1786.3982584048063,
+     "mean": 659.7330500205446,
+     "max": 1899.8256270424463
+    },
+    "client_reported_cached_token_fraction": 0.9296558219931325,
+    "drafted_tokens": 0.0,
+    "accepted_tokens": 0.0,
+    "acceptance_rate": null,
+    "drafted_share_of_output": 0.0,
+    "tokens_per_step": 3.563750252576278
+   }
+  },
+  "ngram_n3_k4": {
+   "label": "prompt lookup, n=3, up to 4 drafted",
+   "flags": [
+    "--speculation",
+    "ngram",
+    "--ngram-size",
+    "3",
+    "--num-draft-tokens",
+    "4"
+   ],
+   "command": [
+    ".venv/bin/python",
+    "-m",
+    "minfer.cli",
+    "serve",
+    "--model",
+    "Qwen/Qwen2.5-7B-Instruct",
+    "--port",
+    "8071",
+    "--log-level",
+    "warning",
+    "--speculation",
+    "ngram",
+    "--ngram-size",
+    "3",
+    "--num-draft-tokens",
+    "4"
+   ],
+   "code": {
+    "commit": "1034b5df3f07bd45394c78bc4c8b130a92df4442",
+    "dirty": false
+   },
+   "1": {
+    "rate": "1",
+    "seed": 0,
+    "sessions": 24,
+    "trace_sha256": "232e4535ec3f91495bd1b1afec28da7642ea9bdc4849db98a1130b370b9f7d27",
+    "server_prefix_cache_hit_rate": 0.9358794910684951,
+    "requests": 268,
+    "completed": 268,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 224.6111933380016,
+    "prompt_tokens": 1777796,
+    "completion_tokens": 19903,
+    "request_throughput": 1.1931729492960113,
+    "output_tokens_per_second": 88.61090003671087,
+    "total_tokens_per_second": 8003.6037976734715,
+    "ttft_ms": {
+     "p50": 49.4537795020733,
+     "p90": 71.0250896110665,
+     "p99": 90.18497819837648,
+     "mean": 51.1124132493417,
+     "max": 99.46527000283822
+    },
+    "ttft_first_turn_ms": {
+     "p50": 30.16670950455591,
+     "p90": 31.366265704855323,
+     "p99": 40.6015052011935,
+     "mean": 30.147607380058616,
+     "max": 43.19630702957511
+    },
+    "ttft_later_turns_ms": {
+     "p50": 51.62521998863667,
+     "p90": 71.81220229831526,
+     "p99": 90.24959508620668,
+     "mean": 53.17452530205807,
+     "max": 99.46527000283822
+    },
+    "tpot_ms": {
+     "p50": 5.755159684721367,
+     "p90": 7.318471222932107,
+     "p99": 8.788076203515011,
+     "mean": 5.4727141758930005,
+     "max": 10.039674800160961
+    },
+    "e2e_ms": {
+     "p50": 391.360370995244,
+     "p90": 761.6244771983474,
+     "p99": 1238.883893349557,
+     "mean": 452.0446225662399,
+     "max": 1444.8092950042337
+    },
+    "client_reported_cached_token_fraction": 0.935738408681311,
+    "drafted_tokens": 9028.0,
+    "accepted_tokens": 5562.0,
+    "acceptance_rate": 0.6160832964111652,
+    "drafted_share_of_output": 0.27945535848867004,
+    "tokens_per_step": 1.7300938803894297
+   },
+   "4": {
+    "rate": "4",
+    "seed": 2,
+    "sessions": 24,
+    "trace_sha256": "6d3b12a9d4e1ec9c7dbd61188e152cc8139f196c6073dd6389bf33953aef6a68",
+    "server_prefix_cache_hit_rate": 0.9309297868665207,
+    "requests": 231,
+    "completed": 231,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 65.59499324799981,
+    "prompt_tokens": 1464900,
+    "completion_tokens": 17189,
+    "request_throughput": 3.5216102412975534,
+    "output_tokens_per_second": 262.04743912408503,
+    "total_tokens_per_second": 22594.544592703245,
+    "ttft_ms": {
+     "p50": 55.323748965747654,
+     "p90": 80.92238497920334,
+     "p99": 101.58587569021618,
+     "mean": 58.36516282837677,
+     "max": 179.9992820015177
+    },
+    "ttft_first_turn_ms": {
+     "p50": 38.646814035018906,
+     "p90": 44.55747579340823,
+     "p99": 73.78297762246801,
+     "mean": 39.22767404340751,
+     "max": 80.67838498391211
+    },
+    "ttft_later_turns_ms": {
+     "p50": 57.72528098896146,
+     "p90": 81.88084219582379,
+     "p99": 101.93342472543009,
+     "mean": 60.584002107793495,
+     "max": 179.9992820015177
+    },
+    "tpot_ms": {
+     "p50": 6.842119155408,
+     "p90": 9.761872716531482,
+     "p99": 13.089180498769156,
+     "mean": 6.7373135739156,
+     "max": 14.877152394834221
+    },
+    "e2e_ms": {
+     "p50": 472.02779696090147,
+     "p90": 1001.5214320155792,
+     "p99": 1500.4486114776219,
+     "mean": 555.3750654892166,
+     "max": 1949.442422017455
+    },
+    "client_reported_cached_token_fraction": 0.9307829885999044,
+    "drafted_tokens": 6758.0,
+    "accepted_tokens": 4292.0,
+    "acceptance_rate": 0.6350991417579166,
+    "drafted_share_of_output": 0.2496945721100704,
+    "tokens_per_step": 2.8937710437710438
+   },
+   "8": {
+    "rate": "8",
+    "seed": 3,
+    "sessions": 48,
+    "trace_sha256": "684eeec3fcd41ad6daf749f974b08616cb5632b39c5b1ce23b8f2d962e3c882a",
+    "server_prefix_cache_hit_rate": 0.9297968709107537,
+    "requests": 469,
+    "completed": 469,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 84.5922637199983,
+    "prompt_tokens": 3091656,
+    "completion_tokens": 35274,
+    "request_throughput": 5.5442422199788535,
+    "output_tokens_per_second": 416.98848628472086,
+    "total_tokens_per_second": 36964.72777168119,
+    "ttft_ms": {
+     "p50": 60.72195299202576,
+     "p90": 92.92533036787063,
+     "p99": 126.3148842076771,
+     "mean": 64.26538028635149,
+     "max": 151.1292410432361
+    },
+    "ttft_first_turn_ms": {
+     "p50": 43.38611851562746,
+     "p90": 54.82482439256273,
+     "p99": 97.81307902478153,
+     "mean": 45.870391853289526,
+     "max": 121.858459955547
+    },
+    "ttft_later_turns_ms": {
+     "p50": 62.54393298877403,
+     "p90": 94.55061901826411,
+     "p99": 126.41390099888667,
+     "mean": 66.36267112907589,
+     "max": 151.1292410432361
+    },
+    "tpot_ms": {
+     "p50": 8.21207229541067,
+     "p90": 12.89571738470611,
+     "p99": 16.775130109120006,
+     "mean": 8.474111520060562,
+     "max": 18.63030164358428
+    },
+    "e2e_ms": {
+     "p50": 596.0626769810915,
+     "p90": 1190.4810251900926,
+     "p99": 2107.9987053619698,
+     "mean": 692.0168730021983,
+     "max": 2437.065064033959
+    },
+    "client_reported_cached_token_fraction": 0.9296558219931325,
+    "drafted_tokens": 13678.0,
+    "accepted_tokens": 8546.0,
+    "acceptance_rate": 0.624798947214505,
+    "drafted_share_of_output": 0.24227476328173725,
+    "tokens_per_step": 4.708222103577149
+   }
+  },
+  "ngram_n2_k4": {
+   "label": "prompt lookup, n=2, up to 4 drafted",
+   "flags": [
+    "--speculation",
+    "ngram",
+    "--ngram-size",
+    "2",
+    "--num-draft-tokens",
+    "4"
+   ],
+   "command": [
+    ".venv/bin/python",
+    "-m",
+    "minfer.cli",
+    "serve",
+    "--model",
+    "Qwen/Qwen2.5-7B-Instruct",
+    "--port",
+    "8071",
+    "--log-level",
+    "warning",
+    "--speculation",
+    "ngram",
+    "--ngram-size",
+    "2",
+    "--num-draft-tokens",
+    "4"
+   ],
+   "code": {
+    "commit": "1034b5df3f07bd45394c78bc4c8b130a92df4442",
+    "dirty": false
+   },
+   "1": {
+    "rate": "1",
+    "seed": 0,
+    "sessions": 24,
+    "trace_sha256": "232e4535ec3f91495bd1b1afec28da7642ea9bdc4849db98a1130b370b9f7d27",
+    "server_prefix_cache_hit_rate": 0.9358794910684951,
+    "requests": 268,
+    "completed": 268,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 224.60731627501082,
+    "prompt_tokens": 1777796,
+    "completion_tokens": 19903,
+    "request_throughput": 1.1931935452710671,
+    "output_tokens_per_second": 88.61242959526137,
+    "total_tokens_per_second": 8003.7419520158655,
+    "ttft_ms": {
+     "p50": 48.58382750535384,
+     "p90": 70.59078767197207,
+     "p99": 86.5443742199568,
+     "mean": 50.065321988102966,
+     "max": 90.70284100016579
+    },
+    "ttft_first_turn_ms": {
+     "p50": 29.66681998805143,
+     "p90": 36.28852459951303,
+     "p99": 39.37013745831791,
+     "mean": 30.767423163827818,
+     "max": 39.61934498511255
+    },
+    "ttft_later_turns_ms": {
+     "p50": 49.3985669745598,
+     "p90": 70.95253370935097,
+     "p99": 86.82832637510727,
+     "mean": 51.96347597081856,
+     "max": 90.70284100016579
+    },
+    "tpot_ms": {
+     "p50": 5.913269031776249,
+     "p90": 7.378417985492911,
+     "p99": 8.651314137566464,
+     "mean": 5.6627529026503876,
+     "max": 10.877436344181834
+    },
+    "e2e_ms": {
+     "p50": 401.00130799692124,
+     "p90": 785.4988300066908,
+     "p99": 1310.5284243536878,
+     "mean": 469.11947437259715,
+     "max": 1708.4078489569947
+    },
+    "client_reported_cached_token_fraction": 0.935738408681311,
+    "drafted_tokens": 9677.0,
+    "accepted_tokens": 5234.0,
+    "acceptance_rate": 0.5408701043711894,
+    "drafted_share_of_output": 0.2629754308395719,
+    "tokens_per_step": 1.6808546575458154
+   },
+   "4": {
+    "rate": "4",
+    "seed": 2,
+    "sessions": 24,
+    "trace_sha256": "6d3b12a9d4e1ec9c7dbd61188e152cc8139f196c6073dd6389bf33953aef6a68",
+    "server_prefix_cache_hit_rate": 0.9309297868665207,
+    "requests": 231,
+    "completed": 231,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 65.77027649903903,
+    "prompt_tokens": 1464900,
+    "completion_tokens": 17189,
+    "request_throughput": 3.512224857430471,
+    "output_tokens_per_second": 261.3490609280189,
+    "total_tokens_per_second": 22534.328254217617,
+    "ttft_ms": {
+     "p50": 54.86458900850266,
+     "p90": 78.22029601084068,
+     "p99": 99.30413750116712,
+     "mean": 56.84885103961058,
+     "max": 103.65653299959376
+    },
+    "ttft_first_turn_ms": {
+     "p50": 37.43620798923075,
+     "p90": 45.10707688750699,
+     "p99": 55.894548391806886,
+     "mean": 37.46591342254154,
+     "max": 57.99302400555462
+    },
+    "ttft_later_turns_ms": {
+     "p50": 57.50624102074653,
+     "p90": 78.66224800236523,
+     "p99": 99.65377309941687,
+     "mean": 59.09614815463308,
+     "max": 103.65653299959376
+    },
+    "tpot_ms": {
+     "p50": 6.989717801522655,
+     "p90": 10.416581193784447,
+     "p99": 13.521771507654217,
+     "mean": 7.086565406419326,
+     "max": 14.13573742537026
+    },
+    "e2e_ms": {
+     "p50": 497.5402550189756,
+     "p90": 1029.5346989878453,
+     "p99": 1575.961903628193,
+     "mean": 579.9003139310073,
+     "max": 2055.2019129972905
+    },
+    "client_reported_cached_token_fraction": 0.9307829885999044,
+    "drafted_tokens": 7087.0,
+    "accepted_tokens": 3931.0,
+    "acceptance_rate": 0.5546775786651615,
+    "drafted_share_of_output": 0.22869276863110127,
+    "tokens_per_step": 2.875376380060221
+   },
+   "8": {
+    "rate": "8",
+    "seed": 3,
+    "sessions": 48,
+    "trace_sha256": "684eeec3fcd41ad6daf749f974b08616cb5632b39c5b1ce23b8f2d962e3c882a",
+    "server_prefix_cache_hit_rate": 0.9297968709107537,
+    "requests": 469,
+    "completed": 469,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 85.18965538404882,
+    "prompt_tokens": 3091656,
+    "completion_tokens": 35274,
+    "request_throughput": 5.505363273107183,
+    "output_tokens_per_second": 414.06435841275646,
+    "total_tokens_per_second": 36705.512962850844,
+    "ttft_ms": {
+     "p50": 61.22944102389738,
+     "p90": 88.78909061895683,
+     "p99": 127.06118595786386,
+     "mean": 63.48707304889165,
+     "max": 159.85738101880997
+    },
+    "ttft_first_turn_ms": {
+     "p50": 40.832202503224835,
+     "p90": 70.63235891982914,
+     "p99": 95.99690701870713,
+     "mean": 47.124855507718166,
+     "max": 98.50889298832044
+    },
+    "ttft_later_turns_ms": {
+     "p50": 62.68269900465384,
+     "p90": 88.84300198405981,
+     "p99": 131.7285513971002,
+     "mean": 65.35259903933424,
+     "max": 159.85738101880997
+    },
+    "tpot_ms": {
+     "p50": 9.010075943396341,
+     "p90": 13.612167551917464,
+     "p99": 16.95606323604641,
+     "mean": 8.976258138447706,
+     "max": 19.008224836799727
+    },
+    "e2e_ms": {
+     "p50": 635.2534259785898,
+     "p90": 1276.8969210330397,
+     "p99": 2177.368613267317,
+     "mean": 731.7978611335343,
+     "max": 2723.2193980016746
+    },
+    "client_reported_cached_token_fraction": 0.9296558219931325,
+    "drafted_tokens": 15101.0,
+    "accepted_tokens": 8172.0,
+    "acceptance_rate": 0.5411562148202106,
+    "drafted_share_of_output": 0.23167205307025004,
+    "tokens_per_step": 4.820828208282083
+   }
+  },
+  "ngram_n4_k4": {
+   "label": "prompt lookup, n=4, up to 4 drafted",
+   "flags": [
+    "--speculation",
+    "ngram",
+    "--ngram-size",
+    "4",
+    "--num-draft-tokens",
+    "4"
+   ],
+   "command": [
+    ".venv/bin/python",
+    "-m",
+    "minfer.cli",
+    "serve",
+    "--model",
+    "Qwen/Qwen2.5-7B-Instruct",
+    "--port",
+    "8071",
+    "--log-level",
+    "warning",
+    "--speculation",
+    "ngram",
+    "--ngram-size",
+    "4",
+    "--num-draft-tokens",
+    "4"
+   ],
+   "code": {
+    "commit": "1034b5df3f07bd45394c78bc4c8b130a92df4442",
+    "dirty": false
+   },
+   "1": {
+    "rate": "1",
+    "seed": 0,
+    "sessions": 24,
+    "trace_sha256": "232e4535ec3f91495bd1b1afec28da7642ea9bdc4849db98a1130b370b9f7d27",
+    "server_prefix_cache_hit_rate": 0.9358794910684951,
+    "requests": 268,
+    "completed": 268,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 224.65821082994808,
+    "prompt_tokens": 1777796,
+    "completion_tokens": 19903,
+    "request_throughput": 1.1929232366354903,
+    "output_tokens_per_second": 88.59235514461254,
+    "total_tokens_per_second": 8001.9287670760605,
+    "ttft_ms": {
+     "p50": 47.703981515951455,
+     "p90": 68.49389686249197,
+     "p99": 86.58121980261055,
+     "mean": 49.654901215768376,
+     "max": 91.37945098336786
+    },
+    "ttft_first_turn_ms": {
+     "p50": 30.51653248257935,
+     "p90": 40.1090013096109,
+     "p99": 44.95367460127454,
+     "mean": 32.41457037559788,
+     "max": 46.248271013610065
+    },
+    "ttft_later_turns_ms": {
+     "p50": 51.42574248020537,
+     "p90": 69.58899919409305,
+     "p99": 86.94732876028864,
+     "mean": 51.350671462342525,
+     "max": 91.37945098336786
+    },
+    "tpot_ms": {
+     "p50": 6.029370006300186,
+     "p90": 7.0973797942241275,
+     "p99": 8.610709933676176,
+     "mean": 5.564612786887478,
+     "max": 10.296620516843785
+    },
+    "e2e_ms": {
+     "p50": 386.59529597498477,
+     "p90": 762.5496324966664,
+     "p99": 1240.8819814195158,
+     "mean": 455.562327147041,
+     "max": 1403.3219590201043
+    },
+    "client_reported_cached_token_fraction": 0.935738408681311,
+    "drafted_tokens": 7976.0,
+    "accepted_tokens": 5078.0,
+    "acceptance_rate": 0.6366599799398195,
+    "drafted_share_of_output": 0.2551374164698789,
+    "tokens_per_step": 1.6556858830380168
+   },
+   "4": {
+    "rate": "4",
+    "seed": 2,
+    "sessions": 24,
+    "trace_sha256": "6d3b12a9d4e1ec9c7dbd61188e152cc8139f196c6073dd6389bf33953aef6a68",
+    "server_prefix_cache_hit_rate": 0.9309297868665207,
+    "requests": 231,
+    "completed": 231,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 65.84788657794707,
+    "prompt_tokens": 1464900,
+    "completion_tokens": 17189,
+    "request_throughput": 3.508085255349161,
+    "output_tokens_per_second": 261.04102794024556,
+    "total_tokens_per_second": 22507.768692706417,
+    "ttft_ms": {
+     "p50": 53.900707978755236,
+     "p90": 77.83704198664054,
+     "p99": 105.70950930123207,
+     "mean": 56.22408370859316,
+     "max": 114.39507303293794
+    },
+    "ttft_first_turn_ms": {
+     "p50": 36.95351502392441,
+     "p90": 44.87739111064002,
+     "p99": 71.21832096774595,
+     "mean": 38.23648641021767,
+     "max": 78.14964395947754
+    },
+    "ttft_later_turns_ms": {
+     "p50": 56.189786992035806,
+     "p90": 78.30810338491574,
+     "p99": 107.768466664711,
+     "mean": 58.30960223594104,
+     "max": 114.39507303293794
+    },
+    "tpot_ms": {
+     "p50": 6.80864339798917,
+     "p90": 9.948266790584164,
+     "p99": 12.989180613430062,
+     "mean": 6.761319044231123,
+     "max": 14.987599289988315
+    },
+    "e2e_ms": {
+     "p50": 487.7510849619284,
+     "p90": 992.5852820160799,
+     "p99": 1485.015667084371,
+     "mean": 553.5157335008942,
+     "max": 2060.787871014327
+    },
+    "client_reported_cached_token_fraction": 0.9307829885999044,
+    "drafted_tokens": 5776.0,
+    "accepted_tokens": 3845.0,
+    "acceptance_rate": 0.665685595567867,
+    "drafted_share_of_output": 0.22368956891034963,
+    "tokens_per_step": 2.7777957336780865
+   },
+   "8": {
+    "rate": "8",
+    "seed": 3,
+    "sessions": 48,
+    "trace_sha256": "684eeec3fcd41ad6daf749f974b08616cb5632b39c5b1ce23b8f2d962e3c882a",
+    "server_prefix_cache_hit_rate": 0.9297916949055492,
+    "requests": 469,
+    "completed": 469,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 84.88980055798311,
+    "prompt_tokens": 3091656,
+    "completion_tokens": 35274,
+    "request_throughput": 5.524809775935972,
+    "output_tokens_per_second": 415.5269510370266,
+    "total_tokens_per_second": 36835.16723383256,
+    "ttft_ms": {
+     "p50": 58.16260603023693,
+     "p90": 86.80205839918925,
+     "p99": 108.93449932802467,
+     "mean": 61.6435666721481,
+     "max": 136.04039599886164
+    },
+    "ttft_first_turn_ms": {
+     "p50": 41.30564851220697,
+     "p90": 65.81605370738544,
+     "p99": 97.39013755170163,
+     "mean": 45.72954030785089,
+     "max": 100.19084496889263
+    },
+    "ttft_later_turns_ms": {
+     "p50": 60.41198404273018,
+     "p90": 87.87413203390315,
+     "p99": 109.75263577420266,
+     "mean": 63.457992480904075,
+     "max": 136.04039599886164
+    },
+    "tpot_ms": {
+     "p50": 8.523791200215264,
+     "p90": 12.692110791287067,
+     "p99": 16.956312116879655,
+     "mean": 8.576441716404196,
+     "max": 19.30574873750586
+    },
+    "e2e_ms": {
+     "p50": 609.0267389663495,
+     "p90": 1216.081410611514,
+     "p99": 2025.6364295678209,
+     "mean": 692.3453573273795,
+     "max": 2297.060825978406
+    },
+    "client_reported_cached_token_fraction": 0.9296506467731209,
+    "drafted_tokens": 11850.0,
+    "accepted_tokens": 7565.0,
+    "acceptance_rate": 0.6383966244725738,
+    "drafted_share_of_output": 0.2144639110959914,
+    "tokens_per_step": 4.574503955388407
+   }
+  },
+  "ngram_n3_k8": {
+   "label": "prompt lookup, n=3, up to 8 drafted",
+   "flags": [
+    "--speculation",
+    "ngram",
+    "--ngram-size",
+    "3",
+    "--num-draft-tokens",
+    "8"
+   ],
+   "command": [
+    ".venv/bin/python",
+    "-m",
+    "minfer.cli",
+    "serve",
+    "--model",
+    "Qwen/Qwen2.5-7B-Instruct",
+    "--port",
+    "8071",
+    "--log-level",
+    "warning",
+    "--speculation",
+    "ngram",
+    "--ngram-size",
+    "3",
+    "--num-draft-tokens",
+    "8"
+   ],
+   "code": {
+    "commit": "1034b5df3f07bd45394c78bc4c8b130a92df4442",
+    "dirty": false
+   },
+   "1": {
+    "rate": "1",
+    "seed": 0,
+    "sessions": 24,
+    "trace_sha256": "232e4535ec3f91495bd1b1afec28da7642ea9bdc4849db98a1130b370b9f7d27",
+    "server_prefix_cache_hit_rate": 0.9358794910684951,
+    "requests": 268,
+    "completed": 268,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 224.5379716430325,
+    "prompt_tokens": 1777796,
+    "completion_tokens": 19903,
+    "request_throughput": 1.1935620422636704,
+    "output_tokens_per_second": 88.63979599691729,
+    "total_tokens_per_second": 8006.213767967754,
+    "ttft_ms": {
+     "p50": 47.20039101084694,
+     "p90": 69.2643950053025,
+     "p99": 89.65789600275454,
+     "mean": 49.61030221233186,
+     "max": 97.92361099971458
+    },
+    "ttft_first_turn_ms": {
+     "p50": 29.816792492056265,
+     "p90": 37.026783463079475,
+     "p99": 39.87136372656096,
+     "mean": 30.94871407423246,
+     "max": 40.019129985012114
+    },
+    "ttft_later_turns_ms": {
+     "p50": 49.49903700617142,
+     "p90": 69.83067388064228,
+     "p99": 89.99615200795232,
+     "mean": 51.44586825870229,
+     "max": 97.92361099971458
+    },
+    "tpot_ms": {
+     "p50": 5.7105168762687875,
+     "p90": 7.111704127554643,
+     "p99": 8.613296749756852,
+     "mean": 5.329061182703003,
+     "max": 9.814744100246267
+    },
+    "e2e_ms": {
+     "p50": 383.78552297945134,
+     "p90": 759.1399735014421,
+     "p99": 1253.5594728542462,
+     "mean": 440.7851851502704,
+     "max": 1432.054995035287
+    },
+    "client_reported_cached_token_fraction": 0.935738408681311,
+    "drafted_tokens": 11058.0,
+    "accepted_tokens": 5749.0,
+    "acceptance_rate": 0.5198950985711702,
+    "drafted_share_of_output": 0.28885092699593024,
+    "tokens_per_step": 1.72979315139927
+   },
+   "4": {
+    "rate": "4",
+    "seed": 2,
+    "sessions": 24,
+    "trace_sha256": "6d3b12a9d4e1ec9c7dbd61188e152cc8139f196c6073dd6389bf33953aef6a68",
+    "server_prefix_cache_hit_rate": 0.9309297868665207,
+    "requests": 231,
+    "completed": 231,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 65.55110880901339,
+    "prompt_tokens": 1464900,
+    "completion_tokens": 17189,
+    "request_throughput": 3.5239678503842047,
+    "output_tokens_per_second": 262.22287177599173,
+    "total_tokens_per_second": 22609.6709411605,
+    "ttft_ms": {
+     "p50": 53.224004979711026,
+     "p90": 77.96583202434704,
+     "p99": 94.67680852976628,
+     "mean": 55.7269045608864,
+     "max": 97.62578399386257
+    },
+    "ttft_first_turn_ms": {
+     "p50": 38.350621005520225,
+     "p90": 55.075796786695705,
+     "p99": 68.56274113059044,
+     "mean": 40.24270424997667,
+     "max": 70.61793096363544
+    },
+    "ttft_later_turns_ms": {
+     "p50": 55.16181403072551,
+     "p90": 78.41824280330911,
+     "p99": 94.70731612876989,
+     "mean": 57.5221741621513,
+     "max": 97.62578399386257
+    },
+    "tpot_ms": {
+     "p50": 6.713167842463008,
+     "p90": 9.908533980846048,
+     "p99": 12.694260327065894,
+     "mean": 6.491129265180838,
+     "max": 13.753663053074362
+    },
+    "e2e_ms": {
+     "p50": 463.44123902963474,
+     "p90": 987.1073089889251,
+     "p99": 1473.0273235065392,
+     "mean": 535.3581112574129,
+     "max": 2113.540477992501
+    },
+    "client_reported_cached_token_fraction": 0.9307829885999044,
+    "drafted_tokens": 8348.0,
+    "accepted_tokens": 4536.0,
+    "acceptance_rate": 0.5433636799233349,
+    "drafted_share_of_output": 0.2638896968991797,
+    "tokens_per_step": 2.8562645397141906
+   },
+   "8": {
+    "rate": "8",
+    "seed": 3,
+    "sessions": 48,
+    "trace_sha256": "684eeec3fcd41ad6daf749f974b08616cb5632b39c5b1ce23b8f2d962e3c882a",
+    "server_prefix_cache_hit_rate": 0.9297968709107537,
+    "requests": 469,
+    "completed": 469,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 84.17934469803004,
+    "prompt_tokens": 3091656,
+    "completion_tokens": 35274,
+    "request_throughput": 5.571438001595367,
+    "output_tokens_per_second": 419.0339105933368,
+    "total_tokens_per_second": 37146.048252299785,
+    "ttft_ms": {
+     "p50": 59.890793985687196,
+     "p90": 88.10562199214473,
+     "p99": 112.72690098034217,
+     "mean": 62.075768863143864,
+     "max": 127.91559600736946
+    },
+    "ttft_first_turn_ms": {
+     "p50": 40.67247701459564,
+     "p90": 67.28548029204833,
+     "p99": 91.89314337912948,
+     "mean": 45.36424648176762,
+     "max": 97.73107402725145
+    },
+    "ttft_later_turns_ms": {
+     "p50": 61.354478006251156,
+     "p90": 88.71375798480585,
+     "p99": 113.56530498014764,
+     "mean": 63.98112058358581,
+     "max": 127.91559600736946
+    },
+    "tpot_ms": {
+     "p50": 7.930663865732237,
+     "p90": 12.07771456354986,
+     "p99": 16.235467465631544,
+     "mean": 7.973622587097387,
+     "max": 17.156109303171032
+    },
+    "e2e_ms": {
+     "p50": 569.8277789633721,
+     "p90": 1129.5465254108422,
+     "p99": 1941.2714072037486,
+     "mean": 653.6847241685789,
+     "max": 2537.6876880181953
+    },
+    "client_reported_cached_token_fraction": 0.9296558219931325,
+    "drafted_tokens": 16886.0,
+    "accepted_tokens": 8999.0,
+    "acceptance_rate": 0.5329266848276679,
+    "drafted_share_of_output": 0.2551170834042071,
+    "tokens_per_step": 4.5869960988296485
+   }
+  },
+  "ngram_n5_k8": {
+   "label": "prompt lookup, n=5, up to 8 drafted",
+   "flags": [
+    "--speculation",
+    "ngram",
+    "--ngram-size",
+    "5",
+    "--num-draft-tokens",
+    "8"
+   ],
+   "command": [
+    ".venv/bin/python",
+    "-m",
+    "minfer.cli",
+    "serve",
+    "--model",
+    "Qwen/Qwen2.5-7B-Instruct",
+    "--port",
+    "8071",
+    "--log-level",
+    "warning",
+    "--speculation",
+    "ngram",
+    "--ngram-size",
+    "5",
+    "--num-draft-tokens",
+    "8"
+   ],
+   "code": {
+    "commit": "1034b5df3f07bd45394c78bc4c8b130a92df4442",
+    "dirty": false
+   },
+   "1": {
+    "rate": "1",
+    "seed": 0,
+    "sessions": 24,
+    "trace_sha256": "232e4535ec3f91495bd1b1afec28da7642ea9bdc4849db98a1130b370b9f7d27",
+    "server_prefix_cache_hit_rate": 0.9358794910684951,
+    "requests": 268,
+    "completed": 268,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 224.63297463097842,
+    "prompt_tokens": 1777796,
+    "completion_tokens": 19903,
+    "request_throughput": 1.1930572545738838,
+    "output_tokens_per_second": 88.602307976806,
+    "total_tokens_per_second": 8002.827736903792,
+    "ttft_ms": {
+     "p50": 48.42125449795276,
+     "p90": 70.25880279252306,
+     "p99": 87.12324806721878,
+     "mean": 49.860145970518744,
+     "max": 93.20176596520469
+    },
+    "ttft_first_turn_ms": {
+     "p50": 29.32796350796707,
+     "p90": 37.677709496347234,
+     "p99": 40.34821052395273,
+     "mean": 30.485319170111325,
+     "max": 40.643182990606874
+    },
+    "ttft_later_turns_ms": {
+     "p50": 50.40652852039784,
+     "p90": 70.47400899464265,
+     "p99": 87.49238702701403,
+     "mean": 51.76586663941128,
+     "max": 93.20176596520469
+    },
+    "tpot_ms": {
+     "p50": 5.955083337991682,
+     "p90": 7.158496218779384,
+     "p99": 8.571580078009413,
+     "mean": 5.4961037547210445,
+     "max": 10.522889933781698
+    },
+    "e2e_ms": {
+     "p50": 385.59775598696433,
+     "p90": 757.7231834235137,
+     "p99": 1239.5417310460468,
+     "mean": 449.982041857942,
+     "max": 1428.0183860100806
+    },
+    "client_reported_cached_token_fraction": 0.935738408681311,
+    "drafted_tokens": 9152.0,
+    "accepted_tokens": 5059.0,
+    "acceptance_rate": 0.5527753496503497,
+    "drafted_share_of_output": 0.2541827865145958,
+    "tokens_per_step": 1.6577544561052806
+   },
+   "4": {
+    "rate": "4",
+    "seed": 2,
+    "sessions": 24,
+    "trace_sha256": "6d3b12a9d4e1ec9c7dbd61188e152cc8139f196c6073dd6389bf33953aef6a68",
+    "server_prefix_cache_hit_rate": 0.9309297868665207,
+    "requests": 231,
+    "completed": 231,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 65.84019855398219,
+    "prompt_tokens": 1464900,
+    "completion_tokens": 17189,
+    "request_throughput": 3.508494887217021,
+    "output_tokens_per_second": 261.0715091617895,
+    "total_tokens_per_second": 22510.39687835752,
+    "ttft_ms": {
+     "p50": 51.293367985635996,
+     "p90": 75.61943103792146,
+     "p99": 94.55950631527227,
+     "mean": 54.26769262382325,
+     "max": 100.04680400015786
+    },
+    "ttft_first_turn_ms": {
+     "p50": 38.08309798478149,
+     "p90": 44.796402705833316,
+     "p99": 45.88982642861083,
+     "mean": 36.75143724346223,
+     "max": 46.04387399740517
+    },
+    "ttft_later_turns_ms": {
+     "p50": 53.43197099864483,
+     "p90": 77.27092759450898,
+     "p99": 95.08182528195903,
+     "mean": 56.29856281285062,
+     "max": 100.04680400015786
+    },
+    "tpot_ms": {
+     "p50": 6.765683919657022,
+     "p90": 9.421795114342656,
+     "p99": 12.983944657554382,
+     "mean": 6.558160183725175,
+     "max": 14.978313921203249
+    },
+    "e2e_ms": {
+     "p50": 456.50974300224334,
+     "p90": 972.7373260539025,
+     "p99": 1429.5484638016192,
+     "mean": 535.908621210238,
+     "max": 2034.3994889990427
+    },
+    "client_reported_cached_token_fraction": 0.9307829885999044,
+    "drafted_tokens": 6947.0,
+    "accepted_tokens": 4022.0,
+    "acceptance_rate": 0.5789549445803944,
+    "drafted_share_of_output": 0.2339868520565478,
+    "tokens_per_step": 2.790422077922078
+   },
+   "8": {
+    "rate": "8",
+    "seed": 3,
+    "sessions": 48,
+    "trace_sha256": "684eeec3fcd41ad6daf749f974b08616cb5632b39c5b1ce23b8f2d962e3c882a",
+    "server_prefix_cache_hit_rate": 0.9297968709107537,
+    "requests": 469,
+    "completed": 469,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 83.84158228698652,
+    "prompt_tokens": 3091656,
+    "completion_tokens": 35274,
+    "request_throughput": 5.593882977955151,
+    "output_tokens_per_second": 420.7220216724733,
+    "total_tokens_per_second": 37295.69403039936,
+    "ttft_ms": {
+     "p50": 59.364905988331884,
+     "p90": 90.66788060590625,
+     "p99": 135.67596831824628,
+     "mean": 63.59053430927377,
+     "max": 149.71801498904824
+    },
+    "ttft_first_turn_ms": {
+     "p50": 38.56697599985637,
+     "p90": 59.4525041989983,
+     "p99": 112.83044938696551,
+     "mean": 44.04968633267951,
+     "max": 122.056030028034
+    },
+    "ttft_later_turns_ms": {
+     "p50": 61.47554004564881,
+     "p90": 91.49872395209968,
+     "p99": 137.38373822998258,
+     "mean": 65.81846947050067,
+     "max": 149.71801498904824
+    },
+    "tpot_ms": {
+     "p50": 8.09174866266444,
+     "p90": 11.738946155083415,
+     "p99": 15.658346110749124,
+     "mean": 8.037780218868813,
+     "max": 16.891047272524286
+    },
+    "e2e_ms": {
+     "p50": 586.5761349559762,
+     "p90": 1100.4085969645528,
+     "p99": 1962.2838311549274,
+     "mean": 655.3563619545573,
+     "max": 2475.403930002358
+    },
+    "client_reported_cached_token_fraction": 0.9296558219931325,
+    "drafted_tokens": 13805.0,
+    "accepted_tokens": 7769.0,
+    "acceptance_rate": 0.562767113364723,
+    "drafted_share_of_output": 0.22024720757498442,
+    "tokens_per_step": 4.398802843247288
+   }
+  },
+  "ngram_n3_k4_always": {
+   "label": "prompt lookup, n=3, up to 4 drafted, never paused",
+   "flags": [
+    "--speculation",
+    "ngram",
+    "--ngram-size",
+    "3",
+    "--num-draft-tokens",
+    "4",
+    "--draft-min-acceptance",
+    "0"
+   ],
+   "command": [
+    ".venv/bin/python",
+    "-m",
+    "minfer.cli",
+    "serve",
+    "--model",
+    "Qwen/Qwen2.5-7B-Instruct",
+    "--port",
+    "8071",
+    "--log-level",
+    "warning",
+    "--speculation",
+    "ngram",
+    "--ngram-size",
+    "3",
+    "--num-draft-tokens",
+    "4",
+    "--draft-min-acceptance",
+    "0"
+   ],
+   "code": {
+    "commit": "1034b5df3f07bd45394c78bc4c8b130a92df4442",
+    "dirty": false
+   },
+   "1": {
+    "rate": "1",
+    "seed": 0,
+    "sessions": 24,
+    "trace_sha256": "232e4535ec3f91495bd1b1afec28da7642ea9bdc4849db98a1130b370b9f7d27",
+    "server_prefix_cache_hit_rate": 0.9358794910684951,
+    "requests": 268,
+    "completed": 268,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 224.58840849698754,
+    "prompt_tokens": 1777796,
+    "completion_tokens": 19903,
+    "request_throughput": 1.1932939985350792,
+    "output_tokens_per_second": 88.61988974941671,
+    "total_tokens_per_second": 8004.415775643706,
+    "ttft_ms": {
+     "p50": 48.763513535959646,
+     "p90": 69.32967942557298,
+     "p99": 84.26807727082624,
+     "mean": 50.04242219251525,
+     "max": 90.67874395987019
+    },
+    "ttft_first_turn_ms": {
+     "p50": 29.594068531878293,
+     "p90": 36.93865990499034,
+     "p99": 48.89373570040333,
+     "mean": 31.367510753625538,
+     "max": 51.83452396886423
+    },
+    "ttft_later_turns_ms": {
+     "p50": 50.202395010273904,
+     "p90": 69.90138050750829,
+     "p99": 85.62026726431209,
+     "mean": 51.879298727488006,
+     "max": 90.67874395987019
+    },
+    "tpot_ms": {
+     "p50": 5.585239238223641,
+     "p90": 7.299295003815811,
+     "p99": 8.805674554962469,
+     "mean": 5.433848759932873,
+     "max": 10.19435076644489
+    },
+    "e2e_ms": {
+     "p50": 388.5968899994623,
+     "p90": 756.9053644139785,
+     "p99": 1200.3310692094958,
+     "mean": 448.0500708695991,
+     "max": 1436.6829170030542
+    },
+    "client_reported_cached_token_fraction": 0.935738408681311,
+    "drafted_tokens": 9370.0,
+    "accepted_tokens": 5738.0,
+    "acceptance_rate": 0.6123799359658485,
+    "drafted_share_of_output": 0.2882982464955032,
+    "tokens_per_step": 1.7411425072172164
+   },
+   "4": {
+    "rate": "4",
+    "seed": 2,
+    "sessions": 24,
+    "trace_sha256": "6d3b12a9d4e1ec9c7dbd61188e152cc8139f196c6073dd6389bf33953aef6a68",
+    "server_prefix_cache_hit_rate": 0.9309297868665207,
+    "requests": 231,
+    "completed": 231,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 65.61400551599218,
+    "prompt_tokens": 1464900,
+    "completion_tokens": 17189,
+    "request_throughput": 3.52058982199613,
+    "output_tokens_per_second": 261.97150844282027,
+    "total_tokens_per_second": 22587.99761338711,
+    "ttft_ms": {
+     "p50": 53.35183296119794,
+     "p90": 76.31265197414905,
+     "p99": 96.08343257568774,
+     "mean": 55.91696874819115,
+     "max": 137.57331803208217
+    },
+    "ttft_first_turn_ms": {
+     "p50": 39.73187899100594,
+     "p90": 45.6897858006414,
+     "p99": 66.06878124934154,
+     "mean": 39.53785487343945,
+     "max": 71.3710259879008
+    },
+    "ttft_later_turns_ms": {
+     "p50": 55.00519601628184,
+     "p90": 77.53589997300878,
+     "p99": 96.56870009377599,
+     "mean": 57.81599644381454,
+     "max": 137.57331803208217
+    },
+    "tpot_ms": {
+     "p50": 6.72131771898421,
+     "p90": 9.72656163290461,
+     "p99": 12.934916645191866,
+     "mean": 6.623727451010106,
+     "max": 13.984897702763927
+    },
+    "e2e_ms": {
+     "p50": 474.48482597246766,
+     "p90": 1001.1490380275063,
+     "p99": 1378.5063345392698,
+     "mean": 542.2751085023351,
+     "max": 1977.5284429779276
+    },
+    "client_reported_cached_token_fraction": 0.9307829885999044,
+    "drafted_tokens": 7179.0,
+    "accepted_tokens": 4543.0,
+    "acceptance_rate": 0.6328179412174397,
+    "drafted_share_of_output": 0.2642969340857525,
+    "tokens_per_step": 2.8850285330647867
+   },
+   "8": {
+    "rate": "8",
+    "seed": 3,
+    "sessions": 48,
+    "trace_sha256": "684eeec3fcd41ad6daf749f974b08616cb5632b39c5b1ce23b8f2d962e3c882a",
+    "server_prefix_cache_hit_rate": 0.9297968709107537,
+    "requests": 469,
+    "completed": 469,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 84.65278380102245,
+    "prompt_tokens": 3091656,
+    "completion_tokens": 35274,
+    "request_throughput": 5.540278522941325,
+    "output_tokens_per_second": 416.69037232032474,
+    "total_tokens_per_second": 36938.30089923437,
+    "ttft_ms": {
+     "p50": 60.28959300601855,
+     "p90": 88.12927519902586,
+     "p99": 111.7585716303438,
+     "mean": 63.55244039072852,
+     "max": 127.41007399745286
+    },
+    "ttft_first_turn_ms": {
+     "p50": 43.67937901406549,
+     "p90": 67.6019220030867,
+     "p99": 94.36507435399109,
+     "mean": 48.23676695377799,
+     "max": 98.45221502473578
+    },
+    "ttft_later_turns_ms": {
+     "p50": 62.04967497615144,
+     "p90": 90.18863801611587,
+     "p99": 111.8887485936284,
+     "mean": 65.2986454381718,
+     "max": 127.41007399745286
+    },
+    "tpot_ms": {
+     "p50": 8.266407770265017,
+     "p90": 12.64880730440581,
+     "p99": 16.93963630729781,
+     "mean": 8.496517659145862,
+     "max": 19.519594143189135
+    },
+    "e2e_ms": {
+     "p50": 593.7344169942662,
+     "p90": 1182.0338117540814,
+     "p99": 2042.7685951488088,
+     "mean": 690.7771179844231,
+     "max": 2599.488375009969
+    },
+    "client_reported_cached_token_fraction": 0.9296558219931325,
+    "drafted_tokens": 14247.0,
+    "accepted_tokens": 8805.0,
+    "acceptance_rate": 0.6180248473362813,
+    "drafted_share_of_output": 0.24961728185065488,
+    "tokens_per_step": 4.7366724855646565
+   }
+  },
+  "ngram_n3_k4_eager": {
+   "label": "prompt lookup, n=3, up to 4 drafted, eager verification (Phase 7)",
+   "flags": [
+    "--speculation",
+    "ngram",
+    "--ngram-size",
+    "3",
+    "--num-draft-tokens",
+    "4",
+    "--no-verify-graphs"
+   ],
+   "command": [
+    ".venv/bin/python",
+    "-m",
+    "minfer.cli",
+    "serve",
+    "--model",
+    "Qwen/Qwen2.5-7B-Instruct",
+    "--port",
+    "8071",
+    "--log-level",
+    "warning",
+    "--speculation",
+    "ngram",
+    "--ngram-size",
+    "3",
+    "--num-draft-tokens",
+    "4",
+    "--no-verify-graphs"
+   ],
+   "code": {
+    "commit": "1034b5df3f07bd45394c78bc4c8b130a92df4442",
+    "dirty": false
+   },
+   "1": {
+    "rate": "1",
+    "seed": 0,
+    "sessions": 24,
+    "trace_sha256": "232e4535ec3f91495bd1b1afec28da7642ea9bdc4849db98a1130b370b9f7d27",
+    "server_prefix_cache_hit_rate": 0.9358794910684951,
+    "requests": 268,
+    "completed": 268,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 224.64385422097985,
+    "prompt_tokens": 1777796,
+    "completion_tokens": 19903,
+    "request_throughput": 1.1929994743429355,
+    "output_tokens_per_second": 88.59801693226659,
+    "total_tokens_per_second": 8002.440156816496,
+    "ttft_ms": {
+     "p50": 48.190724512096494,
+     "p90": 70.26130580343307,
+     "p99": 87.80477758729829,
+     "mean": 50.1910113697392,
+     "max": 90.40478599490598
+    },
+    "ttft_first_turn_ms": {
+     "p50": 30.732211511349306,
+     "p90": 38.61704440205358,
+     "p99": 45.17337599769235,
+     "mean": 32.299473711949155,
+     "max": 46.349728014320135
+    },
+    "ttft_later_turns_ms": {
+     "p50": 50.03831203794107,
+     "p90": 71.34357171016747,
+     "p99": 88.00846895435825,
+     "mean": 51.95083474591527,
+     "max": 90.40478599490598
+    },
+    "tpot_ms": {
+     "p50": 6.338077618689921,
+     "p90": 8.462200554695706,
+     "p99": 11.616403052692002,
+     "mean": 6.2736238490532745,
+     "max": 13.021332418903448
+    },
+    "e2e_ms": {
+     "p50": 422.49640249065123,
+     "p90": 859.5731930283366,
+     "p99": 1294.1358462389312,
+     "mean": 509.10180430153883,
+     "max": 1809.383830986917
+    },
+    "client_reported_cached_token_fraction": 0.935738408681311,
+    "drafted_tokens": 9016.0,
+    "accepted_tokens": 5552.0,
+    "acceptance_rate": 0.6157941437444543,
+    "drafted_share_of_output": 0.2789529216701,
+    "tokens_per_step": 1.7296428261058485
+   },
+   "4": {
+    "rate": "4",
+    "seed": 2,
+    "sessions": 24,
+    "trace_sha256": "6d3b12a9d4e1ec9c7dbd61188e152cc8139f196c6073dd6389bf33953aef6a68",
+    "server_prefix_cache_hit_rate": 0.9309297868665207,
+    "requests": 231,
+    "completed": 231,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 66.4034406900173,
+    "prompt_tokens": 1464900,
+    "completion_tokens": 17189,
+    "request_throughput": 3.4787354028588333,
+    "output_tokens_per_second": 258.85706857030516,
+    "total_tokens_per_second": 22319.460928517947,
+    "ttft_ms": {
+     "p50": 56.489537993911654,
+     "p90": 82.29806902818382,
+     "p99": 104.18214091332624,
+     "mean": 59.09073029421028,
+     "max": 153.0871340073645
+    },
+    "ttft_first_turn_ms": {
+     "p50": 40.58324749348685,
+     "p90": 52.209801791468635,
+     "p99": 76.11067534191534,
+     "mean": 42.42964995016033,
+     "max": 78.02465598797426
+    },
+    "ttft_later_turns_ms": {
+     "p50": 59.00294700404629,
+     "p90": 83.71733319945633,
+     "p99": 105.44922980712725,
+     "mean": 61.02244975438998,
+     "max": 153.0871340073645
+    },
+    "tpot_ms": {
+     "p50": 8.361420237518374,
+     "p90": 14.540062140782966,
+     "p99": 17.40177533600217,
+     "mean": 8.963937671837186,
+     "max": 18.0035389439238
+    },
+    "e2e_ms": {
+     "p50": 619.1787899588235,
+     "p90": 1300.526856968645,
+     "p99": 2001.1041166027978,
+     "mean": 719.4415309957282,
+     "max": 2465.504953986965
+    },
+    "client_reported_cached_token_fraction": 0.9307829885999044,
+    "drafted_tokens": 6684.0,
+    "accepted_tokens": 4226.0,
+    "acceptance_rate": 0.6322561340514662,
+    "drafted_share_of_output": 0.2458549072080982,
+    "tokens_per_step": 3.2401508011310085
+   },
+   "8": {
+    "rate": "8",
+    "seed": 3,
+    "sessions": 48,
+    "trace_sha256": "684eeec3fcd41ad6daf749f974b08616cb5632b39c5b1ce23b8f2d962e3c882a",
+    "server_prefix_cache_hit_rate": 0.9297916949055492,
+    "requests": 469,
+    "completed": 469,
+    "failed": 0,
+    "errors": [],
+    "duration_s": 86.66515204199823,
+    "prompt_tokens": 3091656,
+    "completion_tokens": 35274,
+    "request_throughput": 5.41163303761033,
+    "output_tokens_per_second": 407.0148054769015,
+    "total_tokens_per_second": 36080.59209870975,
+    "ttft_ms": {
+     "p50": 61.752485984470695,
+     "p90": 94.30724419653416,
+     "p99": 141.32768101757392,
+     "mean": 66.18747400563718,
+     "max": 168.2426180341281
+    },
+    "ttft_first_turn_ms": {
+     "p50": 44.697245000861585,
+     "p90": 62.855274212779506,
+     "p99": 92.72379029658623,
+     "mean": 46.9832722483261,
+     "max": 94.19210604391992
+    },
+    "ttft_later_turns_ms": {
+     "p50": 63.36739601101726,
+     "p90": 96.94125200621784,
+     "p99": 142.25476359715688,
+     "mean": 68.37702670005746,
+     "max": 168.2426180341281
+    },
+    "tpot_ms": {
+     "p50": 11.174795199902011,
+     "p90": 16.46029844029493,
+     "p99": 20.712804807267602,
+     "mean": 11.09978758936596,
+     "max": 21.369385853176937
+    },
+    "e2e_ms": {
+     "p50": 773.7471009604633,
+     "p90": 1545.2008247957565,
+     "p99": 2525.846997911576,
+     "mean": 882.1957916854623,
+     "max": 3293.0495220352896
+    },
+    "client_reported_cached_token_fraction": 0.9296506467731209,
+    "drafted_tokens": 13792.0,
+    "accepted_tokens": 8633.0,
+    "acceptance_rate": 0.6259425754060325,
+    "drafted_share_of_output": 0.2447411691330725,
+    "tokens_per_step": 5.760901518863302
+   }
+  }
+ }
+}
