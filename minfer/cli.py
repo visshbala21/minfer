@@ -24,6 +24,7 @@ def add_engine_arguments(parser: argparse.ArgumentParser) -> None:
         "--num-blocks", type=int, default=None, help="KV pool size (default: from free memory)"
     )
     group.add_argument("--kv-memory-fraction", type=float, default=defaults.kv_memory_fraction)
+    group.add_argument("--kv-gb", type=float, default=None, help="KV cache size in GiB")
     group.add_argument("--max-num-seqs", type=int, default=defaults.max_num_seqs)
     group.add_argument("--max-batched-tokens", type=int, default=defaults.max_batched_tokens)
     group.add_argument("--max-model-len", type=int, default=None)
@@ -96,6 +97,13 @@ def add_engine_arguments(parser: argparse.ArgumentParser) -> None:
         help="cached KV to give up first: least recently used, or expected to be needed last",
     )
     group.add_argument(
+        "--host-kv-gb",
+        type=float,
+        default=defaults.host_kv_gb,
+        help="host-memory KV tier in GiB: paused sessions' KV is copied there and restored",
+    )
+    group.add_argument("--min-restore-blocks", type=int, default=defaults.min_restore_blocks)
+    group.add_argument(
         "--speculation",
         choices=["none", "ngram", "draft"],
         default=defaults.speculation or "none",
@@ -113,6 +121,7 @@ def engine_config_from_args(args: argparse.Namespace) -> EngineConfig:
         block_size=args.block_size,
         num_blocks=args.num_blocks,
         kv_memory_fraction=args.kv_memory_fraction,
+        kv_gb=args.kv_gb,
         max_num_seqs=args.max_num_seqs,
         max_batched_tokens=args.max_batched_tokens,
         max_model_len=args.max_model_len,
@@ -127,6 +136,8 @@ def engine_config_from_args(args: argparse.Namespace) -> EngineConfig:
         cache_aware_scheduling=args.cache_aware_scheduling,
         starvation_seconds=args.starvation_seconds,
         eviction_policy=args.eviction_policy,
+        host_kv_gb=args.host_kv_gb,
+        min_restore_blocks=args.min_restore_blocks,
         speculation=None if args.speculation == "none" else args.speculation,
         num_draft_tokens=args.num_draft_tokens,
         ngram_size=args.ngram_size,

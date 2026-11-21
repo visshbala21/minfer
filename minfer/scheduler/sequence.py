@@ -6,6 +6,7 @@ import enum
 import random
 from dataclasses import dataclass, field
 
+from minfer.cache.radix_tree import RestoreTicket
 from minfer.cache.retention import SessionHint, SessionState
 from minfer.sampling import SamplingParams
 
@@ -49,6 +50,9 @@ class Sequence:
         rng: The request's own random stream (seeded requests only).
         session: The agent session the request belongs to, if it named one.
         hint: What the request said the session does after this response.
+        restore: A copy of this sequence's cached history from the host tier that is in
+            flight or has completed and not yet been adopted.
+        restore_hit_tokens: Tokens adopted from the GPU cache before that copy started.
     """
 
     seq_id: int
@@ -67,6 +71,8 @@ class Sequence:
     rng: random.Random | None = field(default=None, repr=False)
     session: SessionState | None = field(default=None, repr=False)
     hint: SessionHint | None = field(default=None, repr=False)
+    restore: RestoreTicket | None = field(default=None, repr=False)
+    restore_hit_tokens: int = 0
 
     @property
     def num_pending(self) -> int:

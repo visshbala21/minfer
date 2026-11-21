@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from itertools import islice
 
 from minfer.cache.block_manager import BlockManager, OutOfBlocks
-from minfer.cache.radix_tree import PrefixCache
+from minfer.cache.radix_tree import PrefixCache, RestoreTicket
 from minfer.scheduler.sequence import Sequence, SequenceStatus
 
 
@@ -41,6 +41,9 @@ class SchedulerConfig:
             waited this long is admitted in arrival order, ahead of any cache preference.
         admission_window: How many of the oldest waiting sequences cache-aware admission
             considers each time (bounds the per-step cost of looking prefixes up).
+        min_restore_blocks: With a host tier, the smallest run of host-only blocks worth
+            copying back for a request; shorter runs are recomputed (a copy is noticed one
+            engine step after it completes, by which time a short prefill would be done).
     """
 
     max_num_seqs: int = 256
@@ -50,6 +53,7 @@ class SchedulerConfig:
     cache_aware: bool = True
     starvation_seconds: float = 1.0
     admission_window: int = 32
+    min_restore_blocks: int = 8
 
     def __post_init__(self) -> None:
         if self.max_num_seqs < 1 or self.max_batched_tokens < 1:
@@ -101,6 +105,10 @@ class Scheduler:
       of the waiting queue keeping its generated tokens, to be recomputed later. Because
       sequences are visited oldest first, a victim is never one already selected for this
       step, and the oldest sequence can always make progress.
+    * **Host tier.** With one, a waiting sequence whose cached history was demoted to host
+      memory has it copied back instead of recomputing it: the sequence leaves the queue
+      while the copy runs (other sequences keep being admitted and stepped) and returns to
+      its front when the copy completes.
     * **Sharing.** With a prefix cache, every full block a sequence computes is inserted
       into the radix tree as soon as the step that filled it completes, and a sequence
       that is still prefilling re-checks the tree before each chunk. Requests with a
@@ -119,9 +127,13 @@ class Scheduler:
         self.blocks = blocks
         self.cache = cache
         self.clock = clock
+        self.host = cache.host if cache is not None else None
         self.waiting: deque[Sequence] = deque()
         self.running: list[Sequence] = []
+        self.restoring: list[Sequence] = []
+        self._abandoned: list[RestoreTicket] = []
         self.num_preemptions = 0
+        self.num_restores = 0
 
     # ---------------------------------------------------------------- queues
 
@@ -132,8 +144,8 @@ class Scheduler:
 
     @property
     def has_work(self) -> bool:
-        """Whether any sequence is waiting or running."""
-        return bool(self.waiting or self.running)
+        """Whether any sequence is waiting, running, or having its KV copied back."""
+        return bool(self.waiting or self.running or self.restoring)
 
     def add(self, seq: Sequence) -> None:
         """Queue a new sequence."""
@@ -161,9 +173,56 @@ class Scheduler:
         if seq.status is SequenceStatus.RUNNING:
             self.finish(seq, "abort")
         elif seq.status is SequenceStatus.WAITING:
-            self.waiting.remove(seq)
+            if seq in self.restoring:
+                self.restoring.remove(seq)
+            else:
+                self.waiting.remove(seq)
+            if seq.restore is not None:
+                # The copy cannot be cancelled: let it finish into the cache, then let go.
+                self._abandoned.append(seq.restore)
+                seq.restore = None
+            self.blocks.free(seq.seq_id)
             seq.status = SequenceStatus.FINISHED
             seq.finish_reason = "abort"
+
+    # ------------------------------------------------------------- host tier
+
+    def _poll_restores(self) -> None:
+        """Finalize completed host-tier copies; their sequences rejoin the queue's front."""
+        self.host.poll()
+        ready = [seq for seq in self.restoring if seq.restore.transfer.done]
+        if ready:
+            self.restoring = [seq for seq in self.restoring if not seq.restore.transfer.done]
+            for seq in reversed(ready):
+                self.cache.finish_restore(seq.restore)
+                self.waiting.appendleft(seq)
+        for ticket in [t for t in self._abandoned if t.transfer.done]:
+            self.cache.finish_restore(ticket)
+            self.cache.release_restore(ticket)
+            self._abandoned.remove(ticket)
+
+    def _start_restore(self, seq: Sequence) -> bool:
+        """Begin copying ``seq``'s demoted history back from the host, if it has any.
+
+        Called right after the sequence adopted what the GPU cache has. The GPU blocks for
+        the copy are taken from the free pool, evicting colder cached KV if necessary; if
+        even that is not enough the history is recomputed instead.
+        """
+        blocks, cache, size = self.blocks, self.cache, self.blocks.block_size
+        if seq.num_cached % size:
+            return False
+        limit = (len(seq.tokens) - 1) // size
+        plan = cache.host_continuation(seq.tokens, seq.num_cached // size, limit)
+        count = sum(matched for _, matched in plan)
+        if count < self.config.min_restore_blocks:
+            return False
+        if blocks.num_free < count:
+            cache.evict(count - blocks.num_free)
+        if blocks.num_free < count:
+            return False
+        seq.restore = cache.begin_restore(plan, blocks.allocate(count))
+        self.num_restores += 1
+        return True
 
     # ---------------------------------------------------------- prefix cache
 
@@ -222,12 +281,22 @@ class Scheduler:
                 break
             seq = self._next_candidate()
             adopted = self._sync(seq) if cache is not None else 0
+            if self.host is not None and seq.restore is None and self._start_restore(seq):
+                # Its history is on its way back from host memory; meanwhile it keeps the
+                # GPU prefix it adopted and others are admitted past it.
+                self.waiting.remove(seq)
+                self.restoring.append(seq)
+                seq.restore_hit_tokens += adopted
+                continue
             needed = blocks.blocks_missing(seq.seq_id, len(seq.tokens) + 1)
             # Adopting cached blocks pinned them, so they no longer count as evictable.
             fits = blocks.num_free + blocks.num_evictable - promised - reserve >= needed
             # With nothing running the candidate must be admitted, or nothing ever would be.
             if not fits and self.running:
-                if adopted:
+                if seq.restore is not None:
+                    # Restored KV stays pinned for it; it is admitted when memory frees up.
+                    seq.restore_hit_tokens += adopted
+                elif adopted:
                     blocks.free(seq.seq_id)
                     seq.num_cached = seq.synced_blocks = 0
                 break
@@ -235,6 +304,11 @@ class Scheduler:
             seq.status = SequenceStatus.RUNNING
             self.running.append(seq)
             promised += needed
+            if seq.restore is not None:
+                cache.release_restore(seq.restore)  # the sequence's table holds them now
+                seq.restore = None
+            adopted += seq.restore_hit_tokens
+            seq.restore_hit_tokens = 0
             if cache is not None:
                 stats = cache.stats
                 stats.lookups += 1
@@ -280,6 +354,8 @@ class Scheduler:
 
     def schedule(self) -> StepPlan:
         """Admit what fits, then select and allocate this step's work."""
+        if self.host is not None:
+            self._poll_restores()
         self._admit()
         plan = StepPlan()
         num_decode = sum(1 for s in self.running if s.num_pending == 1)

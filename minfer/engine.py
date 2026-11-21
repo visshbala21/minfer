@@ -33,6 +33,7 @@ from minfer.cache.block_manager import (
     kv_bytes_per_block,
     plan_num_blocks,
 )
+from minfer.cache.host_tier import HostTier
 from minfer.cache.kv_store import FP8, PagedKVStore
 from minfer.cache.radix_tree import PrefixCache
 from minfer.cache.retention import SessionHint, SessionRetention
@@ -62,6 +63,8 @@ class EngineConfig:
             from the device memory that is free after the weights are loaded.
         kv_memory_fraction: Share of free device memory given to the KV cache when
             ``num_blocks`` is ``None``.
+        kv_gb: KV cache size in GiB, instead of ``kv_memory_fraction`` (for experiments
+            that give every engine the same KV budget).
         max_num_seqs: Maximum concurrently running sequences.
         max_batched_tokens: Maximum tokens processed per engine step.
         watermark: Fraction of the pool kept free at admission (see ``SchedulerConfig``).
@@ -102,6 +105,12 @@ class EngineConfig:
             sessions by expected remaining tool-call pause; see
             :mod:`minfer.cache.retention`), ``"lru"`` the least recently used. Requests
             that name no session are ordered by recency under both.
+        host_kv_gb: Size of the host-memory KV tier in GiB (0 disables it; needs the
+            ``"session"`` eviction policy). A session's cached KV is copied to pinned host
+            memory when it pauses for a tool call; if the GPU copy is evicted meanwhile,
+            the next request has it copied back instead of recomputing it.
+        min_restore_blocks: Shortest run of host-only blocks copied back rather than
+            recomputed.
         speculation: Speculative decoding: ``"ngram"`` drafts by prompt lookup, ``"draft"``
             with a small draft model (``draft_model``); ``None`` disables it.
         num_draft_tokens: Maximum tokens drafted per sequence per step. Each request's
@@ -115,6 +124,7 @@ class EngineConfig:
     block_size: int = 16
     num_blocks: int | None = None
     kv_memory_fraction: float = 0.9
+    kv_gb: float | None = None
     max_num_seqs: int = 256
     max_batched_tokens: int = 8192
     watermark: float = 0.01
@@ -132,6 +142,8 @@ class EngineConfig:
     cache_aware_scheduling: bool = True
     starvation_seconds: float = 1.0
     eviction_policy: Literal["lru", "session"] = "session"
+    host_kv_gb: float = 0.0
+    min_restore_blocks: int = 8
     speculation: Literal["ngram", "draft"] | None = None
     num_draft_tokens: int = 4
     ngram_size: int = 3
@@ -244,7 +256,10 @@ class Engine:
                     config.block_size,
                     model.dtype.itemsize,
                 )
-            num_blocks = plan_num_blocks(free_bytes, per_block, config.kv_memory_fraction)
+            if config.kv_gb is not None:
+                num_blocks = int(config.kv_gb * 2**30) // per_block
+            else:
+                num_blocks = plan_num_blocks(free_bytes, per_block, config.kv_memory_fraction)
         self.blocks = BlockManager(num_blocks, config.block_size)
         self.store = PagedKVStore(
             mc.num_layers,
@@ -292,8 +307,18 @@ class Engine:
         self.retention = None
         if config.prefix_cache and config.eviction_policy == "session":
             self.retention = SessionRetention(clock)
+        self.host_tier = None
+        if config.host_kv_gb > 0:
+            if self.retention is None:
+                raise ValueError(
+                    "the host tier needs the prefix cache with eviction_policy='session'"
+                )
+            host_blocks = int(config.host_kv_gb * 2**30) // (self.store.nbytes // num_blocks)
+            self.host_tier = HostTier(self.store, host_blocks)
         self.prefix_cache = (
-            PrefixCache(self.blocks, self.retention, clock) if config.prefix_cache else None
+            PrefixCache(self.blocks, self.retention, clock, self.host_tier)
+            if config.prefix_cache
+            else None
         )
         self.scheduler = Scheduler(
             SchedulerConfig(
@@ -303,11 +328,13 @@ class Engine:
                 watermark=config.watermark,
                 cache_aware=config.cache_aware_scheduling,
                 starvation_seconds=config.starvation_seconds,
+                min_restore_blocks=config.min_restore_blocks,
             ),
             self.blocks,
             self.prefix_cache,
         )
         self.stats = EngineStats()
+        self.idle = False  # the last step had nothing to run (e.g. only copies in flight)
         self.drafter: Drafter | None = None
         if config.speculation == "ngram":
             self.drafter = PromptLookupDrafter(config.ngram_size)
@@ -451,12 +478,21 @@ class Engine:
         if state is None:
             return
         self.retention.end(state, hint.tools, hint.final)
-        self.prefix_cache.tag(seq.tokens, state)
+        cache = self.prefix_cache
+        cache.tag(seq.tokens, state)
+        if self.host_tier is not None:
+            # A pause begins: put what this turn added in host memory, so that losing the
+            # GPU copy to memory pressure costs a transfer instead of a prefill. A session
+            # that is over gives its host copies back.
+            if state.final:
+                cache.forget_host(seq.tokens)
+            else:
+                cache.offload(seq.tokens, state)
 
     @property
     def has_work(self) -> bool:
-        """Whether any request is waiting or running."""
-        return self.scheduler.has_work
+        """Whether any request is waiting or running, or a host-tier copy needs polling."""
+        return self.scheduler.has_work or (self.host_tier is not None and self.host_tier.busy)
 
     def metrics(self) -> dict[str, float]:
         """A snapshot of counters and gauges (what the server's ``/metrics`` exports)."""
@@ -496,6 +532,17 @@ class Engine:
                 prefix_cache_nodes=cache.num_nodes,
                 prefix_cache_evicted_blocks_total=cs.evicted_blocks,
             )
+        host = self.host_tier
+        if host is not None:
+            cs = cache.stats
+            snapshot.update(
+                host_kv_blocks=host.num_blocks,
+                host_kv_blocks_used=host.num_blocks - host.num_free,
+                host_offloaded_blocks_total=host.stats.offloaded_blocks,
+                host_demoted_blocks_total=cs.demoted_blocks,
+                host_restored_blocks_total=cs.restored_blocks,
+                host_restores_total=scheduler.num_restores,
+            )
         return snapshot
 
     # ------------------------------------------------------------------ step
@@ -505,6 +552,7 @@ class Engine:
         """Run one scheduling iteration and return the tokens it produced."""
         started = time.perf_counter()
         plan = self.scheduler.schedule()
+        self.idle = plan.empty
         if plan.empty:
             return []
         decode = plan.decode
