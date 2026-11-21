@@ -127,6 +127,34 @@ class PagedKVStore:
         flat.index_copy_(0, slots, k)
         flat.index_copy_(0, slots + self.block_size, v)
 
+    def copy_rotated(self, source: Tensor, target: Tensor, cos: Tensor, sin: Tensor) -> None:
+        """Copy keys and values between slots in every layer, rotating the keys.
+
+        The store holds keys with their rotary position encoding applied. A key cached at
+        position ``p`` and reused at position ``p + Δ`` is the same vector rotated by Δ
+        steps (rotations compose), so the copy needs no unrotated keys; values carry no
+        position and are copied as they are.
+
+        Args:
+            source: ``[n]`` int64 slots to read (see the class docstring for slots).
+            target: ``[n]`` int64 slots to write.
+            cos: ``[n, head_dim]`` float32 cosines of each token's Δ·θ, in the layout of the
+                model's RoPE tables (the frequency vector twice).
+            sin: ``[n, head_dim]`` float32 sines, likewise (negative Δ: negative sines).
+        """
+        if self.quantized:
+            raise ValueError("position-independent reuse does not support an FP8 KV cache")
+        size = self.block_size
+        tensor = self.tensors[self.compute_dtype]
+        flat = tensor.view(tensor.shape[0], -1, *tensor.shape[4:])  # [layers, slots, heads, dim]
+        keys = flat.index_select(1, source).float()
+        half = keys.shape[-1] // 2
+        swapped = torch.cat((-keys[..., half:], keys[..., :half]), dim=-1)
+        rotated = keys * cos[None, :, None, :] + swapped * sin[None, :, None, :]
+        values = flat.index_select(1, source + size)
+        flat.index_copy_(1, target, rotated.to(flat.dtype))
+        flat.index_copy_(1, target + size, values)
+
     def read(self, layer: int, slots: Tensor) -> tuple[Tensor, Tensor]:
         """Gather the keys and values stored at ``slots`` (dequantized if stored as FP8)."""
         flat = self._flat[layer]

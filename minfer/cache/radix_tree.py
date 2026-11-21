@@ -118,6 +118,9 @@ class PrefixCacheStats:
     evicted_blocks: int = 0
     demoted_blocks: int = 0
     restored_blocks: int = 0
+    reused_tokens: int = 0
+    reuse_recomputed_tokens: int = 0
+    reuse_spans: int = 0
 
     @property
     def hit_rate(self) -> float:
@@ -140,6 +143,8 @@ class PrefixCache:
         clock: Monotonic time source, used only with ``retention``.
         host: Host-memory tier (needs ``retention``): evicted KV that has a host copy stays
             in the tree as host-only nodes.
+        content_index: Also index every cached block by its tokens alone, so that the same
+            tokens can be found at a *different* position (:meth:`find_reuse`).
     """
 
     def __init__(
@@ -148,6 +153,7 @@ class PrefixCache:
         retention: SessionRetention | None = None,
         clock: Callable[[], float] = time.monotonic,
         host: HostTier | None = None,
+        content_index: bool = False,
     ) -> None:
         if host is not None and retention is None:
             raise ValueError("the host tier needs the session-aware retention policy")
@@ -166,6 +172,9 @@ class PrefixCache:
         # current only if the node is still a leaf of the tree with that access time.
         self._heap: list[tuple[int, int, RadixNode]] = []
         self._tiebreak = count()
+        # hash(tokens of a block) -> (node, index of the block in the node's edge). Entries
+        # are not removed when the tree changes; a lookup checks them against the tree.
+        self._content: dict[int, tuple[RadixNode, int]] | None = {} if content_index else None
 
     # ------------------------------------------------------------------ walk
 
@@ -321,7 +330,70 @@ class PrefixCache:
             self.blocks.cache_block(block)
         self.num_blocks += len(new_blocks)
         self.stats.inserted_blocks += len(new_blocks)
+        self._index_content(node, len(node.blocks) - len(new_blocks))
         self._touch(node)
+
+    def _index_content(self, node: RadixNode, first: int) -> None:
+        """Register ``node``'s blocks from index ``first`` on in the content index."""
+        content = self._content
+        if content is None:
+            return
+        size, tokens = self.block_size, node.tokens
+        for index in range(first, len(node.blocks)):
+            content[hash(tokens[index * size : (index + 1) * size])] = (node, index)
+
+    def find_reuse(
+        self, tokens: Sequence[int], start: int, stop: int, min_tokens: int
+    ) -> list[tuple[int, int, list[int]]]:
+        """Cached KV for runs of ``tokens[start:stop]`` that were cached at other positions.
+
+        Scans for whole cached blocks whose tokens occur — at any offset — in the given
+        range, and extends each match along the source edge. Greedy, left to right, no
+        overlaps; runs shorter than ``min_tokens`` are ignored.
+
+        Returns:
+            ``(dest_start, source_start, source_blocks)`` per run: where the run begins in
+            ``tokens``, where the same tokens begin in the sequence they were cached for,
+            and the GPU blocks that hold them.
+        """
+        content, size = self._content, self.block_size
+        runs: list[tuple[int, int, list[int]]] = []
+        position = start
+        while position + size <= stop:
+            window = tuple(tokens[position : position + size])
+            entry = content.get(hash(window))
+            if entry is None:
+                position += 1
+                continue
+            node, index = entry
+            if (
+                node.parent is None
+                or index >= len(node.blocks)
+                or node.tokens[index * size : (index + 1) * size] != window
+            ):
+                position += 1
+                continue
+            found = [node.blocks[index]]
+            cursor, following = position + size, index + 1
+            while (
+                following < len(node.blocks)
+                and cursor + size <= stop
+                and tuple(tokens[cursor : cursor + size])
+                == node.tokens[following * size : (following + 1) * size]
+            ):
+                found.append(node.blocks[following])
+                cursor += size
+                following += 1
+            if len(found) * size < min_tokens:
+                position += 1
+                continue
+            depth, ancestor = index, node.parent
+            while ancestor is not self.root:
+                depth += len(ancestor.tokens) // size
+                ancestor = ancestor.parent
+            runs.append((position, depth * size, found))
+            position = cursor
+        return runs
 
     def _split(self, node: RadixNode, num_blocks: int) -> None:
         """Cut ``node``'s edge after ``num_blocks`` blocks.
@@ -343,6 +415,7 @@ class PrefixCache:
         node.blocks = node.blocks[:num_blocks]
         node.children = {tail.tokens[: self.block_size]: tail}
         self.num_nodes += 1
+        self._index_content(tail, 0)
         if not tail.children and tail.blocks:
             heapq.heappush(self._heap, (tail.last_access, next(self._tiebreak), tail))
 
@@ -597,6 +670,7 @@ class PrefixCache:
                 self.blocks.cache_block(block)
             self.num_blocks += len(node_blocks)
             self.stats.restored_blocks += len(node_blocks)
+            self._index_content(node, 0)
             self._touch(node)
         ticket.finished = True
 

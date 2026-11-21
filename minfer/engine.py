@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+import numpy as np
 import torch
 from torch import Tensor
 
@@ -49,6 +50,7 @@ from minfer.quant.calibration import (
 from minfer.quant.fp8 import quantize_linears
 from minfer.sampling import SamplingParams
 from minfer.scheduler import Scheduler, SchedulerConfig, Sequence
+from minfer.scheduler.sequence import ReuseSpan
 from minfer.spec.base import Draft, Drafter
 from minfer.spec.ngram import PromptLookupDrafter
 
@@ -111,10 +113,25 @@ class EngineConfig:
             the next request has it copied back instead of recomputing it.
         min_restore_blocks: Shortest run of host-only blocks copied back rather than
             recomputed.
+        position_independent_reuse: Reuse KV of prompt tokens that are cached at a different
+            position (re-read files, a system prompt behind a different preamble): the
+            keys are re-rotated to the new position and the head of each reused run is
+            recomputed. Approximate — reused KV was computed after different preceding
+            tokens — so outputs can change; off by default.
+        reuse_min_tokens: Shortest run reused that way.
+        reuse_recompute_ratio: Share of each reused run, from its start, recomputed in its
+            new context (1.0 computes everything: no reuse).
         speculation: Speculative decoding: ``"ngram"`` drafts by prompt lookup, ``"draft"``
             with a small draft model (``draft_model``); ``None`` disables it.
         num_draft_tokens: Maximum tokens drafted per sequence per step. Each request's
             draft length adapts between 1 and this value to its recent acceptance.
+        draft_min_acceptance: A request whose running draft acceptance falls below this
+            stops being drafted for ``draft_cooldown_steps`` decode steps, then tries again
+            (0 never pauses).
+        draft_cooldown_steps: Length of that pause.
+        verify_graphs: Replay speculative verification from captured CUDA graphs when
+            every drafted request is greedy (needs ``cuda_graphs``; not with an FP8 KV
+            cache). Otherwise verification runs in the eager prefill pass.
         ngram_size: Context length matched by prompt-lookup drafting.
         draft_model: Local directory or Hub id of the draft model.
         draft_num_blocks: KV pool size of the draft model.
@@ -144,8 +161,14 @@ class EngineConfig:
     eviction_policy: Literal["lru", "session"] = "session"
     host_kv_gb: float = 0.0
     min_restore_blocks: int = 8
+    position_independent_reuse: bool = False
+    reuse_min_tokens: int = 64
+    reuse_recompute_ratio: float = 0.15
     speculation: Literal["ngram", "draft"] | None = None
     num_draft_tokens: int = 4
+    draft_min_acceptance: float = 0.3
+    draft_cooldown_steps: int = 32
+    verify_graphs: bool = True
     ngram_size: int = 3
     draft_model: str = "Qwen/Qwen2.5-0.5B-Instruct"
     draft_num_blocks: int | None = None
@@ -315,11 +338,37 @@ class Engine:
                 )
             host_blocks = int(config.host_kv_gb * 2**30) // (self.store.nbytes // num_blocks)
             self.host_tier = HostTier(self.store, host_blocks)
+        self.verify_graphs = None
+        if (
+            config.speculation is not None
+            and config.verify_graphs
+            and config.attention_backend == "flashinfer"
+            and config.cuda_graphs
+            and not fp8_kv
+        ):
+            from minfer.attention.prefill_graphs import VerifyGraphs
+
+            self.verify_graphs = VerifyGraphs(
+                model,
+                self.store,
+                self.backend.workspace,
+                max_span_tokens=1 + config.num_draft_tokens,
+                max_num_seqs=config.max_num_seqs,
+                max_pages_per_sequence=self.blocks.blocks_for(self.max_model_len),
+            )
+        reuse = config.position_independent_reuse
+        if reuse and (not config.prefix_cache or fp8_kv):
+            raise ValueError(
+                "position-independent reuse needs the prefix cache and a bf16 KV cache"
+            )
         self.prefix_cache = (
-            PrefixCache(self.blocks, self.retention, clock, self.host_tier)
+            PrefixCache(self.blocks, self.retention, clock, self.host_tier, content_index=reuse)
             if config.prefix_cache
             else None
         )
+        # RoPE frequencies, for rotating reused keys to their new positions in float32.
+        exponents = torch.arange(0, mc.head_dim, 2, dtype=torch.float32) / mc.head_dim
+        self._inv_freq = (1.0 / (mc.rope_theta**exponents)).to(self.device)
         self.scheduler = Scheduler(
             SchedulerConfig(
                 max_num_seqs=config.max_num_seqs,
@@ -329,6 +378,8 @@ class Engine:
                 cache_aware=config.cache_aware_scheduling,
                 starvation_seconds=config.starvation_seconds,
                 min_restore_blocks=config.min_restore_blocks,
+                reuse_min_tokens=config.reuse_min_tokens if reuse else None,
+                reuse_recompute_ratio=config.reuse_recompute_ratio,
             ),
             self.blocks,
             self.prefix_cache,
@@ -532,6 +583,13 @@ class Engine:
                 prefix_cache_nodes=cache.num_nodes,
                 prefix_cache_evicted_blocks_total=cs.evicted_blocks,
             )
+        if cache is not None and self.config.position_independent_reuse:
+            cs = cache.stats
+            snapshot.update(
+                reuse_copied_tokens_total=cs.reused_tokens,
+                reuse_recomputed_tokens_total=cs.reuse_recomputed_tokens,
+                reuse_spans_total=cs.reuse_spans,
+            )
         host = self.host_tier
         if host is not None:
             cs = cache.stats
@@ -555,18 +613,22 @@ class Engine:
         self.idle = plan.empty
         if plan.empty:
             return []
+        if plan.copies:
+            self._run_copies(plan.copies)
         decode = plan.decode
         verify: list[tuple[Sequence, Draft]] = []
         if self.drafter is not None and decode:
             decode, verify = self._draft(decode)
         sampled: list[Sequence] = []
         rows: list[Tensor] = []
+        emitted: list[tuple[Sequence, list[int]]] = []
+        if verify and self.verify_graphs is not None:
+            decode, verify = self._run_verify_graph(decode, verify, emitted)
         verify_logits = None
         if plan.prefill or verify:
             verify_logits = self._run_prefill(plan.prefill, verify, sampled, rows)
         if decode:
             self._run_decode(decode, sampled, rows)
-        emitted: list[tuple[Sequence, list[int]]] = []
         if sampled:
             logits = rows[0] if len(rows) == 1 else torch.cat(rows, dim=0)
             tokens = self._sample(logits, sampled).tolist()
@@ -574,7 +636,7 @@ class Engine:
                 seq.tokens.append(token)
                 emitted.append((seq, [token]))
         if verify:
-            emitted += self._accept(verify, verify_logits)
+            emitted += self._accept(verify, sampling.greedy(verify_logits).tolist(), verify_logits)
         # Publish newly filled blocks to the prefix cache before any sequence finishes and
         # gives up its table.
         self.scheduler.commit(plan.decode)
@@ -587,6 +649,82 @@ class Engine:
         self.stats.steps += 1
         self.stats.step_seconds += time.perf_counter() - started
         return outputs
+
+    def _run_verify_graph(
+        self,
+        decode: list[Sequence],
+        verify: list[tuple[Sequence, Draft]],
+        emitted: list[tuple[Sequence, list[int]]],
+    ) -> tuple[list[Sequence], list[tuple[Sequence, Draft]]]:
+        """Verify drafts — and decode the greedy sequences without one — in one graph replay.
+
+        Possible when every drafted sequence is greedy (only the argmax of each row is
+        needed) and the batch fits a captured shape. Appends what was emitted to
+        ``emitted`` and returns the work left for the ordinary passes: the sampling
+        sequences without a draft and no drafts — or everything, unchanged, if the graph
+        cannot take this batch.
+        """
+        if not all(seq.params.greedy for seq, _ in verify):
+            return decode, verify
+        plain = [seq for seq in decode if seq.params.greedy]
+        spans = [
+            SequenceSpan(seq.tokens[-1:], seq.num_cached, self.blocks.table(seq.seq_id))
+            for seq in plain
+        ]
+        total = len(plain)
+        for seq, draft in verify:
+            table = self.blocks.table(seq.seq_id)
+            spans.append(SequenceSpan([seq.tokens[-1], *draft.tokens], seq.num_cached, table))
+            total += 1 + len(draft.tokens)
+        key = self.verify_graphs.bucket(len(spans), total)
+        if key is None:
+            return decode, verify
+        picks = self.verify_graphs.predict(key, spans).tolist()
+        for seq, token in zip(plain, picks, strict=False):
+            seq.num_cached += 1
+            seq.tokens.append(token)
+            emitted.append((seq, [token]))
+        self.stats.decode_tokens += len(plain)
+        self.stats.verify_tokens += total - len(plain)
+        emitted += self._accept(verify, picks[len(plain) :], None)
+        return [seq for seq in decode if not seq.params.greedy], []
+
+    def _run_copies(self, copies: list[tuple[Sequence, ReuseSpan]]) -> None:
+        """Position-independent reuse: copy KV cached at other positions into place.
+
+        For every copied token the keys of all layers are rotated by the distance between
+        its old and its new position; values are copied unchanged. The scheduler has
+        already allocated the destination blocks and advanced each sequence past the run.
+        """
+        size = self.config.block_size
+        sources, targets, shifts = [], [], []
+        stats = self.prefix_cache.stats
+        for seq, span in copies:
+            positions = np.arange(span.copy_start, span.end)
+            offsets = positions - span.dest_start
+            source_blocks = np.asarray(span.source_blocks, dtype=np.int64)
+            table = np.asarray(self.blocks.table(seq.seq_id), dtype=np.int64)
+            sources.append(source_blocks[offsets // size] * (2 * size) + offsets % size)
+            targets.append(table[positions // size] * (2 * size) + positions % size)
+            shifts.append(np.full(len(positions), span.dest_start - span.source_start))
+            copied = len(positions)
+            stats.reused_tokens += copied
+            stats.reuse_recomputed_tokens += span.head
+            stats.reuse_spans += 1
+            if not seq.num_preemptions:
+                seq.cache_hit_tokens += copied
+        device = self.device
+        shift = torch.from_numpy(np.concatenate(shifts)).to(device, torch.float32)
+        angles = shift[:, None] * self._inv_freq[None, :]
+        angles = torch.cat((angles, angles), dim=-1)
+        self.store.copy_rotated(
+            torch.from_numpy(np.concatenate(sources)).to(device),
+            torch.from_numpy(np.concatenate(targets)).to(device),
+            angles.cos(),
+            angles.sin(),
+        )
+        for _, span in copies:
+            self.scheduler.finish_reuse(span)
 
     def _run_prefill(
         self,
@@ -668,6 +806,10 @@ class Engine:
         maximum = self.config.num_draft_tokens
         limits = []
         for seq in decode:
+            if seq.draft_pause:
+                seq.draft_pause -= 1
+                limits.append(0)
+                continue
             if seq.draft_len == 0:
                 seq.draft_len = maximum
             # Leave room for the token the target model contributes after the draft.
@@ -694,9 +836,12 @@ class Engine:
         return True
 
     def _accept(
-        self, verify: list[tuple[Sequence, Draft]], logits: Tensor
+        self, verify: list[tuple[Sequence, Draft]], greedy_pick: list[int], logits: Tensor | None
     ) -> list[tuple[Sequence, list[int]]]:
         """Decide how much of each draft stands and append the resulting tokens.
+
+        ``greedy_pick`` is the target's argmax for every row of the verification spans;
+        ``logits`` are the rows' full logits, needed only if a drafted request samples.
 
         Greedy requests accept a drafted token iff it is the target's argmax, so their
         output is exactly what non-speculative decoding produces. Sampling requests use
@@ -711,7 +856,6 @@ class Engine:
         for _, draft in verify:
             starts.append(offset)
             offset += 1 + len(draft.tokens)
-        greedy_pick = sampling.greedy(logits).tolist()
         stochastic = [i for i, (seq, _) in enumerate(verify) if not seq.params.greedy]
         resolved = self._accept_sampled(verify, starts, logits, stochastic) if stochastic else {}
 
@@ -738,6 +882,12 @@ class Engine:
                 if accepted == len(drafted)
                 else max(1, accepted + 1)
             )
+            # Drafts that keep failing cost verification rows and buy nothing: pause.
+            seq.draft_acceptance = 0.7 * seq.draft_acceptance + 0.3 * accepted / len(drafted)
+            if seq.draft_acceptance < self.config.draft_min_acceptance:
+                seq.draft_pause = self.config.draft_cooldown_steps
+                seq.draft_acceptance = 1.0
+                seq.draft_len = 1
 
             tokens = [*drafted[:accepted], bonus]
             # Cut at the first stop token: nothing after it may be emitted.

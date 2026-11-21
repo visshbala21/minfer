@@ -104,6 +104,16 @@ def add_engine_arguments(parser: argparse.ArgumentParser) -> None:
     )
     group.add_argument("--min-restore-blocks", type=int, default=defaults.min_restore_blocks)
     group.add_argument(
+        "--position-independent-reuse",
+        action=argparse.BooleanOptionalAction,
+        default=defaults.position_independent_reuse,
+        help="reuse KV of tokens cached at another position (approximate)",
+    )
+    group.add_argument("--reuse-min-tokens", type=int, default=defaults.reuse_min_tokens)
+    group.add_argument(
+        "--reuse-recompute-ratio", type=float, default=defaults.reuse_recompute_ratio
+    )
+    group.add_argument(
         "--speculation",
         choices=["none", "ngram", "draft"],
         default=defaults.speculation or "none",
@@ -111,6 +121,14 @@ def add_engine_arguments(parser: argparse.ArgumentParser) -> None:
     )
     group.add_argument("--num-draft-tokens", type=int, default=defaults.num_draft_tokens)
     group.add_argument("--ngram-size", type=int, default=defaults.ngram_size)
+    group.add_argument("--draft-min-acceptance", type=float, default=defaults.draft_min_acceptance)
+    group.add_argument("--draft-cooldown-steps", type=int, default=defaults.draft_cooldown_steps)
+    group.add_argument(
+        "--verify-graphs",
+        action=argparse.BooleanOptionalAction,
+        default=defaults.verify_graphs,
+        help="replay speculative verification from captured CUDA graphs",
+    )
     group.add_argument("--draft-model", default=defaults.draft_model)
     group.add_argument("--seed", type=int, default=defaults.seed)
 
@@ -138,9 +156,15 @@ def engine_config_from_args(args: argparse.Namespace) -> EngineConfig:
         eviction_policy=args.eviction_policy,
         host_kv_gb=args.host_kv_gb,
         min_restore_blocks=args.min_restore_blocks,
+        position_independent_reuse=args.position_independent_reuse,
+        reuse_min_tokens=args.reuse_min_tokens,
+        reuse_recompute_ratio=args.reuse_recompute_ratio,
         speculation=None if args.speculation == "none" else args.speculation,
         num_draft_tokens=args.num_draft_tokens,
         ngram_size=args.ngram_size,
+        draft_min_acceptance=args.draft_min_acceptance,
+        draft_cooldown_steps=args.draft_cooldown_steps,
+        verify_graphs=args.verify_graphs,
         draft_model=args.draft_model,
         seed=args.seed,
     )

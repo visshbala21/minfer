@@ -274,6 +274,17 @@ def render(session: RealSession, call: Call, tokenizer: Any) -> str:
     )
 
 
+def completion(session: RealSession, call: Call, tokenizer: Any) -> str:
+    """The recorded reply to ``call`` as the model would have had to generate it."""
+    through = tokenizer.apply_chat_template(
+        session.messages[: call.message + 1],
+        tools=session.tools,
+        tokenize=False,
+        add_generation_prompt=False,
+    )
+    return through[len(render(session, call, tokenizer)) :]
+
+
 def compile_session(
     session_id: str,
     messages: list[dict[str, Any]],

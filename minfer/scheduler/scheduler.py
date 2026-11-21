@@ -10,6 +10,7 @@ allocated before the plan is returned, so the forward pass cannot run out of mem
 
 from __future__ import annotations
 
+import math
 import time
 from collections import deque
 from collections.abc import Callable, Iterable
@@ -18,7 +19,7 @@ from itertools import islice
 
 from minfer.cache.block_manager import BlockManager, OutOfBlocks
 from minfer.cache.radix_tree import PrefixCache, RestoreTicket
-from minfer.scheduler.sequence import Sequence, SequenceStatus
+from minfer.scheduler.sequence import ReuseSpan, Sequence, SequenceStatus
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,11 @@ class SchedulerConfig:
         min_restore_blocks: With a host tier, the smallest run of host-only blocks worth
             copying back for a request; shorter runs are recomputed (a copy is noticed one
             engine step after it completes, by which time a short prefill would be done).
+        reuse_min_tokens: Position-independent reuse: shortest run of prompt tokens, cached
+            at another position, whose KV is copied instead of computed. ``None`` disables
+            the feature (it needs the prefix cache's content index).
+        reuse_recompute_ratio: Share of each reused run, from its start, that is recomputed
+            in its new context rather than copied.
     """
 
     max_num_seqs: int = 256
@@ -54,6 +60,8 @@ class SchedulerConfig:
     starvation_seconds: float = 1.0
     admission_window: int = 32
     min_restore_blocks: int = 8
+    reuse_min_tokens: int | None = None
+    reuse_recompute_ratio: float = 0.15
 
     def __post_init__(self) -> None:
         if self.max_num_seqs < 1 or self.max_batched_tokens < 1:
@@ -72,15 +80,18 @@ class StepPlan:
         decode: Sequences with exactly one pending token.
         prefill: ``(sequence, num_tokens)`` pairs; ``num_tokens`` may be less than the
             sequence's pending count, in which case the step produces no token for it.
+        copies: ``(sequence, span)`` pairs: KV to copy from another position before the
+            step's forward passes (the sequence's ``num_cached`` already counts it).
     """
 
     decode: list[Sequence] = field(default_factory=list)
     prefill: list[tuple[Sequence, int]] = field(default_factory=list)
+    copies: list[tuple[Sequence, ReuseSpan]] = field(default_factory=list)
 
     @property
     def empty(self) -> bool:
         """Whether the step has nothing to run."""
-        return not self.decode and not self.prefill
+        return not self.decode and not self.prefill and not self.copies
 
 
 class Scheduler:
@@ -109,6 +120,11 @@ class Scheduler:
       memory has it copied back instead of recomputing it: the sequence leaves the queue
       while the copy runs (other sequences keep being admitted and stepped) and returns to
       its front when the copy completes.
+    * **Position-independent reuse.** Optionally, runs of a prompt that are cached at a
+      *different* position (a file read twice, a system prompt behind a different first
+      paragraph) are not prefilled: the head of each run is computed in its new context and
+      the rest of its KV is copied with the keys re-rotated. This is approximate — the
+      copied KV was computed after different preceding tokens — and is off by default.
     * **Sharing.** With a prefix cache, every full block a sequence computes is inserted
       into the radix tree as soon as the step that filled it completes, and a sequence
       that is still prefilling re-checks the tree before each chunk. Requests with a
@@ -166,6 +182,7 @@ class Scheduler:
         seq.status = SequenceStatus.FINISHED
         seq.finish_reason = reason
         self.running.remove(seq)
+        self._drop_reuse(seq, None)
         self.blocks.free(seq.seq_id)
 
     def abort(self, seq: Sequence) -> None:
@@ -309,6 +326,8 @@ class Scheduler:
                 seq.restore = None
             adopted += seq.restore_hit_tokens
             seq.restore_hit_tokens = 0
+            if self.config.reuse_min_tokens is not None:
+                self._plan_reuse(seq)
             if cache is not None:
                 stats = cache.stats
                 stats.lookups += 1
@@ -318,11 +337,58 @@ class Scheduler:
                 if not seq.num_preemptions:
                     seq.cache_hit_tokens = adopted
 
+    # --------------------------------------------------- position-independent
+
+    def _plan_reuse(self, seq: Sequence) -> None:
+        """Find KV for ``seq``'s uncached tokens that is cached at other positions; pin it."""
+        size, ratio = self.blocks.block_size, self.config.reuse_recompute_ratio
+        runs = self.cache.find_reuse(
+            seq.tokens, seq.num_cached, len(seq.tokens) - 1, self.config.reuse_min_tokens
+        )
+        for dest_start, source_start, source_blocks in runs:
+            head = math.ceil(ratio * len(source_blocks) * size)
+            if head >= len(source_blocks) * size:
+                continue
+            self.blocks.retain(source_blocks)
+            seq.reuse.append(ReuseSpan(dest_start, source_start, head, source_blocks, size))
+
+    def _drop_reuse(self, seq: Sequence, before: int | None) -> None:
+        """Unpin and forget planned reuse whose copy would start before ``before``.
+
+        ``None`` drops all of it. Needed when the sequence got past the point where a copy
+        begins some other way — the prefix cache caught up with those positions — or will
+        not get there at all.
+        """
+        kept = []
+        for span in seq.reuse:
+            if before is None or span.copy_start < before:
+                self.blocks.release(span.source_blocks)
+            else:
+                kept.append(span)
+        seq.reuse = kept
+
+    def finish_reuse(self, span: ReuseSpan) -> None:
+        """The engine has copied ``span``'s KV: unpin its source."""
+        self.blocks.release(span.source_blocks)
+
+    def _schedule_reuse(self, seq: Sequence, plan: StepPlan) -> bool:
+        """Emit the copies ``seq`` has reached. Returns ``False`` if it was preempted."""
+        self._drop_reuse(seq, seq.num_cached)
+        while seq.reuse and seq.reuse[0].copy_start == seq.num_cached:
+            span = seq.reuse[0]
+            if not self._reserve(seq, span.end):
+                return False
+            seq.reuse.pop(0)
+            seq.num_cached = span.end
+            plan.copies.append((seq, span))
+        return True
+
     # ------------------------------------------------------------ preemption
 
     def _preempt(self, seq: Sequence) -> None:
         """Take a running sequence's KV away and put it at the front of the queue."""
         self.running.remove(seq)
+        self._drop_reuse(seq, None)
         self.blocks.free(seq.seq_id)
         seq.num_cached = seq.synced_blocks = 0
         seq.num_preemptions += 1
@@ -378,6 +444,14 @@ class Scheduler:
                 # Catch up with whatever other sequences cached since this one last looked.
                 self.cache.stats.catchup_tokens += self._sync(seq)
             count = min(seq.num_pending, prefill_budget)
+            if seq.reuse:
+                if not self._schedule_reuse(seq, plan):
+                    continue
+                if seq.num_pending == 1:
+                    continue  # the copies brought it to its last token: it decodes next step
+                count = min(seq.num_pending, prefill_budget)
+                if seq.reuse:  # compute up to the end of the next run's recomputed head
+                    count = min(count, seq.reuse[0].copy_start - seq.num_cached)
             if self._reserve(seq, seq.num_cached + count):
                 plan.prefill.append((seq, count))
                 prefill_budget -= count
