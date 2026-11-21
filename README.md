@@ -151,15 +151,15 @@ On the multi-turn agent workload at 1–16 req/s (Qwen2.5-7B-Instruct, bf16, one
 
 | | minfer | vLLM | SGLang |
 |---|---|---|---|
-| TTFT p50 (ms) | 49–57 | 78–81 | 57–67 |
-| TTFT p99 (ms) | 86–118 | 121–136 | 97–125 |
-| TPOT p50 (ms) | 6.64–9.78 | 6.26–7.88 | 6.27–8.20 |
+| TTFT p50 (ms) | 47–58 | 78–81 | 57–67 |
+| TTFT p99 (ms) | 89–116 | 121–136 | 97–125 |
+| TPOT p50 (ms) | 6.62–8.95 | 6.26–7.88 | 6.27–8.20 |
 | prefix-cache hit rate | 93.0%–93.6% | 92.6%–93.2% | 93.1%–93.7% |
-| saturated output tok/s ("max") | 1836 | 2258 | 2264 |
-| TTFT p50 relative to vLLM | 0.63–0.70× | 1.00× | 0.73–0.82× |
-| TPOT p50 relative to vLLM | 1.06–1.24× | 1.00× | 1.00–1.04× |
-| saturated tok/s relative to vLLM | 0.81× | 1.00× | 1.00× |
-| saturated TTFT p50 / p99 (ms) | 106 / 316 | 161 / 835 | 146 / 338 |
+| saturated output tok/s ("max") | 2049 | 2258 | 2264 |
+| TTFT p50 relative to vLLM | 0.60–0.71× | 1.00× | 0.73–0.82× |
+| TPOT p50 relative to vLLM | 1.06–1.14× | 1.00× | 1.00–1.04× |
+| saturated tok/s relative to vLLM | 0.91× | 1.00× | 1.00× |
+| saturated TTFT p50 / p99 (ms) | 104 / 260 | 161 / 835 | 146 / 338 |
 <!-- END headline -->
 
 The same comparison on the model the engine was developed on (Qwen2.5-1.5B; re-measured
@@ -183,9 +183,9 @@ On the multi-turn agent workload at 1–16 req/s (Qwen2.5-1.5B-Instruct, bf16, o
 <!-- END headline-1.5b -->
 
 **minfer answers first.** At 7B it has the lowest median time-to-first-token of the three
-engines at every request rate on the agent workload and when saturated (24–29 ms ahead of
-vLLM, 7–10 ms ahead of SGLang at 1–16 req/s), and the lowest 99th percentile — by a margin
-that at 16 req/s (118 vs 121 ms for SGLang) is inside the run-to-run noise.
+engines at every request rate on the agent workload and when saturated (24–31 ms ahead of
+vLLM, 9–11 ms ahead of SGLang at 1–16 req/s), and the lowest 99th percentile — by a margin
+that at 16 req/s (117 vs 121 ms for SGLang) is inside the run-to-run noise.
 All three engines reuse the same share of prompt tokens (hit-rate row) — on this workload
 their prefix caches are equally effective — so the lead is not a better hit rate; it is a
 shorter path from socket to first token for a request that is mostly cache hits. A
@@ -198,10 +198,13 @@ tokenization off the event loop), not the engine; against vLLM it is the engine 
 tokens that are actually new).
 
 **It does not generate fastest, and at 7B the gap widens with load.** Per-token latency is
-6–8% behind both baselines at 1–4 req/s, and at 16 req/s 24% behind vLLM and 19% behind
-SGLang; saturated throughput is 0.81× of either. A turn's end-to-end latency is within 2–6%
-of the best engine at 1–4 req/s (the head start on the first token nearly pays for the
-slower tokens after it) and 16% behind at 16 req/s. See
+6–8% behind both baselines at 1–4 req/s, and at 16 req/s 14% behind vLLM and 9% behind
+SGLang; saturated throughput is 0.91× of either. A turn's end-to-end latency is within 2–4%
+of the best engine at 1–8 req/s (the head start on the first token nearly pays for the
+slower tokens after it) and 7% behind at 16 req/s. These numbers are with FlashInfer's
+decode kernel, which is the engine's default since it turned out to be faster inside the
+engine than minfer's own Triton kernel (below); with the Triton kernel the gap at 16 req/s
+was 24% and saturated throughput 0.81×. See
 [where minfer loses](#where-minfer-loses-to-vllm-and-sglang-and-why).
 
 ## Architecture
@@ -405,22 +408,22 @@ SGLang 0.5.23, PyTorch 2.14, FlashInfer 0.7.3.
 <!-- BEGIN agent-results -->
 | rate (req/s) | engine | out tok/s | TTFT p50 (ms) | TTFT p99 (ms) | TPOT p50 (ms) | TPOT p99 (ms) | E2E p50 (ms) | E2E p99 (ms) | prefix hit rate | failed |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1 | minfer | 88 | **49.0** | **89.5** | 6.64 | 7.87 | 443 | 1497 | 93.6% | 0 |
+| 1 | minfer | 88 | **47.2** | **90.8** | 6.62 | 7.65 | 442 | 1480 | 93.6% | 0 |
 |  | vLLM | 88 | 78.2 | 120.5 | **6.26** | **7.09** | 453 | 1451 | 93.2% | 0 |
 |  | SGLang | **89** | 56.8 | 96.6 | 6.27 | 7.34 | **433** | **1408** | **93.7%** | 0 |
-| 2 | minfer | 143 | **53.1** | **86.1** | 6.79 | 7.56 | 476 | 1585 | 93.1% | 0 |
+| 2 | minfer | 143 | **49.3** | **89.0** | 6.77 | 7.50 | 472 | 1542 | 93.1% | 0 |
 |  | vLLM | 143 | 80.5 | 124.5 | **6.38** | **6.95** | 475 | 1505 | 92.8% | 0 |
 |  | SGLang | 143 | 60.4 | 104.3 | 6.41 | 7.21 | **455** | **1477** | **93.2%** | 0 |
-| 4 | minfer | 256 | **54.5** | **97.6** | 7.27 | 10.38 | 500 | 1449 | 93.1% | 0 |
+| 4 | minfer | 256 | **52.3** | **92.0** | 7.25 | 8.64 | 488 | 1411 | 93.1% | 0 |
 |  | vLLM | 256 | 78.4 | 127.1 | **6.72** | **7.71** | 485 | 1367 | 92.7% | 0 |
 |  | SGLang | **257** | 61.6 | 104.4 | 6.78 | 8.05 | **474** | **1342** | **93.2%** | 0 |
-| 8 | minfer | 415 | **56.0** | **117.9** | 7.93 | 10.74 | 546 | 1762 | 93.0% | 0 |
+| 8 | minfer | 416 | **55.9** | **110.9** | 7.70 | 10.30 | 530 | 1691 | 93.0% | 0 |
 |  | vLLM | 417 | 81.1 | 136.4 | **7.01** | **8.83** | 512 | 1603 | 92.6% | 0 |
 |  | SGLang | **418** | 65.0 | 124.7 | 7.19 | 9.26 | 512 | 1603 | **93.1%** | 0 |
-| 16 | minfer | 743 | **57.3** | **118.4** | 9.78 | 13.13 | 645 | 2277 | 93.2% | 0 |
+| 16 | minfer | 746 | **57.7** | **116.5** | 8.95 | 11.88 | 596 | 2027 | 93.2% | 0 |
 |  | vLLM | **749** | 81.4 | 136.2 | **7.88** | **10.16** | **555** | **1790** | 92.8% | 0 |
 |  | SGLang | 748 | 67.0 | 121.0 | 8.20 | 11.21 | 561 | 1864 | **93.3%** | 0 |
-| max | minfer | 1836 | **106.0** | **316.3** | 27.07 | 30.58 | 1684 | 5474 | 92.8% | 0 |
+| max | minfer | 2049 | **104.4** | **259.7** | 24.34 | 28.73 | 1513 | 4722 | 92.8% | 0 |
 |  | vLLM | 2258 | 161.1 | 835.4 | **19.89** | **23.86** | 1379 | **4078** | 92.5% | 0 |
 |  | SGLang | **2264** | 146.0 | 338.0 | 20.75 | 25.04 | **1368** | 4189 | **92.9%** | 0 |
 <!-- END agent-results -->
@@ -469,23 +472,23 @@ no think time. A value is bold when it is the best of the three at the printed p
 <!-- BEGIN sharegpt-results -->
 | rate (req/s) | engine | out tok/s | TTFT p50 (ms) | TTFT p99 (ms) | TPOT p50 (ms) | TPOT p99 (ms) | E2E p50 (ms) | E2E p99 (ms) | failed |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | minfer | 214 | **22.9** | **48.9** | 6.32 | 6.69 | 1051 | 4910 | 0 |
+| 1 | minfer | 214 | **22.0** | **45.5** | 6.38 | 6.76 | 1061 | 4982 | 0 |
 |  | vLLM | 214 | 37.6 | 58.9 | 6.21 | **6.53** | 1054 | 4883 | 0 |
 |  | SGLang | 214 | 26.0 | 103.6 | **6.19** | 6.60 | **1033** | **4838** | 0 |
-| 2 | minfer | 424 | **21.3** | **28.5** | 6.39 | 7.12 | 1059 | 4958 | 0 |
+| 2 | minfer | 424 | **20.4** | **26.6** | 6.47 | 7.15 | 1069 | 5023 | 0 |
 |  | vLLM | 424 | 35.9 | 50.8 | 6.28 | **6.72** | 1057 | 4906 | 0 |
 |  | SGLang | 424 | 29.3 | 42.5 | **6.26** | 7.04 | **1042** | **4898** | 0 |
-| 4 | minfer | 817 | **22.1** | **41.2** | 6.59 | 7.50 | 1073 | 5113 | 0 |
+| 4 | minfer | 816 | **21.7** | **40.8** | 6.66 | 7.54 | 1093 | 5180 | 0 |
 |  | vLLM | **819** | 34.6 | 55.9 | **6.28** | **6.93** | **1049** | **4891** | 0 |
 |  | SGLang | 818 | 28.5 | 44.0 | 6.44 | 7.31 | 1062 | 5051 | 0 |
-| 8 | minfer | 1664 | **22.5** | **39.5** | 7.01 | 8.71 | 1252 | 5435 | 0 |
+| 8 | minfer | 1662 | **22.1** | **39.2** | 7.04 | 8.70 | 1247 | 5430 | 0 |
 |  | vLLM | **1669** | 38.4 | 63.3 | **6.50** | **7.52** | **1169** | **5061** | 0 |
 |  | SGLang | 1667 | 30.8 | 45.9 | 6.77 | 8.47 | 1196 | 5263 | 0 |
-| 16 | minfer | 3086 | **24.4** | **50.3** | 7.97 | 10.64 | 1240 | 6169 | 0 |
+| 16 | minfer | 3088 | **23.3** | **48.6** | 7.88 | 11.45 | 1223 | 6113 | 0 |
 |  | vLLM | **3106** | 47.8 | 82.2 | **6.82** | **7.73** | **1084** | **5397** | 0 |
 |  | SGLang | 3098 | 36.4 | 55.2 | 7.66 | 10.76 | 1193 | 5974 | 0 |
-| max | minfer | 12184 | 4668.2 | 10751.1 | 15.33 | 26.65 | 7864 | 15588 | 0 |
-|  | vLLM | **14737** | 3480.3 | 7599.9 | **12.50** | **23.88** | **6462** | **12532** | 0 |
+| max | minfer | 12469 | 4311.5 | 10459.4 | 15.33 | **21.07** | 7602 | 15133 | 0 |
+|  | vLLM | **14737** | 3480.3 | 7599.9 | **12.50** | 23.88 | **6462** | **12532** | 0 |
 |  | SGLang | 14008 | **3278.5** | **3394.7** | 33.12 | 136.83 | 8102 | 13749 | 0 |
 <!-- END sharegpt-results -->
 
@@ -581,18 +584,18 @@ minfer is behind in three places, all visible in the tables above.
 1. **Time per output token, at every rate, and more so under load at 7B.** At 1.5B a
    decode step was bound by the number of kernels it launches, and Phase 11 closed most of
    a 2× gap by fusing them. At 7B the matmuls dominate, and the gap grows with the request
-   rate: 6% at 1 req/s, 24% at 16 req/s. The likely cause — consistent with that
+   rate: 6% at 1 req/s, 14% at 16 req/s, 22% at saturation. The likely cause — consistent with that
    load-dependence, but not isolated by a measurement at 7B — is the structural difference
    that is left: in a step that has both prefill and decode work, minfer runs two passes
    over 15 GB of weights (a ragged prefill pass and a fixed-shape decode pass, the design
    that keeps the decode graphs simple) where vLLM runs one mixed batch, and the busier
    the server, the more steps are mixed.
-2. **Saturated throughput on the agent workload: 0.81× of both baselines at 7B**,
+2. **Saturated throughput on the agent workload: 0.91× of both baselines at 7B**,
    presumably for the same reason: with 64 sessions running flat out almost every step is
    mixed. Prefill passes above 1,024 tokens also still run eagerly rather than from a graph.
 3. **Throughput at extreme concurrency on ShareGPT at 7B.** With 1,000 requests submitted
    at once vLLM and SGLang deliver 14–15k tok/s and minfer 12k, and minfer's median TTFT is
-   the worst of the three (4.7 s against 3.3–3.5 s): it caps the number of running
+   the worst of the three (4.3 s against 3.3–3.5 s): it caps the number of running
    sequences at 256 and queues the rest. At 1.5B the same cap gave it the highest
    throughput; at 7B it does not. That is a default (`--max-num-seqs`), not a measured
    optimum.
@@ -655,26 +658,7 @@ Reading the table:
 steady-state decode; [`bench/decode_latency.py`](bench/decode_latency.py)):
 
 <!-- BEGIN decode-latency -->
-| batch | context (tokens) | eager (ms) | + CUDA graphs (ms) | + Triton decode (ms) | + fused kernels (default) (ms) | eager → default |
-|---|---|---|---|---|---|---|
-| 1 | 256 | 10.95 | 3.74 | 3.52 | 2.17 | 5.0× |
-| 2 | 256 | 10.97 | 3.95 | 3.71 | 2.23 | 4.9× |
-| 4 | 256 | 11.04 | 4.00 | 3.80 | 2.25 | 4.9× |
-| 8 | 256 | 11.07 | 4.21 | 3.95 | 2.33 | 4.7× |
-| 16 | 256 | 11.06 | 4.34 | 4.07 | 2.37 | 4.7× |
-| 32 | 256 | 11.20 | 4.67 | 4.29 | 2.51 | 4.5× |
-| 64 | 256 | 11.35 | 5.11 | 4.67 | 2.80 | 4.1× |
-| 128 | 256 | 11.55 | 5.92 | 5.33 | 3.35 | 3.4× |
-| 256 | 256 | 11.80 | 7.54 | 6.70 | 4.54 | 2.6× |
-| 1 | 2048 | 10.89 | 3.84 | 3.61 | 2.27 | 4.8× |
-| 2 | 2048 | 11.01 | 4.05 | 3.81 | 2.34 | 4.7× |
-| 4 | 2048 | 11.09 | 4.13 | 3.94 | 2.39 | 4.6× |
-| 8 | 2048 | 11.06 | 4.47 | 4.17 | 2.52 | 4.4× |
-| 16 | 2048 | 11.18 | 4.99 | 4.44 | 2.72 | 4.1× |
-| 32 | 2048 | 11.27 | 5.53 | 4.94 | 3.19 | 3.5× |
-| 64 | 2048 | 11.48 | 7.00 | 5.98 | 4.07 | 2.8× |
-| 128 | 2048 | 11.99 | 9.84 | 7.93 | 5.98 | 2.0× |
-| 256 | 2048 | 17.90 | 15.97 | 12.24 | 10.33 | 1.7× |
+_Not measured yet._
 <!-- END decode-latency -->
 
 ![Decode latency](bench/plots/decode_latency.png)
@@ -687,9 +671,9 @@ engine without fused kernels, Triton decode or prefill graphs.
 | scenario | CUDA kernels/step before | after | GPU ms/step before | after |
 |---|---|---|---|---|
 | decode graph batch1 | 1219 | 398 | 3.63 | 2.03 |
-| decode graph batch64 | 1219 | 399 | 5.11 | 2.58 |
+| decode graph batch64 | 1219 | 399 | 5.11 | 2.59 |
 | decode eager batch1 | 1219 | 398 | 3.75 | 2.04 |
-| prefill 2048 tokens | 1248 | 399 | 15.56 | 10.98 |
+| prefill 2048 tokens | 1248 | 399 | 15.56 | 11.06 |
 <!-- END profile -->
 
 **One prefill pass** ([`bench/prefill_latency.py`](bench/prefill_latency.py)): an eager
@@ -699,12 +683,12 @@ CUDA graph for the smaller passes, remove most of it.
 <!-- BEGIN prefill-latency -->
 | prompt tokens | eager (ms) | eager + fused kernels (ms) | default (ms) | speedup |
 |---|---|---|---|---|
-| 16 | 10.91 | 6.86 | 2.38 | 4.6× |
-| 64 | 10.86 | 6.93 | 2.61 | 4.2× |
-| 256 | 10.73 | 6.93 | 3.53 | 3.0× |
-| 512 | 10.69 | 6.93 | 4.47 | 2.4× |
-| 1024 | 11.39 | 7.19 | 7.09 | 1.6× |
-| 2048 | 17.74 | 12.29 | 12.34 | 1.4× |
+| 16 | 11.56 | 7.05 | 2.39 | 4.8× |
+| 64 | 11.52 | 7.09 | 2.61 | 4.4× |
+| 256 | 11.45 | 7.13 | 3.53 | 3.2× |
+| 512 | 11.99 | 7.12 | 4.48 | 2.7× |
+| 1024 | 11.68 | 7.33 | 7.19 | 1.6× |
+| 2048 | 17.77 | 12.34 | 12.32 | 1.4× |
 <!-- END prefill-latency -->
 
 **Triton paged-attention decode kernel vs FlashInfer's**
@@ -717,27 +701,27 @@ FlashInfer has two decode configurations; the comparison is against the faster o
 <!-- BEGIN triton -->
 | batch | context | FlashInfer, plain (µs/layer) | FlashInfer, tensor cores (µs/layer) | Triton (µs/layer) | kernel only: Triton vs best FlashInfer | step: FlashInfer plan + 28 layers (ms) | step: Triton prep + 28 layers (ms) | end to end: Triton vs FlashInfer | max abs difference |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | 128 | 11.1 | 6.6 | 7.0 | 0.94× | 0.22 | 0.21 | 1.04× | 0.0020 |
-| 8 | 128 | 11.4 | 7.1 | 8.0 | 0.88× | 0.24 | 0.24 | 0.97× | 0.0020 |
-| 32 | 128 | 15.5 | 10.7 | 5.6 | 1.92× | 0.34 | 0.17 | 1.95× | 0.0039 |
-| 64 | 128 | 15.7 | 11.3 | 5.9 | 1.90× | 0.35 | 0.18 | 1.91× | 0.0039 |
-| 256 | 128 | 29.8 | 17.6 | 8.4 | 2.09× | 0.53 | 0.25 | 2.09× | 0.0039 |
-| 1 | 1,024 | 11.6 | 7.5 | 7.2 | 1.05× | 0.25 | 0.22 | 1.14× | 0.0010 |
-| 8 | 1,024 | 15.7 | 11.6 | 9.0 | 1.29× | 0.36 | 0.27 | 1.33× | 0.0010 |
-| 32 | 1,024 | 28.7 | 15.5 | 11.7 | 1.33× | 0.47 | 0.35 | 1.36× | 0.0010 |
-| 64 | 1,024 | 43.7 | 33.5 | 29.1 | 1.15× | 0.98 | 0.83 | 1.17× | 0.0010 |
-| 256 | 1,024 | 157.2 | 97.7 | 93.0 | 1.05× | 2.79 | 2.63 | 1.06× | 0.0020 |
-| 1 | 4,096 | 15.5 | 11.2 | 10.9 | 1.03× | 0.35 | 0.32 | 1.10× | 0.0005 |
-| 8 | 4,096 | 28.0 | 15.2 | 14.2 | 1.08× | 0.46 | 0.42 | 1.12× | 0.0005 |
-| 32 | 4,096 | 78.2 | 54.9 | 52.0 | 1.06× | 1.58 | 1.48 | 1.07× | 0.0005 |
-| 64 | 4,096 | 151.8 | 99.5 | 96.5 | 1.03× | 2.83 | 2.72 | 1.04× | 0.0005 |
-| 256 | 4,096 | 586.9 | 359.6 | 357.7 | 1.01× | 10.13 | 10.02 | 1.01× | 0.0005 |
-| 1 | 16,384 | 23.6 | 13.4 | 24.7 | 0.54× | 0.41 | 0.71 | 0.58× | 0.0002 |
-| 8 | 16,384 | 79.2 | 55.1 | 54.9 | 1.00× | 1.59 | 1.56 | 1.02× | 0.0002 |
-| 32 | 16,384 | 294.2 | 188.3 | 187.3 | 1.01× | 5.32 | 5.27 | 1.01× | 0.0002 |
-| 64 | 16,384 | 581.3 | 364.3 | 366.8 | 0.99× | 10.26 | 10.30 | 1.00× | 0.0002 |
+| 1 | 128 | 11.3 | 6.7 | 7.0 | 0.96× | 0.22 | 0.21 | 1.04× | 0.0020 |
+| 8 | 128 | 11.2 | 7.1 | 8.0 | 0.88× | 0.24 | 0.24 | 0.98× | 0.0020 |
+| 32 | 128 | 15.4 | 10.7 | 5.6 | 1.91× | 0.34 | 0.18 | 1.91× | 0.0039 |
+| 64 | 128 | 15.8 | 11.5 | 6.0 | 1.93× | 0.36 | 0.19 | 1.95× | 0.0039 |
+| 256 | 128 | 29.9 | 17.6 | 8.4 | 2.09× | 0.53 | 0.25 | 2.09× | 0.0039 |
+| 1 | 1,024 | 11.6 | 7.5 | 7.2 | 1.04× | 0.25 | 0.22 | 1.14× | 0.0010 |
+| 8 | 1,024 | 15.9 | 11.5 | 9.1 | 1.27× | 0.36 | 0.27 | 1.33× | 0.0010 |
+| 32 | 1,024 | 28.1 | 15.1 | 11.6 | 1.29× | 0.46 | 0.34 | 1.34× | 0.0010 |
+| 64 | 1,024 | 43.7 | 33.4 | 29.1 | 1.15× | 0.98 | 0.83 | 1.18× | 0.0010 |
+| 256 | 1,024 | 157.4 | 97.7 | 93.0 | 1.05× | 2.79 | 2.63 | 1.06× | 0.0020 |
+| 1 | 4,096 | 15.6 | 11.1 | 10.8 | 1.02× | 0.35 | 0.32 | 1.09× | 0.0005 |
+| 8 | 4,096 | 28.0 | 15.2 | 14.2 | 1.07× | 0.46 | 0.41 | 1.11× | 0.0005 |
+| 32 | 4,096 | 78.4 | 54.7 | 52.0 | 1.05× | 1.57 | 1.48 | 1.07× | 0.0005 |
+| 64 | 4,096 | 151.7 | 100.1 | 96.5 | 1.04× | 2.85 | 2.72 | 1.05× | 0.0005 |
+| 256 | 4,096 | 586.4 | 359.6 | 356.2 | 1.01× | 10.13 | 10.00 | 1.01× | 0.0005 |
+| 1 | 16,384 | 23.3 | 13.5 | 24.6 | 0.55× | 0.41 | 0.71 | 0.58× | 0.0002 |
+| 8 | 16,384 | 79.0 | 55.0 | 55.0 | 1.00× | 1.58 | 1.56 | 1.01× | 0.0002 |
+| 32 | 16,384 | 294.0 | 186.9 | 187.4 | 1.00× | 5.28 | 5.27 | 1.00× | 0.0002 |
+| 64 | 16,384 | 581.1 | 363.8 | 366.7 | 0.99× | 10.24 | 10.30 | 0.99× | 0.0002 |
 
-Kernel only, against the faster FlashInfer configuration, the Triton kernel is 0.54–2.09× as fast: more than 5% faster at 9 of 19 points, more than 5% slower at 3, within 5% at 7. End to end (host preparation included) it is 0.58–2.09×.
+Kernel only, against the faster FlashInfer configuration, the Triton kernel is 0.55–2.09× as fast: more than 5% faster at 9 of 19 points, more than 5% slower at 2, within 5% at 8. End to end (host preparation included) it is 0.58–2.09×.
 <!-- END triton -->
 
 ![Triton kernel](bench/plots/triton_kernel.png)
@@ -758,12 +742,12 @@ time-to-first-token.
 <!-- BEGIN chunked-prefill -->
 | chunk (tokens) | ITL p99 (ms) | ITL max (ms) | TPOT p50 (ms) | TPOT p99 (ms) | long-prompt TTFT p50 (ms) | out tok/s |
 |---|---|---|---|---|---|---|
-| off | 5.6 | 114 | 2.45 | 5.00 | 69 | 1703 |
-| 4096 | 25.0 | 41 | 2.45 | 5.31 | 82 | 1702 |
-| 2048 | 17.7 | 26 | 2.45 | 5.47 | 100 | 1700 |
-| 1024 | 12.8 | 26 | 2.51 | 5.89 | 121 | 1697 |
-| 512 | 11.9 | 14 | 2.58 | 9.29 | 208 | 1687 |
-| 256 | 10.8 | 14 | 3.04 | 9.54 | 462 | 1653 |
+| off | 5.7 | 115 | 2.46 | 5.06 | 69 | 1702 |
+| 4096 | 24.9 | 41 | 2.46 | 5.28 | 81 | 1701 |
+| 2048 | 17.7 | 26 | 2.47 | 5.49 | 99 | 1700 |
+| 1024 | 12.8 | 18 | 2.48 | 5.84 | 124 | 1697 |
+| 512 | 12.0 | 14 | 2.59 | 9.52 | 208 | 1688 |
+| 256 | 10.7 | 12 | 3.02 | 9.50 | 460 | 1653 |
 <!-- END chunked-prefill -->
 
 **Speculative decoding** ([`bench/speculation.py`](bench/speculation.py)), engine-level,
@@ -772,12 +756,12 @@ greedy:
 <!-- BEGIN speculation -->
 | workload | speculation | out tok/s | vs off | TPOT p50 (ms) | tokens/step | accepted | outputs identical to off |
 |---|---|---|---|---|---|---|---|
-| agent | off | 3199 | — | 6.54 | 16.6 | — | — |
-| agent | ngram | 2483 | 0.78× | 5.21 | 30.4 | 75% | 234/356 |
-| agent | draft model | 1413 | 0.44× | 12.23 | 54.3 | 74% | 230/356 |
-| sharegpt | off | 35777 | — | 5.05 | 186.8 | — | — |
-| sharegpt | ngram | 14832 | 0.41× | 12.25 | 189.3 | 56% | 91/256 |
-| sharegpt | draft model | 9809 | 0.27× | 14.89 | 366.2 | 66% | 83/256 |
+| agent | off | 3182 | — | 6.55 | 16.6 | — | — |
+| agent | ngram | 2673 | 0.84× | 5.30 | 31.0 | 77% | 235/356 |
+| agent | draft model | 1361 | 0.43× | 11.77 | 51.5 | 76% | 232/356 |
+| sharegpt | off | 35562 | — | 5.08 | 186.8 | — | — |
+| sharegpt | ngram | 17919 | 0.50× | 9.34 | 187.4 | 57% | 75/256 |
+| sharegpt | draft model | 8267 | 0.23× | 16.04 | 230.5 | 67% | 83/256 |
 <!-- END speculation -->
 
 That table is the Phase 7 design, in which a verification span ran through the eager
@@ -817,10 +801,10 @@ memory, and decode-step latency.
 <!-- BEGIN fp8 -->
 | setting | GSM8K (200) | KV capacity | weights | decode step ms (batch 1 / 64 / 256) |
 |---|---|---|---|---|
-| bf16 | 69.0% | 1.00× | 2.89 GB | 2.16 / 2.95 / 5.31 |
-| FP8 KV cache | 68.5% | 1.92× | 2.89 GB | 2.74 / 4.15 / 8.63 |
-| FP8 weights | 70.5% | 1.00× | 1.67 GB | 4.42 / 6.92 / 9.62 |
-| FP8 weights + KV | 71.0% | 1.91× | 1.67 GB | 5.04 / 8.12 / 12.82 |
+| bf16 | 69.0% | 1.00× | 2.89 GB | 2.16 / 2.94 / 5.31 |
+| FP8 KV cache | 69.0% | 1.92× | 2.89 GB | 2.67 / 3.64 / 5.88 |
+| FP8 weights | 70.5% | 1.00× | 1.67 GB | 4.42 / 6.96 / 9.66 |
+| FP8 weights + KV | 74.0% | 1.91× | 1.67 GB | 4.97 / 7.60 / 10.24 |
 <!-- END fp8 -->
 
 FP8 costs no measurable accuracy (all four settings are within one standard error of each
@@ -920,8 +904,8 @@ one model on one GPU.
 - **Reproduction on a second machine was not performed.** A fresh clone on the *same*
   machine, with empty caches and re-downloaded weights, was: see
   [Reproduction check](#reproduction-check).
-- **The decode gap to vLLM and SGLang at 7B is open** (6% per token at 1 req/s, 24% at
-  16 req/s, 0.81× saturated throughput). Unified prefill+decode passes were implemented
+- **The decode gap to vLLM and SGLang at 7B is open** (6% per token at 1 req/s, 14% at
+  16 req/s, 0.91× saturated throughput). Unified prefill+decode passes were implemented
   and measured; they lose at saturation and are off by default (DESIGN.md M-025).
 - **Speculative decoding** helps only on a lightly loaded server and hurts a saturated one.
 - **One model family** (Qwen2/2.5), text only, no tool-call parsing on the response side,
