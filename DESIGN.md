@@ -2103,3 +2103,79 @@ same traces, fresh server per setting:
 - Items (b) fusing the KV write into the RoPE kernel and (c) further profiling were not
   attempted: the phase is optional in the revised plan and its first item gave a negative
   result. The decode gap of M-022 stands.
+
+---
+
+## Phase 15C — Position-independent KV reuse
+
+The mechanism is CacheBlend's and EPIC's (reuse KV of identical content at another
+position, recompute a small part), with MiniPIC's observation that RoPE makes the
+positional part of a key a rotation; nothing here is new.
+
+### D-042 Rotate cached keys instead of storing unrotated ones; recompute each run's head
+
+- **Finding runs.** With `--position-independent-reuse` the prefix cache also indexes every
+  cached block by the hash of its 16 tokens alone. At admission the uncached part of a
+  prompt is scanned for windows that hit the index, each hit is checked token by token and
+  extended along the source edge, and runs of at least `--reuse-min-tokens` (64) are
+  planned; their source blocks are pinned until copied.
+- **Copying.** The store holds *rotated* keys (D-013). A key cached at position p and
+  needed at p + Δ is the same vector rotated by Δ more steps, so one gather, one rotation
+  by Δ·θ in float32 and one scatter per run move the keys of all layers; values are copied
+  unchanged (`PagedKVStore.copy_rotated`). MiniPIC stores unrotated keys and rotates inside
+  attention; rotating at copy time needs no kernel change and costs one pass over the
+  copied tokens.
+- **Selective recomputation, EPIC-style.** The first `--reuse-recompute-ratio` (15%) of
+  each run is computed in its new context before the rest is copied. CacheBlend picks the
+  tokens with the largest KV deviation anywhere in a chunk; that needs a pass with queries
+  at arbitrary positions under a causal mask, which the prefill kernel used here does not
+  offer, so the recomputed part is always a run's head and the engine stays strictly
+  left to right: compute up to a head's end, copy, continue.
+- **What is exact and what is not.** Layer 0's keys and values are a function of the token
+  and its position only, so their reuse is exact up to the rotation's rounding. Every
+  deeper layer's were computed after different preceding tokens. A one-layer model
+  therefore reproduces the cache-free oracle exactly under reuse
+  (`test_reuse_is_exact_for_a_one_layer_model`, at 0% and 25% recomputation), which pins
+  down the rotation, the slots and the positions; for real models the error is measured.
+- **Reused KV is published** to the prefix cache like any other, so later turns of the
+  session hit on it — and inherit its approximation.
+
+### M-026 Quality and savings on real trajectories (Phase 15C acceptance)
+
+Script: `bench/pic_quality.py` → `bench/results/pic_quality_7b.json`. Qwen2.5-7B, the real
+trace. Sixteen sessions' first calls fill the cache; then the first call of each of 48
+other sessions — the shifted-duplicate case of M-021 — is prefilled without reuse and at
+five recompute ratios. After each prefill the first 128 tokens of the recorded reply are
+teacher-forced on top of the KV the engine left behind, and the next-token distributions
+are compared with the exact prefill's at 4,679 positions.
+
+| prefill | prompt tokens computed | top-1 same as exact | top-1 = recorded token | mean KL from exact (nats) | max KL | mean log-prob of recorded token |
+|---|---|---|---|---|---|---|
+| exact (reference) | 93.7% | — | 71.04% | — | — | -1.712 |
+| exact, prefill in 1,024-token chunks (noise floor) | 93.7% | 99.70% | 70.93% | 0.0003 | 0.02 | -1.713 |
+| reuse, recompute 0% of each run | 27.7% | 96.92% | 70.96% | 0.0143 | 1.01 | -1.748 |
+| reuse, recompute 5% of each run | 31.0% | 96.90% | 70.96% | 0.0122 | 0.73 | -1.740 |
+| reuse, recompute 15% of each run | 37.6% | 97.11% | 70.96% | 0.0098 | 0.81 | -1.729 |
+| reuse, recompute 30% of each run | 47.5% | 97.44% | 70.96% | 0.0083 | 1.10 | -1.729 |
+| reuse, recompute 50% of each run | 60.7% | 98.10% | 70.78% | 0.0052 | 0.47 | -1.726 |
+
+- **Savings: the prompt tokens computed on a session's first call fall from 93.7% to
+  27.7%** with no recomputation, and to 37.6% at the default 15%.
+- **Quality: measurably worse than exact, by a small amount.** About 3% of next-token
+  argmaxes change (96.9–97.4% agreement at 0–30% recomputation) against a noise floor of
+  0.3% between two exact bf16 prefills that differ only in chunking; mean KL is
+  0.008–0.014 nats against 0.0003. Agreement with the token the original agent actually
+  produced does not move (70.8–71.0% in every row), and its mean log-probability drops by
+  0.01–0.03 nats. 38–45 of the 48 calls have at least one changed argmax within 128
+  tokens, against 12 for the noise floor: under greedy decoding most replies would
+  eventually diverge from the exact run's, as they do between any two bf16 runs (M-002),
+  only sooner.
+- **Recomputing more buys little until it is half the run**: agreement is 96.9% at 0%,
+  97.1% at 15%, 97.4% at 30%, 98.1% at 50%. The head of a run is not where the error
+  lives; this is the cost of recomputing heads rather than CacheBlend's highest-deviation
+  tokens.
+- **How much it is worth on this workload: little.** First calls are 1,526 tokens
+  on average here and are 1 of every 27 calls; over the whole trace shifted duplicates are
+  0.8% of prompt tokens (M-021). The saving is about a thousand tokens of prefill — some
+  25 ms at 7B (M-023) — once per session, paid for with the approximation above for the
+  rest of the session. The composition study measures it end to end.
