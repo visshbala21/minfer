@@ -23,7 +23,8 @@ a wrapper around another serving engine.
 **On real coding-agent traces at 7B, once concurrent sessions exceed GPU memory, one
 technique decides the outcome — a host-memory tier for the KV cache — and vLLM with its own
 offloading is the fastest system measured. minfer with every exact technique enabled
-recomputes the least and is still 16–21% behind vLLM in throughput.**
+recomputes the least (30–39% fewer prefill tokens per call than either baseline past
+capacity), is level with SGLang, and is 6–11% behind vLLM in throughput.**
 
 Each engine in its best measured configuration, 64–128 concurrent sessions (one H100 holds
 the KV of about 55–65):
@@ -31,33 +32,37 @@ the KV of about 55–65):
 <!-- BEGIN full-stack -->
 | concurrent sessions | metric | minfer: prefix cache + session-aware retention + host tier | vLLM + native KV offloading | SGLang + hierarchical cache |
 |---|---|---|---|---|
-| 64 | TTFT p50 (ms) | 128 | 174 | **126** |
+| 64 | TTFT p50 (ms) | **120** | 174 | 126 |
 |  | TTFT p99 (ms) | 478 | **392** | 528 |
-|  | prefill tokens computed per call | **962** | 1,002 | 1,053 |
-|  | TPOT p50 (ms) | 25.7 | **16.5** | 16.9 |
-|  | output tok/s | 604 | 717 | **729** |
-|  | calls completed in 240 s | 1,101 | **1,272** | 1,264 |
+|  | prefill tokens computed per call | **969** | 1,002 | 1,053 |
+|  | TPOT p50 (ms) | 20.4 | **16.5** | 16.9 |
+|  | output tok/s | 672 | 717 | **729** |
+|  | calls completed in 240 s | 1,201 | **1,272** | 1,264 |
 |  | failed requests | 0 | 0 | 0 |
-| 96 | TTFT p50 (ms) | 266 | 206 | **153** |
-|  | TTFT p99 (ms) | 3,913 | **1,091** | 1,409 |
-|  | prefill tokens computed per call | **985** | 1,545 | 1,702 |
-|  | TPOT p50 (ms) | 46.8 | **27.2** | 29.7 |
-|  | output tok/s | 641 | **809** | 772 |
-|  | calls completed in 240 s | 1,194 | **1,494** | 1,446 |
+| 96 | TTFT p50 (ms) | 169 | 206 | **153** |
+|  | TTFT p99 (ms) | 1,270 | **1,091** | 1,409 |
+|  | prefill tokens computed per call | **1,041** | 1,545 | 1,702 |
+|  | TPOT p50 (ms) | 37.1 | **27.2** | 29.7 |
+|  | output tok/s | 759 | **809** | 772 |
+|  | calls completed in 240 s | 1,366 | **1,494** | 1,446 |
 |  | failed requests | 0 | 0 | 0 |
-| 128 | TTFT p50 (ms) | 3,501 | **704** | 3,071 |
-|  | TTFT p99 (ms) | 14,640 | **7,278** | 12,147 |
-|  | prefill tokens computed per call | **1,655** | 2,472 | 2,486 |
-|  | TPOT p50 (ms) | 55.0 | **45.4** | 45.8 |
-|  | output tok/s | 605 | **765** | 694 |
-|  | calls completed in 240 s | 1,183 | **1,484** | 1,356 |
+| 128 | TTFT p50 (ms) | 3,048 | **704** | 3,071 |
+|  | TTFT p99 (ms) | 11,498 | **7,278** | 12,147 |
+|  | prefill tokens computed per call | **1,726** | 2,472 | 2,486 |
+|  | TPOT p50 (ms) | 49.7 | **45.4** | 45.8 |
+|  | output tok/s | 684 | **765** | 694 |
+|  | calls completed in 240 s | 1,330 | **1,484** | 1,356 |
 |  | failed requests | 0 | 0 | 0 |
 
 Real coding-agent trace, Qwen2.5-7B-Instruct, one H100, 96 GB of host memory for each engine's KV tier. No approximate technique is in any of these configurations, so output quality is that of exact bf16 inference in all three.
 <!-- END full-stack -->
 
 Where minfer's numbers come from — every valid combination of the five techniques at 96
-sessions ([`bench/composition.py`](bench/composition.py)):
+sessions ([`bench/composition.py`](bench/composition.py)). The composition was measured
+with the Triton decode kernel, minfer's default at the time; the table above uses
+FlashInfer's, which became the default afterwards because it is faster inside the engine
+(the same full stack with the Triton kernel: 641–661 tok/s at 96 sessions, against 759).
+Comparisons *within* the composition are unaffected:
 
 ![What each technique adds](bench/plots/composition_7b.png)
 
@@ -136,8 +141,8 @@ moved by up to 25% between runs, and per-call figures in collapsing configuratio
 on which calls complete. Differences of that size in this table are not findings.
 
 **Why minfer is behind vLLM with everything on.** Not KV management — it recomputes
-33–42% fewer prefill tokens than either baseline at 96 and 128 sessions — but its decode
-path: per-token latency is 1.56× vLLM's at 64 sessions where both are at the hit-rate
+30–39% fewer prefill tokens than either baseline at 96 and 128 sessions — but its decode
+path: per-token latency is 1.24× vLLM's at 64 sessions, where both are at the hit-rate
 ceiling ([details](#where-minfer-loses-to-vllm-and-sglang-and-why)).
 
 ## Engine comparison on a synthetic agent workload
@@ -172,14 +177,14 @@ On the multi-turn agent workload at 1–16 req/s (Qwen2.5-1.5B-Instruct, bf16, o
 | | minfer | vLLM | SGLang |
 |---|---|---|---|
 | TTFT p50 (ms) | 37–40 | 62–65 | 47–55 |
-| TTFT p99 (ms) | 66–94 | 97–134 | 72–106 |
-| TPOT p50 (ms) | 2.54–2.99 | 2.41–2.50 | 2.25–2.59 |
+| TTFT p99 (ms) | 62–80 | 97–134 | 72–106 |
+| TPOT p50 (ms) | 2.49–2.89 | 2.41–2.50 | 2.25–2.59 |
 | prefix-cache hit rate | 93.0%–93.6% | 92.6%–93.2% | 93.1%–93.7% |
-| saturated output tok/s ("max") | 4172 | 4890 | 5741 |
+| saturated output tok/s ("max") | 4744 | 4890 | 5741 |
 | TTFT p50 relative to vLLM | 0.59–0.62× | 1.00× | 0.75–0.85× |
-| TPOT p50 relative to vLLM | 1.06–1.20× | 1.00× | 0.94–1.04× |
-| saturated tok/s relative to vLLM | 0.85× | 1.00× | 1.17× |
-| saturated TTFT p50 / p99 (ms) | 84 / 274 | 145 / 713 | 115 / 367 |
+| TPOT p50 relative to vLLM | 1.04–1.16× | 1.00× | 0.94–1.04× |
+| saturated tok/s relative to vLLM | 0.97× | 1.00× | 1.17× |
+| saturated TTFT p50 / p99 (ms) | 82 / 289 | 145 / 713 | 115 / 367 |
 <!-- END headline-1.5b -->
 
 **minfer answers first.** At 7B it has the lowest median time-to-first-token of the three
@@ -324,7 +329,9 @@ sessions. minfer is run with LRU eviction, with session-aware retention (the evi
 order follows the expected remaining tool-call pause of each session — the idea of
 Continuum and CacheWise), and with a 96 GB host-memory tier on top (a session's KV is
 copied to pinned memory when it pauses and copied back when it returns); vLLM and SGLang
-are run with and without the CPU-memory KV offloading each ships (96 GB each).
+are run with and without the CPU-memory KV offloading each ships (96 GB each). The three
+minfer rows of the sweep use its Triton decode kernel (the default when the sweep ran); a
+fourth repeats the full stack with FlashInfer's decode kernel, the default now.
 
 <!-- BEGIN pressure -->
 | concurrent sessions | configuration | calls completed | cache hit rate | prefill tokens computed per call | TTFT p50 / p99 (ms) | TPOT p50 (ms) | out tok/s | failed |
@@ -339,6 +346,7 @@ are run with and without the CPU-memory KV offloading each ships (96 GB each).
 |  | vLLM + native KV offloading (96 GB) | 1272 | 94.1% | 1,002 | 174 / 392 | 16.5 | 717 | 0 |
 |  | SGLang | 1202 | 88.7% | 1,891 | 134 / 1025 | 18.5 | 670 | 0 |
 |  | SGLang + hierarchical cache (96 GB host) | 1264 | 93.8% | 1,053 | 126 / 528 | 16.9 | 729 | 0 |
+|  | minfer, session-aware retention + 96 GB host tier, FlashInfer decode (default) | 1201 | 94.2% | 969 | 120 / 478 | 20.4 | 672 | 0 |
 | 96 | minfer, LRU eviction | 788 | 55.3% | 6,913 | 1142 / 37006 | 62.9 | 388 | 0 |
 |  | minfer, session-aware retention | 788 | 59.7% | 6,227 | 1204 / 28856 | 69.0 | 398 | 0 |
 |  | minfer, session-aware retention + 96 GB host tier | 1194 | 94.0% | 985 | 266 / 3913 | 46.8 | 641 | 0 |
@@ -346,6 +354,7 @@ are run with and without the CPU-memory KV offloading each ships (96 GB each).
 |  | vLLM + native KV offloading (96 GB) | 1494 | 91.0% | 1,545 | 206 / 1091 | 27.2 | 809 | 0 |
 |  | SGLang | 824 | 50.2% | 8,024 | 410 / 19150 | 42.9 | 406 | 0 |
 |  | SGLang + hierarchical cache (96 GB host) | 1446 | 90.1% | 1,702 | 153 / 1409 | 29.7 | 772 | 0 |
+|  | minfer, session-aware retention + 96 GB host tier, FlashInfer decode (default) | 1366 | 93.8% | 1,041 | 169 / 1270 | 37.1 | 759 | 0 |
 | 128 | minfer, LRU eviction | 722 | 34.0% | 9,506 | 8607 / 55017 | 77.1 | 319 | 0 |
 |  | minfer, session-aware retention | 736 | 42.5% | 8,287 | 8973 / 45232 | 84.8 | 338 | 0 |
 |  | minfer, session-aware retention + 96 GB host tier | 1183 | 89.5% | 1,655 | 3501 / 14640 | 55.0 | 605 | 0 |
@@ -353,6 +362,7 @@ are run with and without the CPU-memory KV offloading each ships (96 GB each).
 |  | vLLM + native KV offloading (96 GB) | 1484 | 85.0% | 2,472 | 704 / 7278 | 45.4 | 765 | 0 |
 |  | SGLang | 743 | 29.4% | 10,572 | 10280 / 30487 | 135.5 | 333 | 0 |
 |  | SGLang + hierarchical cache (96 GB host) | 1356 | 84.7% | 2,486 | 3071 / 12147 | 45.8 | 694 | 0 |
+|  | minfer, session-aware retention + 96 GB host tier, FlashInfer decode (default) | 1330 | 89.3% | 1,726 | 3048 / 11498 | 49.7 | 684 | 0 |
 <!-- END pressure -->
 
 ![KV memory pressure](bench/plots/pressure_7b.png)
@@ -385,13 +395,15 @@ What the sweep shows:
 <!-- END host-tier-cost -->
 
 - **With a host tier, vLLM is the fastest system here and minfer the one that recomputes
-  least.** At 96 and 128 sessions minfer computes 33–42% fewer prefill tokens per call
-  than vLLM or SGLang with their offloading (it offloads at every pause and demotes by
-  expected return), and still delivers 0.79× of vLLM's throughput with a higher TTFT at
-  the median and the tail. The cause is not KV management but the decode path described
+  least.** At 96 and 128 sessions minfer computes a third or more fewer prefill tokens per
+  call than vLLM or SGLang with their offloading (it offloads at every pause and demotes
+  by expected return). In the sweep above, measured with minfer's Triton decode kernel, it
+  still delivered only 0.79× of vLLM's throughput; with FlashInfer's decode kernel (the
+  last minfer row, and the default since) 0.94× / 0.94× / 0.89× at 64 / 96 / 128 sessions,
+  level with SGLang at 96 and 128. What remains is the decode path described
   [below](#where-minfer-loses-to-vllm-and-sglang-and-why): on this trace every engine step
   has prefill work, which is where minfer's two passes per step cost most (per-token
-  latency 1.56× vLLM's at 64 sessions, where both are at the hit-rate ceiling).
+  latency 1.24× vLLM's at 64 sessions, where both are at the hit-rate ceiling).
 
 ## Results
 
@@ -443,22 +455,22 @@ no think time. A value is bold when it is the best of the three at the printed p
 <!-- BEGIN agent-results-1.5b -->
 | rate (req/s) | engine | out tok/s | TTFT p50 (ms) | TTFT p99 (ms) | TPOT p50 (ms) | TPOT p99 (ms) | E2E p50 (ms) | E2E p99 (ms) | prefix hit rate | failed |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1 | minfer | 89 | **37.3** | **66.4** | 2.54 | 2.95 | 189 | 613 | 93.6% | 0 |
+| 1 | minfer | 89 | **36.7** | **61.8** | 2.49 | 2.85 | 183 | 587 | 93.6% | 0 |
 |  | vLLM | 89 | 62.2 | 97.0 | 2.41 | 3.50 | 206 | 589 | 93.2% | 0 |
 |  | SGLang | 89 | 47.3 | 72.0 | **2.25** | **2.53** | **182** | **551** | **93.7%** | 0 |
-| 2 | minfer | 146 | **39.1** | **70.9** | 2.58 | 3.01 | 203 | 655 | 93.1% | 0 |
+| 2 | minfer | 146 | **37.9** | **63.5** | 2.51 | 3.00 | 197 | 628 | 93.1% | 0 |
 |  | vLLM | 146 | 64.4 | 102.7 | 2.41 | 2.98 | 218 | 604 | 92.8% | 0 |
 |  | SGLang | 146 | 48.3 | 73.4 | **2.26** | **2.60** | **195** | **574** | **93.2%** | 0 |
-| 4 | minfer | 269 | **38.6** | **94.2** | 2.66 | 3.31 | 201 | 555 | 93.1% | 0 |
+| 4 | minfer | 270 | **38.4** | **80.0** | 2.60 | 3.08 | 195 | 540 | 93.1% | 0 |
 |  | vLLM | 269 | 62.8 | 103.9 | 2.41 | 3.42 | 209 | 527 | 92.7% | 0 |
-|  | SGLang | **270** | 47.3 | 100.0 | **2.35** | **2.69** | **188** | **503** | **93.2%** | 0 |
-| 8 | minfer | 446 | **38.4** | **78.7** | 2.80 | 3.53 | 214 | 637 | 93.0% | 0 |
+|  | SGLang | 270 | 47.3 | 100.0 | **2.35** | **2.69** | **188** | **503** | **93.2%** | 0 |
+| 8 | minfer | 446 | **39.5** | **74.8** | 2.73 | 3.49 | 212 | 619 | 93.0% | 0 |
 |  | vLLM | 446 | 64.8 | 128.3 | **2.44** | 3.42 | 220 | 598 | 92.6% | 0 |
 |  | SGLang | **447** | 51.9 | 99.4 | 2.45 | **2.96** | **206** | **566** | **93.1%** | 0 |
-| 16 | minfer | 798 | **40.4** | **85.0** | 2.99 | 4.23 | 224 | 700 | 93.2% | 0 |
+| 16 | minfer | 800 | **40.2** | **77.2** | 2.89 | 3.80 | 217 | 677 | 93.2% | 0 |
 |  | vLLM | 801 | 64.8 | 134.3 | **2.50** | **3.34** | 218 | 629 | 92.8% | 0 |
 |  | SGLang | 801 | 55.3 | 106.4 | 2.59 | 3.35 | **216** | **625** | **93.3%** | 0 |
-| max | minfer | 4172 | **84.4** | **274.2** | 10.90 | 12.94 | 723 | 2356 | 92.8% | 0 |
+| max | minfer | 4744 | **82.1** | **289.4** | 9.51 | 11.33 | 638 | 2002 | 92.8% | 0 |
 |  | vLLM | 4890 | 145.2 | 712.6 | 7.78 | 9.58 | 650 | 1808 | 92.5% | 0 |
 |  | SGLang | **5741** | 114.7 | 367.4 | **6.83** | **7.99** | **532** | **1498** | **92.9%** | 0 |
 <!-- END agent-results-1.5b -->
@@ -504,22 +516,22 @@ write.
 <!-- BEGIN sharegpt-results-1.5b -->
 | rate (req/s) | engine | out tok/s | TTFT p50 (ms) | TTFT p99 (ms) | TPOT p50 (ms) | TPOT p99 (ms) | E2E p50 (ms) | E2E p99 (ms) | failed |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | minfer | 215 | **11.2** | **20.1** | 2.24 | 2.42 | **369** | 1723 | 0 |
+| 1 | minfer | 215 | **10.6** | **19.3** | 2.31 | 2.48 | 383 | 1794 | 0 |
 |  | vLLM | 215 | 25.0 | 46.3 | **2.17** | 3.77 | 393 | **1704** | 0 |
-|  | SGLang | 215 | 21.1 | 95.1 | 2.18 | **2.36** | 375 | 1734 | 0 |
-| 2 | minfer | 429 | **10.2** | **15.1** | 2.28 | **2.42** | **371** | 1783 | 0 |
-|  | vLLM | 428 | 25.4 | 40.1 | **2.16** | 3.65 | 380 | **1718** | 0 |
+|  | SGLang | 215 | 21.1 | 95.1 | 2.18 | **2.36** | **375** | 1734 | 0 |
+| 2 | minfer | 429 | **10.1** | **14.8** | 2.36 | **2.50** | 386 | 1840 | 0 |
+|  | vLLM | 428 | 25.4 | 40.1 | **2.16** | 3.65 | **380** | **1718** | 0 |
 |  | SGLang | 429 | 29.0 | 50.5 | 2.24 | 2.84 | 393 | 1857 | 0 |
-| 4 | minfer | 857 | **11.0** | **18.0** | 2.33 | **2.63** | 384 | 1827 | 0 |
+| 4 | minfer | 856 | **10.6** | **17.9** | 2.42 | **2.70** | 396 | 1893 | 0 |
 |  | vLLM | 857 | 24.3 | 45.6 | **2.17** | 3.36 | **368** | **1736** | 0 |
 |  | SGLang | 857 | 24.9 | 47.8 | 2.32 | 2.86 | 399 | 1849 | 0 |
-| 8 | minfer | 1740 | **11.6** | **18.0** | 2.42 | 2.73 | 432 | 1882 | 0 |
+| 8 | minfer | 1739 | **10.9** | **16.0** | 2.51 | 2.80 | 444 | 1952 | 0 |
 |  | vLLM | 1740 | 26.5 | 45.7 | **2.21** | **2.53** | **416** | **1757** | 0 |
 |  | SGLang | 1740 | 27.4 | 46.7 | 2.43 | 3.44 | 467 | 1975 | 0 |
-| 16 | minfer | 3209 | **12.1** | **20.3** | 2.55 | 3.24 | 398 | 2009 | 0 |
+| 16 | minfer | 3208 | **12.1** | **20.0** | 2.65 | 3.34 | 414 | 2068 | 0 |
 |  | vLLM | **3211** | 28.7 | 51.1 | **2.30** | **2.66** | **381** | **1844** | 0 |
 |  | SGLang | 3209 | 29.2 | 50.1 | 2.66 | 4.91 | 430 | 2217 | 0 |
-| max | minfer | **24834** | 2606.2 | 5320.2 | **6.91** | **10.21** | **4137** | **7513** | 0 |
+| max | minfer | **25822** | 2632.4 | 5318.4 | **6.75** | **11.11** | **4020** | **7356** | 0 |
 |  | vLLM | 21466 | **2511.4** | 6829.6 | 17.08 | 26.16 | 6340 | 9362 | 0 |
 |  | SGLang | 14695 | 3273.3 | **3389.0** | 35.84 | 121.79 | 8519 | 13663 | 0 |
 <!-- END sharegpt-results-1.5b -->
