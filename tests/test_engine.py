@@ -104,6 +104,8 @@ def test_greedy_matches_dense_oracle(model, oracle):
         {"block_size": 16, "num_blocks": 64},
         {"prefix_cache": False},
         {"prefix_cache": False, "max_batched_tokens": 7},
+        {"unified_batches": False},
+        {"unified_batches": False, "prefill_chunk_tokens": 5},
     ],
     ids=[
         "serial",
@@ -114,6 +116,8 @@ def test_greedy_matches_dense_oracle(model, oracle):
         "block-16",
         "no-cache",
         "no-cache-token-budget",
+        "split-passes",
+        "split-passes-chunked-prefill",
     ],
 )
 def test_greedy_is_invariant_to_batching(model, oracle, config):
@@ -121,6 +125,40 @@ def test_greedy_is_invariant_to_batching(model, oracle, config):
     engine = make_engine(model, eos=eos, **config)
     assert engine.generate(prompts, SamplingParams(max_tokens=24)) == expected
     assert_all_released(engine)
+
+
+def test_a_mixed_step_is_one_pass_when_unified(model, oracle):
+    """Prefill chunks and decoding sequences of one step share a single forward pass."""
+    prompts, eos, expected = oracle
+    passes = {}
+    for unified in (True, False):
+        engine = make_engine(model, eos=eos, prefill_chunk_tokens=5, unified_batches=unified)
+        counts = {"prefill": 0, "decode": 0, "mixed": 0}
+        run_prefill, run_decode = engine._run_prefill, engine._run_decode
+
+        def counted_prefill(prefill, verify, sampled, rows, counts=counts, run=run_prefill):
+            counts["prefill"] += 1
+            counts["mixed"] += any(count == 1 and len(seq.tokens) > seq.prompt_len
+                                   for seq, count in prefill)  # fmt: skip
+            return run(prefill, verify, sampled, rows)
+
+        def counted_decode(decode, sampled, rows, counts=counts, run=run_decode):
+            counts["decode"] += 1
+            return run(decode, sampled, rows)
+
+        engine._run_prefill, engine._run_decode = counted_prefill, counted_decode
+        assert engine.generate(prompts, SamplingParams(max_tokens=24)) == expected
+        assert_all_released(engine)
+        stats = engine.stats
+        processed = stats.prefill_tokens + stats.decode_tokens
+        assert processed == stats.prompt_tokens + stats.generated_tokens - len(prompts)
+        passes[unified] = (counts, engine.stats.steps)
+    (unified, steps), (split, split_steps) = passes[True], passes[False]
+    assert steps == split_steps  # the schedule is the same; only the passes differ
+    assert unified["mixed"] > 0 and split["mixed"] == 0
+    assert unified["prefill"] + unified["decode"] < split["prefill"] + split["decode"]
+    # Unified: a step runs the decode pass only when it has no prefill work at all.
+    assert unified["prefill"] + unified["decode"] == steps
 
 
 def test_preemption_recomputes_to_the_same_output(model, oracle):

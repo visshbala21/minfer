@@ -92,6 +92,9 @@ class EngineConfig:
             (sequences, tokens) bucket (needs ``cuda_graphs``; not with an FP8 KV cache).
         cuda_graph_batch_sizes: Decode batch sizes to capture; sizes above ``max_num_seqs``
             are rounded down to it.
+        unified_batches: In a step that has both prefill and decode work, run them as one
+            ragged pass — decoding sequences as one-token spans next to the prefill chunks
+            — instead of a prefill pass and a decode pass, each over all the weights.
         prefill_chunk_tokens: Chunked prefill: while any sequence is decoding, at most this
             many prefill tokens per step, so a long prompt is interleaved with decode steps
             instead of stalling them. ``None`` disables chunking (prefill is bounded by
@@ -154,6 +157,7 @@ class EngineConfig:
     cuda_graphs: bool = True
     prefill_graphs: bool = True
     cuda_graph_batch_sizes: tuple[int, ...] = (1, 2, 4, 8, 16, 32, 64, 128, 256)
+    unified_batches: bool = True
     prefill_chunk_tokens: int | None = 2048
     prefix_cache: bool = True
     cache_aware_scheduling: bool = True
@@ -321,10 +325,13 @@ class Engine:
         ):
             from minfer.attention.prefill_graphs import PrefillGraphs
 
+            # A unified pass carries every decoding sequence as a span of its own.
+            limit = config.max_num_seqs if config.unified_batches else 32
             self.prefill_graphs = PrefillGraphs(
                 model,
                 self.store,
                 self.backend.workspace,
+                sequence_buckets=[s for s in (2, 4, 8, 16, 32, 64, 128, 256) if s <= max(limit, 2)],
                 max_pages_per_sequence=self.blocks.blocks_for(self.max_model_len),
             )
         self.retention = None
@@ -634,8 +641,16 @@ class Engine:
         if verify and self.verify_graphs is not None:
             decode, verify = self._run_verify_graph(decode, verify, emitted)
         verify_logits = None
-        if plan.prefill or verify:
-            verify_logits = self._run_prefill(plan.prefill, verify, sampled, rows)
+        prefill = plan.prefill
+        if self.config.unified_batches and prefill and decode:
+            # One pass over the weights for the whole step: a decoding sequence is a span
+            # of one pending token, exactly like a prefill chunk that completes its prompt.
+            prefill = [*prefill, *((seq, 1) for seq in decode)]
+            self.stats.prefill_tokens -= len(decode)
+            self.stats.decode_tokens += len(decode)
+            decode = []
+        if prefill or verify:
+            verify_logits = self._run_prefill(prefill, verify, sampled, rows)
         if decode:
             self._run_decode(decode, sampled, rows)
         if sampled:

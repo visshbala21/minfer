@@ -520,7 +520,9 @@ def test_prefill_graph_buckets_cover_what_they_claim(engine):
     assert graphs.bucket(2, 767) == (4, 896)
     assert graphs.bucket(2, 766) == (4, 768)
     assert graphs.bucket(1, 1025) is None  # large passes run eagerly
-    assert graphs.bucket(40, 100) is None and graphs.bucket(1, 5000) is None
+    # Unified passes carry decoding sequences as one-token spans: up to 256 spans.
+    assert graphs.bucket(40, 100) == (64, 128)
+    assert graphs.bucket(300, 400) is None and graphs.bucket(1, 5000) is None
     for seqs, tokens in graphs._buckets:
         assert tokens >= seqs
 
