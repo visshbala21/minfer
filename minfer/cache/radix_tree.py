@@ -145,6 +145,9 @@ class PrefixCache:
             in the tree as host-only nodes.
         content_index: Also index every cached block by its tokens alone, so that the same
             tokens can be found at a *different* position (:meth:`find_reuse`).
+        evict_batch: With ``retention``, the least a call to :meth:`evict` frees (if that
+            much is evictable). Scoring walks every leaf, so it is done once per batch
+            rather than once per missing block.
     """
 
     def __init__(
@@ -154,7 +157,9 @@ class PrefixCache:
         clock: Callable[[], float] = time.monotonic,
         host: HostTier | None = None,
         content_index: bool = False,
+        evict_batch: int = 0,
     ) -> None:
+        self.evict_batch = evict_batch
         if host is not None and retention is None:
             raise ValueError("the host tier needs the session-aware retention policy")
         self.blocks = blocks
@@ -689,7 +694,7 @@ class PrefixCache:
         when everything left in the tree is in use by running sequences.
         """
         if self.retention is not None:
-            return self._evict_by_score(num_blocks)
+            return self._evict_by_score(max(num_blocks, self.evict_batch))
         blocks = self.blocks
         freed = 0
         in_use = []

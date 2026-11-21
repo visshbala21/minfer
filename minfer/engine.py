@@ -362,7 +362,16 @@ class Engine:
                 "position-independent reuse needs the prefix cache and a bf16 KV cache"
             )
         self.prefix_cache = (
-            PrefixCache(self.blocks, self.retention, clock, self.host_tier, content_index=reuse)
+            PrefixCache(
+                self.blocks,
+                self.retention,
+                clock,
+                self.host_tier,
+                content_index=reuse,
+                # One scoring pass frees 1/256 of the pool: rare enough to be free, small
+                # enough not to cost cache hits.
+                evict_batch=num_blocks // 256,
+            )
             if config.prefix_cache
             else None
         )

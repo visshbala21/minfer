@@ -27,6 +27,7 @@ rather than a pin with a deadline; nothing here is new.
 
 from __future__ import annotations
 
+import bisect
 from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -79,7 +80,9 @@ class ReturnPredictor:
     """Online estimate of how much longer a paused session stays away.
 
     Keeps the most recent pauses per tool key (and overall) and answers with the empirical
-    conditional mean ``E[pause - elapsed | pause > elapsed]``.
+    conditional mean ``E[pause - elapsed | pause > elapsed]``. A key's pauses are kept
+    sorted with their suffix sums, rebuilt lazily after new observations, so a query is a
+    binary search: eviction scores every cached leaf with one.
 
     Args:
         capacity: Pauses remembered per key.
@@ -90,12 +93,26 @@ class ReturnPredictor:
         self.capacity = capacity
         self.min_samples = min_samples
         self._pauses: dict[str, deque[float]] = {ANY_TOOL: deque(maxlen=capacity)}
+        # key -> (pauses in ascending order, sums of the pauses from each index on)
+        self._sorted: dict[str, tuple[list[float], list[float]]] = {}
 
     def observe(self, key: str, pause: float) -> None:
         """Record that a session paused on ``key`` returned after ``pause`` seconds."""
         if key != ANY_TOOL:
             self._pauses.setdefault(key, deque(maxlen=self.capacity)).append(pause)
+            self._sorted.pop(key, None)
         self._pauses[ANY_TOOL].append(pause)
+        self._sorted.pop(ANY_TOOL, None)
+
+    def _ordered(self, key: str) -> tuple[list[float], list[float]]:
+        cached = self._sorted.get(key)
+        if cached is None:
+            ordered = sorted(self._pauses[key])
+            suffix = [0.0] * (len(ordered) + 1)
+            for index in range(len(ordered) - 1, -1, -1):
+                suffix[index] = suffix[index + 1] + ordered[index]
+            cached = self._sorted[key] = (ordered, suffix)
+        return cached
 
     def expected_remaining(self, key: str, elapsed: float) -> float:
         """Expected seconds until a session ``elapsed`` seconds into a ``key`` pause returns.
@@ -108,9 +125,11 @@ class ReturnPredictor:
             pauses = self._pauses.get(name)
             if pauses is None or len(pauses) < self.min_samples:
                 continue
-            longer = [pause - elapsed for pause in pauses if pause > elapsed]
+            ordered, suffix = self._ordered(name)
+            first = bisect.bisect_right(ordered, elapsed)
+            longer = len(ordered) - first
             if longer:
-                return sum(longer) / len(longer)
+                return suffix[first] / longer - elapsed
         return elapsed
 
 
