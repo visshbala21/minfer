@@ -1754,6 +1754,10 @@ logits match transformers at 7B to 2.3e-4 (`bench/results/model_numerics_7b.json
 | "max": TTFT p50 / p99 (ms) | 105 / 299 | 161 / 835 | 146 / 338 |
 | "max": TPOT p50 (ms) | 26.9 | 19.9 | 20.8 |
 
+(These are the rows as first measured, at commit 9b0010f. The committed results file was
+re-measured on the final code in Phase 17 and differs by run-to-run noise: TTFT p50
+49–57 ms, TPOT p50 6.64–9.78 ms, 1,836 tok/s saturated; M-029.)
+
 - **TTFT: minfer leads at the median at every rate and at saturation**, by 22–32 ms over
   vLLM and 8–10 ms over SGLang; at the 99th percentile it leads everywhere except 16 req/s
   (126.5 ms vs SGLang's 121.0 ms).

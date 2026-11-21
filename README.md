@@ -151,39 +151,41 @@ On the multi-turn agent workload at 1–16 req/s (Qwen2.5-7B-Instruct, bf16, one
 
 | | minfer | vLLM | SGLang |
 |---|---|---|---|
-| TTFT p50 (ms) | 46–59 | 78–81 | 57–67 |
-| TTFT p99 (ms) | 87–126 | 121–136 | 97–125 |
-| TPOT p50 (ms) | 6.67–9.68 | 6.26–7.88 | 6.27–8.20 |
+| TTFT p50 (ms) | 49–57 | 78–81 | 57–67 |
+| TTFT p99 (ms) | 86–118 | 121–136 | 97–125 |
+| TPOT p50 (ms) | 6.64–9.78 | 6.26–7.88 | 6.27–8.20 |
 | prefix-cache hit rate | 93.0%–93.6% | 92.6%–93.2% | 93.1%–93.7% |
-| saturated output tok/s ("max") | 1858 | 2258 | 2264 |
-| TTFT p50 relative to vLLM | 0.59–0.73× | 1.00× | 0.73–0.82× |
-| TPOT p50 relative to vLLM | 1.06–1.23× | 1.00× | 1.00–1.04× |
-| saturated tok/s relative to vLLM | 0.82× | 1.00× | 1.00× |
-| saturated TTFT p50 / p99 (ms) | 105 / 299 | 161 / 835 | 146 / 338 |
+| saturated output tok/s ("max") | 1836 | 2258 | 2264 |
+| TTFT p50 relative to vLLM | 0.63–0.70× | 1.00× | 0.73–0.82× |
+| TPOT p50 relative to vLLM | 1.06–1.24× | 1.00× | 1.00–1.04× |
+| saturated tok/s relative to vLLM | 0.81× | 1.00× | 1.00× |
+| saturated TTFT p50 / p99 (ms) | 106 / 316 | 161 / 835 | 146 / 338 |
 <!-- END headline -->
 
-The same comparison on the model the engine was developed on (Qwen2.5-1.5B, measured before the
-[fairness audit](#fairness-audit) gave the baselines their tuning flags):
+The same comparison on the model the engine was developed on (Qwen2.5-1.5B; re-measured
+on the final code, baselines with the flags the [fairness audit](#fairness-audit)
+selected):
 
 <!-- BEGIN headline-1.5b -->
 On the multi-turn agent workload at 1–16 req/s (Qwen2.5-1.5B-Instruct, bf16, one H100, greedy, identical traces):
 
 | | minfer | vLLM | SGLang |
 |---|---|---|---|
-| TTFT p50 (ms) | 38–41 | 59–63 | 44–47 |
-| TTFT p99 (ms) | 68–82 | 95–122 | 78–114 |
-| TPOT p50 (ms) | 2.54–2.99 | 2.25–2.40 | 2.25–2.57 |
+| TTFT p50 (ms) | 37–40 | 62–65 | 47–55 |
+| TTFT p99 (ms) | 66–94 | 97–134 | 72–106 |
+| TPOT p50 (ms) | 2.54–2.99 | 2.41–2.50 | 2.25–2.59 |
 | prefix-cache hit rate | 93.0%–93.6% | 92.6%–93.2% | 93.1%–93.7% |
-| saturated output tok/s ("max") | 4219 | 5106 | 5049 |
-| TTFT p50 relative to vLLM | 0.64–0.66× | 1.00× | 0.71–0.79× |
-| TPOT p50 relative to vLLM | 1.06–1.24× | 1.00× | 0.94–1.07× |
-| saturated tok/s relative to vLLM | 0.83× | 1.00× | 0.99× |
-| saturated TTFT p50 / p99 (ms) | 83 / 241 | 144 / 570 | 119 / 460 |
+| saturated output tok/s ("max") | 4172 | 4890 | 5741 |
+| TTFT p50 relative to vLLM | 0.59–0.62× | 1.00× | 0.75–0.85× |
+| TPOT p50 relative to vLLM | 1.06–1.20× | 1.00× | 0.94–1.04× |
+| saturated tok/s relative to vLLM | 0.85× | 1.00× | 1.17× |
+| saturated TTFT p50 / p99 (ms) | 84 / 274 | 145 / 713 | 115 / 367 |
 <!-- END headline-1.5b -->
 
 **minfer answers first.** At 7B it has the lowest median time-to-first-token of the three
-engines at every request rate on the agent workload and when saturated, and the lowest
-99th percentile at every rate but one (16 req/s, where SGLang's is 121 ms against 127 ms).
+engines at every request rate on the agent workload and when saturated (24–29 ms ahead of
+vLLM, 7–10 ms ahead of SGLang at 1–16 req/s), and the lowest 99th percentile — by a margin
+that at 16 req/s (118 vs 121 ms for SGLang) is inside the run-to-run noise.
 All three engines reuse the same share of prompt tokens (hit-rate row) — on this workload
 their prefix caches are equally effective — so the lead is not a better hit rate; it is a
 shorter path from socket to first token for a request that is mostly cache hits. A
@@ -196,10 +198,10 @@ tokenization off the event loop), not the engine; against vLLM it is the engine 
 tokens that are actually new).
 
 **It does not generate fastest, and at 7B the gap widens with load.** Per-token latency is
-5–8% behind both baselines at 1–4 req/s, and at 16 req/s 23% behind vLLM and 18% behind
-SGLang; saturated throughput is 0.82× of either. A turn's end-to-end latency is within 3–4%
+6–8% behind both baselines at 1–4 req/s, and at 16 req/s 24% behind vLLM and 19% behind
+SGLang; saturated throughput is 0.81× of either. A turn's end-to-end latency is within 2–6%
 of the best engine at 1–4 req/s (the head start on the first token nearly pays for the
-slower tokens after it) and 15% behind at 16 req/s. See
+slower tokens after it) and 16% behind at 16 req/s. See
 [where minfer loses](#where-minfer-loses-to-vllm-and-sglang-and-why).
 
 ## Architecture
@@ -403,22 +405,22 @@ SGLang 0.5.23, PyTorch 2.14, FlashInfer 0.7.3.
 <!-- BEGIN agent-results -->
 | rate (req/s) | engine | out tok/s | TTFT p50 (ms) | TTFT p99 (ms) | TPOT p50 (ms) | TPOT p99 (ms) | E2E p50 (ms) | E2E p99 (ms) | prefix hit rate | failed |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1 | minfer | 88 | **46.4** | **92.1** | 6.67 | 7.95 | 444 | 1489 | 93.6% | 0 |
+| 1 | minfer | 88 | **49.0** | **89.5** | 6.64 | 7.87 | 443 | 1497 | 93.6% | 0 |
 |  | vLLM | 88 | 78.2 | 120.5 | **6.26** | **7.09** | 453 | 1451 | 93.2% | 0 |
 |  | SGLang | **89** | 56.8 | 96.6 | 6.27 | 7.34 | **433** | **1408** | **93.7%** | 0 |
-| 2 | minfer | 143 | **51.7** | **87.3** | 6.76 | 7.52 | 470 | 1564 | 93.1% | 0 |
+| 2 | minfer | 143 | **53.1** | **86.1** | 6.79 | 7.56 | 476 | 1585 | 93.1% | 0 |
 |  | vLLM | 143 | 80.5 | 124.5 | **6.38** | **6.95** | 475 | 1505 | 92.8% | 0 |
 |  | SGLang | 143 | 60.4 | 104.3 | 6.41 | 7.21 | **455** | **1477** | **93.2%** | 0 |
-| 4 | minfer | 256 | **54.0** | **93.6** | 7.27 | 10.63 | 495 | 1430 | 93.1% | 0 |
+| 4 | minfer | 256 | **54.5** | **97.6** | 7.27 | 10.38 | 500 | 1449 | 93.1% | 0 |
 |  | vLLM | 256 | 78.4 | 127.1 | **6.72** | **7.71** | 485 | 1367 | 92.7% | 0 |
 |  | SGLang | **257** | 61.6 | 104.4 | 6.78 | 8.05 | **474** | **1342** | **93.2%** | 0 |
-| 8 | minfer | 415 | **56.9** | **120.6** | 7.88 | 10.67 | 550 | 1750 | 93.0% | 0 |
+| 8 | minfer | 415 | **56.0** | **117.9** | 7.93 | 10.74 | 546 | 1762 | 93.0% | 0 |
 |  | vLLM | 417 | 81.1 | 136.4 | **7.01** | **8.83** | 512 | 1603 | 92.6% | 0 |
 |  | SGLang | **418** | 65.0 | 124.7 | 7.19 | 9.26 | 512 | 1603 | **93.1%** | 0 |
-| 16 | minfer | 743 | **59.4** | 126.5 | 9.68 | 13.34 | 637 | 2240 | 93.2% | 0 |
+| 16 | minfer | 743 | **57.3** | **118.4** | 9.78 | 13.13 | 645 | 2277 | 93.2% | 0 |
 |  | vLLM | **749** | 81.4 | 136.2 | **7.88** | **10.16** | **555** | **1790** | 92.8% | 0 |
-|  | SGLang | 748 | 67.0 | **121.0** | 8.20 | 11.21 | 561 | 1864 | **93.3%** | 0 |
-| max | minfer | 1858 | **105.2** | **299.0** | 26.86 | 30.84 | 1669 | 5267 | 92.8% | 0 |
+|  | SGLang | 748 | 67.0 | 121.0 | 8.20 | 11.21 | 561 | 1864 | **93.3%** | 0 |
+| max | minfer | 1836 | **106.0** | **316.3** | 27.07 | 30.58 | 1684 | 5474 | 92.8% | 0 |
 |  | vLLM | 2258 | 161.1 | 835.4 | **19.89** | **23.86** | 1379 | **4078** | 92.5% | 0 |
 |  | SGLang | **2264** | 146.0 | 338.0 | 20.75 | 25.04 | **1368** | 4189 | **92.9%** | 0 |
 <!-- END agent-results -->
@@ -431,32 +433,31 @@ Multi-turn agent sessions ([`bench/agent_workload.py`](bench/agent_workload.py):
 agent types, ~4k-token system prompts with JSON tool schemas, 5–15 turns, tool results
 appended every turn; prompts of 4k–14k tokens, outputs of 33–240 tokens), replayed from
 identical traces against each server. Greedy decoding, same model and dtype
-(Qwen2.5-1.5B-Instruct, bf16), one server at a time, every engine at its defaults with
-prefix caching on (the baselines' tuning flags were measured afterwards: see
-[Fairness audit](#fairness-audit)). Rate is the nominal request rate; "max" starts 64 sessions at once with
+(Qwen2.5-1.5B-Instruct, bf16), one server at a time, prefix caching on in all three; the
+baselines run with the flags the [fairness audit](#fairness-audit) selected. Rate is the nominal request rate; "max" starts 64 sessions at once with
 no think time. A value is bold when it is the best of the three at the printed precision.
 
 <!-- BEGIN agent-results-1.5b -->
 | rate (req/s) | engine | out tok/s | TTFT p50 (ms) | TTFT p99 (ms) | TPOT p50 (ms) | TPOT p99 (ms) | E2E p50 (ms) | E2E p99 (ms) | prefix hit rate | failed |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1 | minfer | 89 | **39.4** | **71.3** | 2.54 | 2.98 | 191 | 615 | 93.6% | 0 |
-|  | vLLM | 89 | 61.6 | 101.6 | 2.39 | 3.04 | 204 | 584 | 93.2% | 0 |
-|  | SGLang | 89 | 43.7 | 77.5 | **2.25** | **2.60** | **177** | **548** | **93.7%** | 0 |
-| 2 | minfer | 146 | **39.3** | **68.5** | 2.57 | 3.02 | 199 | 659 | 93.1% | 0 |
-|  | vLLM | 146 | 59.3 | 101.7 | 2.31 | 2.96 | 213 | 618 | 92.8% | 0 |
-|  | SGLang | 146 | 46.6 | 83.4 | **2.26** | **2.83** | **193** | **572** | **93.2%** | 0 |
-| 4 | minfer | 270 | **38.3** | **71.2** | 2.65 | 3.15 | 197 | 547 | 93.1% | 0 |
-|  | vLLM | 269 | 59.3 | 95.4 | **2.25** | 2.90 | 196 | 517 | 92.7% | 0 |
-|  | SGLang | 270 | 46.6 | 94.2 | 2.32 | **2.86** | **190** | **485** | **93.2%** | 0 |
-| 8 | minfer | 445 | **40.7** | **77.1** | 2.82 | 3.56 | 215 | 635 | 93.0% | 0 |
-|  | vLLM | 447 | 62.9 | 118.3 | **2.29** | **3.17** | 210 | **548** | 92.6% | 0 |
-|  | SGLang | **448** | 46.5 | 99.8 | 2.43 | 3.21 | **201** | 571 | **93.1%** | 0 |
-| 16 | minfer | 799 | **41.1** | **82.3** | 2.99 | 4.20 | 225 | 703 | 93.2% | 0 |
-|  | vLLM | 802 | 62.1 | 122.2 | **2.40** | **3.15** | 210 | **605** | 92.8% | 0 |
-|  | SGLang | 802 | 45.6 | 114.4 | 2.57 | 3.52 | **208** | 618 | **93.3%** | 0 |
-| max | minfer | 4219 | **83.1** | **240.9** | 10.71 | 12.59 | 705 | 2345 | 92.8% | 0 |
-|  | vLLM | **5106** | 144.2 | 569.7 | **7.40** | **9.88** | **635** | 1739 | 92.5% | 0 |
-|  | SGLang | 5049 | 119.2 | 459.9 | 8.08 | 10.81 | 646 | **1651** | **92.9%** | 0 |
+| 1 | minfer | 89 | **37.3** | **66.4** | 2.54 | 2.95 | 189 | 613 | 93.6% | 0 |
+|  | vLLM | 89 | 62.2 | 97.0 | 2.41 | 3.50 | 206 | 589 | 93.2% | 0 |
+|  | SGLang | 89 | 47.3 | 72.0 | **2.25** | **2.53** | **182** | **551** | **93.7%** | 0 |
+| 2 | minfer | 146 | **39.1** | **70.9** | 2.58 | 3.01 | 203 | 655 | 93.1% | 0 |
+|  | vLLM | 146 | 64.4 | 102.7 | 2.41 | 2.98 | 218 | 604 | 92.8% | 0 |
+|  | SGLang | 146 | 48.3 | 73.4 | **2.26** | **2.60** | **195** | **574** | **93.2%** | 0 |
+| 4 | minfer | 269 | **38.6** | **94.2** | 2.66 | 3.31 | 201 | 555 | 93.1% | 0 |
+|  | vLLM | 269 | 62.8 | 103.9 | 2.41 | 3.42 | 209 | 527 | 92.7% | 0 |
+|  | SGLang | **270** | 47.3 | 100.0 | **2.35** | **2.69** | **188** | **503** | **93.2%** | 0 |
+| 8 | minfer | 446 | **38.4** | **78.7** | 2.80 | 3.53 | 214 | 637 | 93.0% | 0 |
+|  | vLLM | 446 | 64.8 | 128.3 | **2.44** | 3.42 | 220 | 598 | 92.6% | 0 |
+|  | SGLang | **447** | 51.9 | 99.4 | 2.45 | **2.96** | **206** | **566** | **93.1%** | 0 |
+| 16 | minfer | 798 | **40.4** | **85.0** | 2.99 | 4.23 | 224 | 700 | 93.2% | 0 |
+|  | vLLM | 801 | 64.8 | 134.3 | **2.50** | **3.34** | 218 | 629 | 92.8% | 0 |
+|  | SGLang | 801 | 55.3 | 106.4 | 2.59 | 3.35 | **216** | **625** | **93.3%** | 0 |
+| max | minfer | 4172 | **84.4** | **274.2** | 10.90 | 12.94 | 723 | 2356 | 92.8% | 0 |
+|  | vLLM | 4890 | 145.2 | 712.6 | 7.78 | 9.58 | 650 | 1808 | 92.5% | 0 |
+|  | SGLang | **5741** | 114.7 | 367.4 | **6.83** | **7.99** | **532** | **1498** | **92.9%** | 0 |
 <!-- END agent-results-1.5b -->
 
 ![Agent workload, 1.5B](bench/plots/agent_vs_rate_1.5b.png)
@@ -468,23 +469,23 @@ no think time. A value is bold when it is the best of the three at the printed p
 <!-- BEGIN sharegpt-results -->
 | rate (req/s) | engine | out tok/s | TTFT p50 (ms) | TTFT p99 (ms) | TPOT p50 (ms) | TPOT p99 (ms) | E2E p50 (ms) | E2E p99 (ms) | failed |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | minfer | 214 | **21.9** | **49.1** | 6.31 | 6.68 | 1045 | 4909 | 0 |
+| 1 | minfer | 214 | **22.9** | **48.9** | 6.32 | 6.69 | 1051 | 4910 | 0 |
 |  | vLLM | 214 | 37.6 | 58.9 | 6.21 | **6.53** | 1054 | 4883 | 0 |
 |  | SGLang | 214 | 26.0 | 103.6 | **6.19** | 6.60 | **1033** | **4838** | 0 |
-| 2 | minfer | 424 | **20.7** | **26.9** | 6.37 | 7.06 | 1055 | 4932 | 0 |
+| 2 | minfer | 424 | **21.3** | **28.5** | 6.39 | 7.12 | 1059 | 4958 | 0 |
 |  | vLLM | 424 | 35.9 | 50.8 | 6.28 | **6.72** | 1057 | 4906 | 0 |
 |  | SGLang | 424 | 29.3 | 42.5 | **6.26** | 7.04 | **1042** | **4898** | 0 |
-| 4 | minfer | 817 | **21.6** | **40.0** | 6.57 | 7.36 | 1076 | 5106 | 0 |
+| 4 | minfer | 817 | **22.1** | **41.2** | 6.59 | 7.50 | 1073 | 5113 | 0 |
 |  | vLLM | **819** | 34.6 | 55.9 | **6.28** | **6.93** | **1049** | **4891** | 0 |
 |  | SGLang | 818 | 28.5 | 44.0 | 6.44 | 7.31 | 1062 | 5051 | 0 |
-| 8 | minfer | 1665 | **22.2** | **43.9** | 6.99 | 8.93 | 1240 | 5407 | 0 |
+| 8 | minfer | 1664 | **22.5** | **39.5** | 7.01 | 8.71 | 1252 | 5435 | 0 |
 |  | vLLM | **1669** | 38.4 | 63.3 | **6.50** | **7.52** | **1169** | **5061** | 0 |
 |  | SGLang | 1667 | 30.8 | 45.9 | 6.77 | 8.47 | 1196 | 5263 | 0 |
-| 16 | minfer | 3088 | **23.6** | **49.2** | 7.96 | 10.71 | 1242 | 6168 | 0 |
+| 16 | minfer | 3086 | **24.4** | **50.3** | 7.97 | 10.64 | 1240 | 6169 | 0 |
 |  | vLLM | **3106** | 47.8 | 82.2 | **6.82** | **7.73** | **1084** | **5397** | 0 |
 |  | SGLang | 3098 | 36.4 | 55.2 | 7.66 | 10.76 | 1193 | 5974 | 0 |
-| max | minfer | 12151 | 4248.7 | 10437.8 | 15.29 | **21.00** | 7616 | 15302 | 0 |
-|  | vLLM | **14737** | 3480.3 | 7599.9 | **12.50** | 23.88 | **6462** | **12532** | 0 |
+| max | minfer | 12184 | 4668.2 | 10751.1 | 15.33 | 26.65 | 7864 | 15588 | 0 |
+|  | vLLM | **14737** | 3480.3 | 7599.9 | **12.50** | **23.88** | **6462** | **12532** | 0 |
 |  | SGLang | 14008 | **3278.5** | **3394.7** | 33.12 | 136.83 | 8102 | 13749 | 0 |
 <!-- END sharegpt-results -->
 
@@ -500,36 +501,38 @@ write.
 <!-- BEGIN sharegpt-results-1.5b -->
 | rate (req/s) | engine | out tok/s | TTFT p50 (ms) | TTFT p99 (ms) | TPOT p50 (ms) | TPOT p99 (ms) | E2E p50 (ms) | E2E p99 (ms) | failed |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | minfer | 215 | **10.7** | **20.5** | 2.24 | 2.52 | **370** | 1720 | 0 |
-|  | vLLM | 215 | 23.7 | 43.3 | **2.16** | 3.49 | 391 | **1707** | 0 |
-|  | SGLang | 215 | 19.3 | 99.0 | 2.18 | **2.48** | 372 | 1730 | 0 |
-| 2 | minfer | 429 | **9.9** | **14.3** | 2.28 | **2.43** | **374** | 1777 | 0 |
-|  | vLLM | 428 | 21.5 | 34.9 | **2.16** | 3.78 | 384 | **1712** | 0 |
-|  | SGLang | 429 | 28.8 | 45.5 | 2.25 | 2.82 | 394 | 1868 | 0 |
-| 4 | minfer | 857 | **11.2** | **17.9** | 2.34 | **2.61** | 386 | 1828 | 0 |
-|  | vLLM | 857 | 23.2 | 41.4 | **2.17** | 3.46 | **367** | **1729** | 0 |
-|  | SGLang | 857 | 24.2 | 38.0 | 2.32 | 3.28 | 397 | 1845 | 0 |
-| 8 | minfer | 1740 | **11.4** | **19.2** | 2.42 | 2.71 | 430 | 1883 | 0 |
-|  | vLLM | 1740 | 25.3 | 45.9 | **2.21** | **2.58** | **417** | **1753** | 0 |
-|  | SGLang | 1740 | 25.6 | 47.6 | 2.42 | 3.51 | 459 | 1965 | 0 |
-| 16 | minfer | 3210 | **11.8** | **21.7** | 2.55 | 3.36 | 399 | 2023 | 0 |
-|  | vLLM | **3212** | 29.3 | 55.7 | **2.28** | **2.61** | **380** | **1825** | 0 |
-|  | SGLang | 3209 | 27.7 | 50.4 | 2.63 | 4.55 | 428 | 2233 | 0 |
-| max | minfer | **24607** | 2764.3 | 5502.4 | **6.68** | **8.76** | **4246** | **7637** | 0 |
-|  | vLLM | 22248 | **1505.2** | 4245.6 | 24.40 | 62.67 | 5682 | 9039 | 0 |
-|  | SGLang | 16102 | 2233.2 | **2571.0** | 35.33 | 197.03 | 7417 | 12464 | 0 |
+| 1 | minfer | 215 | **11.2** | **20.1** | 2.24 | 2.42 | **369** | 1723 | 0 |
+|  | vLLM | 215 | 25.0 | 46.3 | **2.17** | 3.77 | 393 | **1704** | 0 |
+|  | SGLang | 215 | 21.1 | 95.1 | 2.18 | **2.36** | 375 | 1734 | 0 |
+| 2 | minfer | 429 | **10.2** | **15.1** | 2.28 | **2.42** | **371** | 1783 | 0 |
+|  | vLLM | 428 | 25.4 | 40.1 | **2.16** | 3.65 | 380 | **1718** | 0 |
+|  | SGLang | 429 | 29.0 | 50.5 | 2.24 | 2.84 | 393 | 1857 | 0 |
+| 4 | minfer | 857 | **11.0** | **18.0** | 2.33 | **2.63** | 384 | 1827 | 0 |
+|  | vLLM | 857 | 24.3 | 45.6 | **2.17** | 3.36 | **368** | **1736** | 0 |
+|  | SGLang | 857 | 24.9 | 47.8 | 2.32 | 2.86 | 399 | 1849 | 0 |
+| 8 | minfer | 1740 | **11.6** | **18.0** | 2.42 | 2.73 | 432 | 1882 | 0 |
+|  | vLLM | 1740 | 26.5 | 45.7 | **2.21** | **2.53** | **416** | **1757** | 0 |
+|  | SGLang | 1740 | 27.4 | 46.7 | 2.43 | 3.44 | 467 | 1975 | 0 |
+| 16 | minfer | 3209 | **12.1** | **20.3** | 2.55 | 3.24 | 398 | 2009 | 0 |
+|  | vLLM | **3211** | 28.7 | 51.1 | **2.30** | **2.66** | **381** | **1844** | 0 |
+|  | SGLang | 3209 | 29.2 | 50.1 | 2.66 | 4.91 | 430 | 2217 | 0 |
+| max | minfer | **24834** | 2606.2 | 5320.2 | **6.91** | **10.21** | **4137** | **7513** | 0 |
+|  | vLLM | 21466 | **2511.4** | 6829.6 | 17.08 | 26.16 | 6340 | 9362 | 0 |
+|  | SGLang | 14695 | 3273.3 | **3389.0** | 35.84 | 121.79 | 8519 | 13663 | 0 |
 <!-- END sharegpt-results-1.5b -->
 
 ![ShareGPT, 1.5B](bench/plots/sharegpt_vs_rate_1.5b.png)
 
 ### Fairness audit
 
-The tables above run every engine at its defaults. That is a rule a reviewer can fairly
-object to, so the comparison was audited ([`bench/fairness_audit.py`](bench/fairness_audit.py);
-every setting of the three servers is listed side by side in DESIGN.md D-038). Each
-baseline was re-measured with the flags its documentation offers for a latency-sensitive,
-prefix-heavy workload, on the same traces, and all three engines were measured once more
-with the prompts sent as token ids, which takes server-side tokenization out of the path.
+The first version of these tables ran every engine at its defaults. That is a rule a
+reviewer can fairly object to, so the comparison was audited at 1.5B
+([`bench/fairness_audit.py`](bench/fairness_audit.py); every setting of the three servers
+is listed side by side in DESIGN.md D-038). Each baseline was measured with the flags its
+documentation offers for a latency-sensitive, prefix-heavy workload, on the same traces,
+and all three engines were measured once more with the prompts sent as token ids, which
+takes server-side tokenization out of the path. The tables above already use what the
+audit selected; this is the audit itself, as measured at the time.
 
 <!-- BEGIN fairness-audit -->
 | engine / configuration | flags added to the defaults | 4 req/s: TTFT p50 / p99 (ms) | 4 req/s: TPOT p50 / p99 (ms) | 16 req/s: TTFT p50 / p99 (ms) | 16 req/s: TPOT p50 / p99 (ms) | max: tok/s | max: TTFT p50 / p99 (ms) | max: TPOT p50 / p99 (ms) |
@@ -558,9 +561,9 @@ What the audit changed:
   beyond the spread of its own repeated runs. It was the only server writing an access-log
   line per request; that is now off, for parity, with no measurable effect.
 - **SGLang gains 14% saturated throughput from its batch tokenizer**
-  (`--enable-dynamic-batch-tokenizer`), which the published tables did not give it. With
-  it SGLang is the fastest of the three at saturation and minfer's deficit there is 0.73×,
-  not 0.83×. Benchmarks from here on run SGLang with that flag. Its `torch.compile` mode,
+  (`--enable-dynamic-batch-tokenizer`), which the first tables did not give it. With it
+  SGLang is the fastest of the three at saturation at 1.5B and minfer's deficit there is
+  0.73×, not the 0.83× first published. Every benchmark since runs SGLang with that flag. Its `torch.compile` mode,
   the other documented candidate, was several times slower on this workload.
 - **minfer's TTFT lead survives against the tuned baselines** (39–40 ms vs 62–64 ms and
   48–53 ms at 4–16 req/s) **but it is not all engine.** With token-id prompts the three
@@ -578,18 +581,18 @@ minfer is behind in three places, all visible in the tables above.
 1. **Time per output token, at every rate, and more so under load at 7B.** At 1.5B a
    decode step was bound by the number of kernels it launches, and Phase 11 closed most of
    a 2× gap by fusing them. At 7B the matmuls dominate, and the gap grows with the request
-   rate: 6% at 1 req/s, 23% at 16 req/s. The likely cause — consistent with that
+   rate: 6% at 1 req/s, 24% at 16 req/s. The likely cause — consistent with that
    load-dependence, but not isolated by a measurement at 7B — is the structural difference
    that is left: in a step that has both prefill and decode work, minfer runs two passes
    over 15 GB of weights (a ragged prefill pass and a fixed-shape decode pass, the design
    that keeps the decode graphs simple) where vLLM runs one mixed batch, and the busier
    the server, the more steps are mixed.
-2. **Saturated throughput on the agent workload: 0.82× of both baselines at 7B**,
+2. **Saturated throughput on the agent workload: 0.81× of both baselines at 7B**,
    presumably for the same reason: with 64 sessions running flat out almost every step is
    mixed. Prefill passes above 1,024 tokens also still run eagerly rather than from a graph.
 3. **Throughput at extreme concurrency on ShareGPT at 7B.** With 1,000 requests submitted
    at once vLLM and SGLang deliver 14–15k tok/s and minfer 12k, and minfer's median TTFT is
-   the worst of the three (4.2 s against 3.3–3.5 s): it caps the number of running
+   the worst of the three (4.7 s against 3.3–3.5 s): it caps the number of running
    sequences at 256 and queues the rest. At 1.5B the same cap gave it the highest
    throughput; at 7B it does not. That is a default (`--max-num-seqs`), not a measured
    optimum.
@@ -917,8 +920,8 @@ one model on one GPU.
 - **Reproduction on a second machine was not performed.** A fresh clone on the *same*
   machine, with empty caches and re-downloaded weights, was: see
   [Reproduction check](#reproduction-check).
-- **The decode gap to vLLM and SGLang at 7B is open** (6% per token at 1 req/s, 23% at
-  16 req/s, 0.82× saturated throughput). Unified prefill+decode passes were implemented
+- **The decode gap to vLLM and SGLang at 7B is open** (6% per token at 1 req/s, 24% at
+  16 req/s, 0.81× saturated throughput). Unified prefill+decode passes were implemented
   and measured; they lose at saturation and are off by default (DESIGN.md M-025).
 - **Speculative decoding** helps only on a lightly loaded server and hurts a saturated one.
 - **One model family** (Qwen2/2.5), text only, no tool-call parsing on the response side,
