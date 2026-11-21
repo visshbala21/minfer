@@ -149,13 +149,38 @@ def test_draft_never_overshoots_max_tokens(model, cases):
 
 def test_draft_length_adapts_per_request(model, cases):
     prompts, expected = cases
-    good = spec_engine(model, ScriptedDrafter(prompts[:1], expected[:1], 0.0), num_draft_tokens=8)
-    good.generate(prompts[:1], SamplingParams(max_tokens=MAX_TOKENS))
-    bad = spec_engine(model, ScriptedDrafter(prompts[:1], expected[:1], 1.0), num_draft_tokens=8)
-    bad.generate(prompts[:1], SamplingParams(max_tokens=MAX_TOKENS))
+    params = SamplingParams(max_tokens=MAX_TOKENS)
+
+    def engine_with(error_rate: float, **config):
+        drafter = ScriptedDrafter(prompts[:1], expected[:1], error_rate)
+        engine = spec_engine(model, drafter, num_draft_tokens=8, **config)
+        assert engine.generate(prompts[:1], params) == expected[:1]
+        return engine.stats
+
+    good = engine_with(0.0)
+    bad = engine_with(1.0, draft_min_acceptance=0.0)
     # Always-wrong drafts shrink to one token per round; always-right ones stay long.
-    assert bad.stats.spec_proposed / bad.stats.spec_rounds < 1.5
-    assert good.stats.spec_proposed / good.stats.spec_rounds > 4
+    assert bad.spec_proposed / bad.spec_rounds < 1.5
+    assert good.spec_proposed / good.spec_rounds > 4
+
+
+def test_drafting_pauses_for_a_request_whose_drafts_keep_failing(model, cases):
+    prompts, expected = cases
+    params = SamplingParams(max_tokens=MAX_TOKENS)
+
+    def rounds(error_rate: float, **config) -> int:
+        drafter = ScriptedDrafter(prompts[:1], expected[:1], error_rate)
+        engine = spec_engine(model, drafter, num_draft_tokens=8, **config)
+        assert engine.generate(prompts[:1], params) == expected[:1]
+        return engine.stats.spec_rounds
+
+    never_paused = rounds(1.0, draft_min_acceptance=0.0)
+    # Acceptance 0 drives the running average under 0.3 in four rounds; then nothing is
+    # drafted for the cooldown, after which it tries again.
+    assert rounds(1.0, draft_cooldown_steps=1000) == 4
+    assert 4 < rounds(1.0, draft_cooldown_steps=5) < never_paused
+    # Drafts that are accepted are never paused.
+    assert rounds(0.0, draft_cooldown_steps=1000) == rounds(0.0, draft_min_acceptance=0.0)
 
 
 def test_prompt_lookup_speculation_end_to_end(model):

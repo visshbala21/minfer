@@ -71,6 +71,8 @@ class PrefillGraphs:
         sequence_buckets: Span counts to capture.
         token_buckets: Token counts to capture.
         max_pages_per_sequence: Longest block table a sequence can have.
+        shapes: Exactly these ``(spans, tokens)`` shapes instead of every combination of
+            the two bucket lists.
     """
 
     def __init__(
@@ -81,39 +83,39 @@ class PrefillGraphs:
         sequence_buckets: Sequence[int] = DEFAULT_SEQUENCE_BUCKETS,
         token_buckets: Sequence[int] = DEFAULT_TOKEN_BUCKETS,
         max_pages_per_sequence: int = 2048,
+        shapes: Sequence[tuple[int, int]] | None = None,
     ) -> None:
         if len(store.tensors) != 1:
             raise ValueError("prefill graphs need a single-dtype KV store")
         self.model = model
         self.store = store
-        self.sequence_buckets = sorted(set(sequence_buckets))
-        self.token_buckets = sorted(set(token_buckets))
+        if shapes is None:
+            shapes = [(s, t) for s in set(sequence_buckets) for t in set(token_buckets) if t >= s]
+        self.sequence_buckets = sorted({seqs for seqs, _ in shapes})
+        self.token_buckets = sorted({tokens for _, tokens in shapes})
         self._kv_dtype = next(iter(store.tensors))
         device = model.device
         self._buckets: dict[tuple[int, int], _Bucket] = {}
-        for seqs in self.sequence_buckets:
-            for tokens in self.token_buckets:
-                if tokens < seqs:
-                    continue
-                wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
-                    workspace,
-                    "NHD",
-                    use_cuda_graph=True,
-                    qo_indptr_buf=torch.zeros(seqs + 1, dtype=torch.int32, device=device),
-                    paged_kv_indptr_buf=torch.zeros(seqs + 1, dtype=torch.int32, device=device),
-                    paged_kv_indices_buf=torch.zeros(
-                        seqs * max_pages_per_sequence, dtype=torch.int32, device=device
-                    ),
-                    paged_kv_last_page_len_buf=torch.zeros(seqs, dtype=torch.int32, device=device),
-                    max_total_num_rows=tokens,
-                )
-                self._buckets[seqs, tokens] = _Bucket(
-                    token_ids=torch.zeros(tokens, dtype=torch.int64, device=device),
-                    positions=torch.zeros(tokens, dtype=torch.int64, device=device),
-                    slots=torch.zeros(tokens, dtype=torch.int64, device=device),
-                    rows=torch.zeros(seqs, dtype=torch.int64, device=device),
-                    wrapper=wrapper,
-                )
+        for seqs, tokens in sorted(shapes):
+            wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
+                workspace,
+                "NHD",
+                use_cuda_graph=True,
+                qo_indptr_buf=torch.zeros(seqs + 1, dtype=torch.int32, device=device),
+                paged_kv_indptr_buf=torch.zeros(seqs + 1, dtype=torch.int32, device=device),
+                paged_kv_indices_buf=torch.zeros(
+                    seqs * max_pages_per_sequence, dtype=torch.int32, device=device
+                ),
+                paged_kv_last_page_len_buf=torch.zeros(seqs, dtype=torch.int32, device=device),
+                max_total_num_rows=tokens,
+            )
+            self._buckets[seqs, tokens] = _Bucket(
+                token_ids=torch.zeros(tokens, dtype=torch.int64, device=device),
+                positions=torch.zeros(tokens, dtype=torch.int64, device=device),
+                slots=torch.zeros(tokens, dtype=torch.int64, device=device),
+                rows=torch.zeros(seqs, dtype=torch.int64, device=device),
+                wrapper=wrapper,
+            )
         self._capture_all()
 
     def bucket(self, num_spans: int, num_tokens: int) -> tuple[int, int] | None:
@@ -169,13 +171,12 @@ class PrefillGraphs:
                 bucket.logits = self._forward(bucket)
             bucket.graph = graph
 
-    def run(
+    def _replay(
         self, key: tuple[int, int], spans: Sequence[SequenceSpan], rows: Sequence[int]
-    ) -> Tensor:
-        """Run one prefill pass in bucket ``key``; return logits of the given token rows.
+    ) -> int:
+        """Pad ``spans`` to bucket ``key``, load the static buffers, and replay the graph.
 
-        ``rows`` index the flattened real tokens (at most one per span). The result is a
-        view of a static buffer, valid until the next call.
+        Returns the number of real tokens (they are the first rows of the pass).
         """
         seqs, tokens = key
         bucket = self._buckets[key]
@@ -191,4 +192,73 @@ class PrefillGraphs:
             bucket.rows[: len(rows)].copy_(index)
         self._plan(bucket, batch)
         bucket.graph.replay()
-        return bucket.logits[: len(rows)]
+        return real_tokens
+
+    def run(
+        self, key: tuple[int, int], spans: Sequence[SequenceSpan], rows: Sequence[int]
+    ) -> Tensor:
+        """Run one prefill pass in bucket ``key``; return logits of the given token rows.
+
+        ``rows`` index the flattened real tokens (at most one per span). The result is a
+        view of a static buffer, valid until the next call.
+        """
+        self._replay(key, spans, rows)
+        return self._buckets[key].logits[: len(rows)]
+
+
+VERIFY_SEQUENCE_BUCKETS = (2, 4, 8, 16, 32, 64, 128, 256)
+
+
+class VerifyGraphs(PrefillGraphs):
+    """Captured speculative-verification passes: the greedy prediction of *every* row.
+
+    A verification span is a sequence's pending token followed by its drafted tokens; row
+    ``i`` predicts the token after ``i`` drafted tokens, so the unembedding is needed for
+    all rows, not one per span as in prefill. The argmax is taken inside the graph and only
+    token ids leave the device. Sequences that decode without a draft ride along as
+    one-token spans, which makes this the only pass of a speculative step.
+
+    Shapes are ``(S, S·m)`` for ``m = 1 … max_span_tokens``: with drafts of at most
+    ``max_span_tokens - 1`` tokens, every batch of up to ``S`` spans fits one of them.
+
+    Args:
+        model: The model whose pass is captured.
+        store: The paged KV store (single storage dtype).
+        workspace: FlashInfer float workspace buffer.
+        max_span_tokens: Longest verification span (1 + the maximum draft length).
+        max_num_seqs: Most spans a pass can have.
+        max_pages_per_sequence: Longest block table a sequence can have.
+    """
+
+    def __init__(
+        self,
+        model: Qwen2Model,
+        store: PagedKVStore,
+        workspace: Tensor,
+        max_span_tokens: int,
+        max_num_seqs: int,
+        max_pages_per_sequence: int = 2048,
+    ) -> None:
+        limit = next((s for s in VERIFY_SEQUENCE_BUCKETS if s >= max_num_seqs), 256)
+        shapes = [
+            (seqs, seqs * multiple)
+            for seqs in VERIFY_SEQUENCE_BUCKETS
+            if seqs <= limit
+            for multiple in range(1, max_span_tokens + 1)
+        ]
+        super().__init__(
+            model, store, workspace, max_pages_per_sequence=max_pages_per_sequence, shapes=shapes
+        )
+
+    def _forward(self, bucket: _Bucket) -> Tensor:
+        context = KernelContext(self.store, bucket.slots, {self._kv_dtype: bucket.wrapper})
+        hidden = self.model(bucket.token_ids, bucket.positions, context)
+        return self.model.logits(hidden).argmax(dim=-1)
+
+    def predict(self, key: tuple[int, int], spans: Sequence[SequenceSpan]) -> Tensor:
+        """Run one pass in bucket ``key``; return the greedy next token of every real row.
+
+        The result is a view of a static buffer, valid until the next call.
+        """
+        real_tokens = self._replay(key, spans, ())
+        return self._buckets[key].logits[:real_tokens]
