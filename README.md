@@ -674,7 +674,26 @@ Reading the table:
 steady-state decode; [`bench/decode_latency.py`](bench/decode_latency.py)):
 
 <!-- BEGIN decode-latency -->
-_Not measured yet._
+| batch | context (tokens) | eager (ms) | + CUDA graphs (ms) | + fused kernels (default) (ms) | with the Triton decode kernel instead (ms) | eager → default |
+|---|---|---|---|---|---|---|
+| 1 | 256 | 10.92 | 3.60 | 2.22 | 2.17 | 4.9× |
+| 2 | 256 | 10.97 | 3.78 | 2.28 | 2.23 | 4.8× |
+| 4 | 256 | 11.02 | 3.92 | 2.35 | 2.25 | 4.7× |
+| 8 | 256 | 11.09 | 4.06 | 2.43 | 2.32 | 4.6× |
+| 16 | 256 | 11.12 | 4.21 | 2.49 | 2.37 | 4.5× |
+| 32 | 256 | 11.26 | 4.47 | 2.67 | 2.51 | 4.2× |
+| 64 | 256 | 11.39 | 4.86 | 2.98 | 2.80 | 3.8× |
+| 128 | 256 | 11.48 | 5.61 | 3.63 | 3.35 | 3.2× |
+| 256 | 256 | 11.75 | 6.98 | 4.83 | 4.55 | 2.4× |
+| 1 | 2048 | 10.99 | 3.71 | 2.33 | 2.27 | 4.7× |
+| 2 | 2048 | 11.06 | 3.90 | 2.41 | 2.34 | 4.6× |
+| 4 | 2048 | 11.10 | 4.02 | 2.46 | 2.41 | 4.5× |
+| 8 | 2048 | 11.14 | 4.27 | 2.61 | 2.52 | 4.3× |
+| 16 | 2048 | 11.13 | 4.58 | 2.85 | 2.72 | 3.9× |
+| 32 | 2048 | 11.42 | 5.13 | 3.33 | 3.17 | 3.4× |
+| 64 | 2048 | 11.60 | 6.20 | 4.24 | 4.08 | 2.7× |
+| 128 | 2048 | 11.90 | 8.17 | 6.19 | 5.98 | 1.9× |
+| 256 | 2048 | 14.33 | 12.50 | 10.30 | 10.18 | 1.4× |
 <!-- END decode-latency -->
 
 ![Decode latency](bench/plots/decode_latency.png)
@@ -686,10 +705,10 @@ engine without fused kernels or prefill graphs.
 <!-- BEGIN profile -->
 | scenario | CUDA kernels/step before | after | GPU ms/step before | after |
 |---|---|---|---|---|
-| decode graph batch1 | 1219 | 398 | 3.63 | 2.03 |
-| decode graph batch64 | 1219 | 399 | 5.11 | 2.59 |
-| decode eager batch1 | 1219 | 398 | 3.75 | 2.04 |
-| prefill 2048 tokens | 1248 | 399 | 15.56 | 11.06 |
+| decode graph batch1 | 1219 | 398 | 3.63 | 2.05 |
+| decode graph batch64 | 1219 | 398 | 5.11 | 2.79 |
+| decode eager batch1 | 1219 | 398 | 3.75 | 2.07 |
+| prefill 2048 tokens | 1248 | 399 | 15.56 | 11.09 |
 <!-- END profile -->
 
 **One prefill pass** ([`bench/prefill_latency.py`](bench/prefill_latency.py)): an eager
@@ -699,12 +718,12 @@ CUDA graph for the smaller passes, remove most of it.
 <!-- BEGIN prefill-latency -->
 | prompt tokens | eager (ms) | eager + fused kernels (ms) | default (ms) | speedup |
 |---|---|---|---|---|
-| 16 | 11.56 | 7.05 | 2.39 | 4.8× |
-| 64 | 11.52 | 7.09 | 2.61 | 4.4× |
-| 256 | 11.45 | 7.13 | 3.53 | 3.2× |
-| 512 | 11.99 | 7.12 | 4.48 | 2.7× |
-| 1024 | 11.68 | 7.33 | 7.19 | 1.6× |
-| 2048 | 17.77 | 12.34 | 12.32 | 1.4× |
+| 16 | 11.72 | 7.36 | 2.40 | 4.9× |
+| 64 | 12.06 | 7.43 | 2.62 | 4.6× |
+| 256 | 11.57 | 7.48 | 3.54 | 3.3× |
+| 512 | 11.45 | 7.49 | 4.52 | 2.5× |
+| 1024 | 11.66 | 7.68 | 7.54 | 1.5× |
+| 2048 | 17.76 | 12.39 | 12.38 | 1.4× |
 <!-- END prefill-latency -->
 
 **Triton paged-attention decode kernel vs FlashInfer's**
@@ -717,27 +736,27 @@ FlashInfer has two decode configurations; the comparison is against the faster o
 <!-- BEGIN triton -->
 | batch | context | FlashInfer, plain (µs/layer) | FlashInfer, tensor cores (µs/layer) | Triton (µs/layer) | kernel only: Triton vs best FlashInfer | step: FlashInfer plan + 28 layers (ms) | step: Triton prep + 28 layers (ms) | end to end: Triton vs FlashInfer | max abs difference |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | 128 | 11.3 | 6.7 | 7.0 | 0.96× | 0.22 | 0.21 | 1.04× | 0.0020 |
-| 8 | 128 | 11.2 | 7.1 | 8.0 | 0.88× | 0.24 | 0.24 | 0.98× | 0.0020 |
-| 32 | 128 | 15.4 | 10.7 | 5.6 | 1.91× | 0.34 | 0.18 | 1.91× | 0.0039 |
-| 64 | 128 | 15.8 | 11.5 | 6.0 | 1.93× | 0.36 | 0.19 | 1.95× | 0.0039 |
-| 256 | 128 | 29.9 | 17.6 | 8.4 | 2.09× | 0.53 | 0.25 | 2.09× | 0.0039 |
-| 1 | 1,024 | 11.6 | 7.5 | 7.2 | 1.04× | 0.25 | 0.22 | 1.14× | 0.0010 |
-| 8 | 1,024 | 15.9 | 11.5 | 9.1 | 1.27× | 0.36 | 0.27 | 1.33× | 0.0010 |
-| 32 | 1,024 | 28.1 | 15.1 | 11.6 | 1.29× | 0.46 | 0.34 | 1.34× | 0.0010 |
-| 64 | 1,024 | 43.7 | 33.4 | 29.1 | 1.15× | 0.98 | 0.83 | 1.18× | 0.0010 |
-| 256 | 1,024 | 157.4 | 97.7 | 93.0 | 1.05× | 2.79 | 2.63 | 1.06× | 0.0020 |
-| 1 | 4,096 | 15.6 | 11.1 | 10.8 | 1.02× | 0.35 | 0.32 | 1.09× | 0.0005 |
-| 8 | 4,096 | 28.0 | 15.2 | 14.2 | 1.07× | 0.46 | 0.41 | 1.11× | 0.0005 |
-| 32 | 4,096 | 78.4 | 54.7 | 52.0 | 1.05× | 1.57 | 1.48 | 1.07× | 0.0005 |
-| 64 | 4,096 | 151.7 | 100.1 | 96.5 | 1.04× | 2.85 | 2.72 | 1.05× | 0.0005 |
-| 256 | 4,096 | 586.4 | 359.6 | 356.2 | 1.01× | 10.13 | 10.00 | 1.01× | 0.0005 |
-| 1 | 16,384 | 23.3 | 13.5 | 24.6 | 0.55× | 0.41 | 0.71 | 0.58× | 0.0002 |
-| 8 | 16,384 | 79.0 | 55.0 | 55.0 | 1.00× | 1.58 | 1.56 | 1.01× | 0.0002 |
-| 32 | 16,384 | 294.0 | 186.9 | 187.4 | 1.00× | 5.28 | 5.27 | 1.00× | 0.0002 |
-| 64 | 16,384 | 581.1 | 363.8 | 366.7 | 0.99× | 10.24 | 10.30 | 0.99× | 0.0002 |
+| 1 | 128 | 11.2 | 6.7 | 7.0 | 0.96× | 0.22 | 0.21 | 1.04× | 0.0020 |
+| 8 | 128 | 11.2 | 7.0 | 8.0 | 0.88× | 0.24 | 0.24 | 0.97× | 0.0020 |
+| 32 | 128 | 15.4 | 10.7 | 5.5 | 1.94× | 0.34 | 0.17 | 1.95× | 0.0039 |
+| 64 | 128 | 15.8 | 11.6 | 6.0 | 1.95× | 0.36 | 0.18 | 1.96× | 0.0039 |
+| 256 | 128 | 29.6 | 17.6 | 8.4 | 2.10× | 0.53 | 0.25 | 2.09× | 0.0039 |
+| 1 | 1,024 | 11.6 | 7.5 | 7.2 | 1.05× | 0.25 | 0.22 | 1.14× | 0.0010 |
+| 8 | 1,024 | 15.5 | 11.3 | 9.1 | 1.25× | 0.35 | 0.27 | 1.29× | 0.0010 |
+| 32 | 1,024 | 28.3 | 15.5 | 11.6 | 1.33× | 0.47 | 0.35 | 1.35× | 0.0010 |
+| 64 | 1,024 | 43.7 | 33.5 | 29.1 | 1.15× | 0.98 | 0.83 | 1.18× | 0.0010 |
+| 256 | 1,024 | 157.3 | 97.7 | 93.3 | 1.05× | 2.79 | 2.62 | 1.06× | 0.0020 |
+| 1 | 4,096 | 15.5 | 11.3 | 10.8 | 1.04× | 0.35 | 0.32 | 1.09× | 0.0005 |
+| 8 | 4,096 | 28.1 | 14.9 | 14.2 | 1.05× | 0.46 | 0.41 | 1.11× | 0.0005 |
+| 32 | 4,096 | 78.3 | 54.7 | 52.0 | 1.05× | 1.57 | 1.48 | 1.07× | 0.0005 |
+| 64 | 4,096 | 151.8 | 99.6 | 96.5 | 1.03× | 2.84 | 2.73 | 1.04× | 0.0005 |
+| 256 | 4,096 | 586.6 | 359.5 | 356.6 | 1.01× | 10.13 | 9.99 | 1.01× | 0.0005 |
+| 1 | 16,384 | 21.9 | 13.4 | 24.9 | 0.54× | 0.41 | 0.72 | 0.57× | 0.0002 |
+| 8 | 16,384 | 78.6 | 55.0 | 55.0 | 1.00× | 1.58 | 1.56 | 1.02× | 0.0002 |
+| 32 | 16,384 | 293.6 | 187.3 | 187.5 | 1.00× | 5.30 | 5.28 | 1.00× | 0.0002 |
+| 64 | 16,384 | 581.1 | 364.5 | 366.7 | 0.99× | 10.26 | 10.30 | 1.00× | 0.0002 |
 
-Kernel only, against the faster FlashInfer configuration, the Triton kernel is 0.55–2.09× as fast: more than 5% faster at 9 of 19 points, more than 5% slower at 2, within 5% at 8. End to end (host preparation included) it is 0.58–2.09×.
+Kernel only, against the faster FlashInfer configuration, the Triton kernel is 0.54–2.10× as fast: more than 5% faster at 9 of 19 points, more than 5% slower at 2, within 5% at 8. End to end (host preparation included) it is 0.57–2.09×.
 <!-- END triton -->
 
 ![Triton kernel](bench/plots/triton_kernel.png)
@@ -767,12 +786,12 @@ time-to-first-token.
 <!-- BEGIN chunked-prefill -->
 | chunk (tokens) | ITL p99 (ms) | ITL max (ms) | TPOT p50 (ms) | TPOT p99 (ms) | long-prompt TTFT p50 (ms) | out tok/s |
 |---|---|---|---|---|---|---|
-| off | 5.7 | 115 | 2.46 | 5.06 | 69 | 1702 |
-| 4096 | 24.9 | 41 | 2.46 | 5.28 | 81 | 1701 |
-| 2048 | 17.7 | 26 | 2.47 | 5.49 | 99 | 1700 |
-| 1024 | 12.8 | 18 | 2.48 | 5.84 | 124 | 1697 |
-| 512 | 12.0 | 14 | 2.59 | 9.52 | 208 | 1688 |
-| 256 | 10.7 | 12 | 3.02 | 9.50 | 460 | 1653 |
+| off | 5.5 | 114 | 2.54 | 4.79 | 69 | 1703 |
+| 4096 | 24.9 | 40 | 2.55 | 5.04 | 83 | 1702 |
+| 2048 | 17.7 | 25 | 2.55 | 5.25 | 98 | 1700 |
+| 1024 | 12.4 | 17 | 2.56 | 5.60 | 123 | 1697 |
+| 512 | 11.1 | 13 | 2.61 | 6.78 | 206 | 1688 |
+| 256 | 10.4 | 12 | 2.91 | 8.28 | 437 | 1654 |
 <!-- END chunked-prefill -->
 
 **Speculative decoding** ([`bench/speculation.py`](bench/speculation.py)), engine-level,
@@ -781,19 +800,21 @@ greedy:
 <!-- BEGIN speculation -->
 | workload | speculation | out tok/s | vs off | TPOT p50 (ms) | tokens/step | accepted | outputs identical to off |
 |---|---|---|---|---|---|---|---|
-| agent | off | 3182 | — | 6.55 | 16.6 | — | — |
-| agent | ngram | 2673 | 0.84× | 5.30 | 31.0 | 77% | 235/356 |
-| agent | draft model | 1361 | 0.43× | 11.77 | 51.5 | 76% | 232/356 |
-| sharegpt | off | 35562 | — | 5.08 | 186.8 | — | — |
-| sharegpt | ngram | 17919 | 0.50× | 9.34 | 187.4 | 57% | 75/256 |
-| sharegpt | draft model | 8267 | 0.23× | 16.04 | 230.5 | 67% | 83/256 |
+| agent | off | 3553 | — | 5.85 | 16.9 | — | — |
+| agent | ngram | 2625 | 0.74× | 5.18 | 28.5 | 77% | 229/356 |
+| agent | draft model | 1359 | 0.38× | 11.84 | 51.5 | 76% | 223/356 |
+| sharegpt | off | 36799 | — | 4.93 | 188.0 | — | — |
+| sharegpt | ngram | 17756 | 0.48× | 9.77 | 187.4 | 57% | 68/256 |
+| sharegpt | draft model | 8318 | 0.23× | 15.95 | 230.5 | 67% | 72/256 |
 <!-- END speculation -->
 
-That table is the Phase 7 design, in which a verification span ran through the eager
-prefill pass: most drafts are accepted, steps emit twice as many tokens, and it is still a
-net slowdown. Verification is now replayed from a CUDA graph that returns every row's
-argmax, with the sequences that have no draft riding in the same pass. Through the server
-at 7B on the agent workload ([`bench/speculation_serve.py`](bench/speculation_serve.py)):
+That table is the engine driven flat out (32 agent sessions closed-loop; 256 ShareGPT
+requests at once). Verification is replayed from a CUDA graph that returns every row's
+argmax, with the sequences that have no draft riding in the same pass; even so, on a
+saturated engine speculation lowers the median time per token on the agent workload and
+costs a quarter of the throughput there and half of it on ShareGPT, where little of the
+output repeats the prompt. Where it pays is a server with spare capacity — at 7B on the
+agent workload ([`bench/speculation_serve.py`](bench/speculation_serve.py)):
 
 <!-- BEGIN speculation-serve -->
 | configuration | TPOT p50 at 1 req/s (ms) | TPOT p50 at 4 req/s (ms) | TPOT p50 at 8 req/s (ms) | E2E p50 at 1 req/s (ms) | E2E p50 at 4 req/s (ms) | E2E p50 at 8 req/s (ms) | drafted tokens accepted | output tokens from drafts |
@@ -826,10 +847,10 @@ memory, and decode-step latency.
 <!-- BEGIN fp8 -->
 | setting | GSM8K (200) | KV capacity | weights | decode step ms (batch 1 / 64 / 256) |
 |---|---|---|---|---|
-| bf16 | 69.0% | 1.00× | 2.89 GB | 2.16 / 2.94 / 5.31 |
-| FP8 KV cache | 69.0% | 1.92× | 2.89 GB | 2.67 / 3.64 / 5.88 |
-| FP8 weights | 70.5% | 1.00× | 1.67 GB | 4.42 / 6.96 / 9.66 |
-| FP8 weights + KV | 74.0% | 1.91× | 1.67 GB | 4.97 / 7.60 / 10.24 |
+| bf16 | 68.0% | 1.00× | 2.89 GB | 2.23 / 3.17 / 5.56 |
+| FP8 KV cache | 69.0% | 1.92× | 2.89 GB | 2.68 / 3.65 / 5.90 |
+| FP8 weights | 72.0% | 1.00× | 1.67 GB | 4.54 / 7.20 / 9.94 |
+| FP8 weights + KV | 74.0% | 1.91× | 1.67 GB | 4.97 / 7.61 / 10.29 |
 <!-- END fp8 -->
 
 FP8 costs no measurable accuracy (all four settings are within one standard error of each
@@ -868,14 +889,14 @@ a little less than 2×. Root-cause analysis and measurements: DESIGN.md B-005.
 <!-- BEGIN equivalence -->
 | comparison (greedy, bf16) | result | largest float32 margin at a difference |
 |---|---|---|
-| minfer vs vLLM, 20 prompts, one request at a time | 11/20 outputs identical | 0.21 |
-| minfer (batched) vs vLLM (one at a time) | 10/20 outputs identical | 0.21 |
+| minfer vs vLLM, 20 prompts, one request at a time | 10/20 outputs identical | 0.12 |
+| minfer (batched) vs vLLM (one at a time) | 10/20 outputs identical | 0.12 |
 | **vLLM (batched) vs vLLM (one at a time)** — the noise floor | 9/20 outputs identical | — |
-| minfer fed vLLM's tokens (teacher-forced), per position | 1985/2001 tokens equal | 0.30 |
-| prefix cache on vs off, 64 agent-style requests | 46/64 outputs identical | 0.13 |
-| **cache off vs cache off, different batching** — the noise floor | 46/64 outputs identical | 0.20 |
+| minfer fed vLLM's tokens (teacher-forced), per position | 1986/2001 tokens equal | 0.21 |
+| prefix cache on vs off, 64 agent-style requests | 37/64 outputs identical | 0.16 |
+| **cache off vs cache off, different batching** — the noise floor | 58/64 outputs identical | 0.12 |
 
-In the prefix-cache run the cache served 74.7% of prompt tokens and cut the tokens run through the model from 60,572 to 14,302.
+In the prefix-cache run the cache served 74.4% of prompt tokens and cut the tokens run through the model from 60,651 to 14,548.
 <!-- END equivalence -->
 
 - **Tests.** `make test` runs the whole suite on the GPU; the CPU subset (block manager,

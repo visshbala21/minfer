@@ -39,7 +39,20 @@ was being measured, and the order above is the revised one.
 
 ## Open TODOs
 
-- Run tensor parallelism on 2×H100 (NCCL) with Qwen2.5-14B and commit scaling numbers (Phase 10).
-- Reproduce `make bench` on a second machine, or via `modal run bench/modal_bench.py` (Phase 12); the same-machine fresh-clone rerun is done (M-018).
-- Capture speculative verification spans in a CUDA graph; until then speculation is a net slowdown (Phase 7).
-- Merge the prefill and decode passes of a step, and fuse the K/V write, to close the remaining TPOT gap (Phase 11).
+- Run tensor parallelism on 2×H100 (NCCL) with Qwen2.5-14B and commit scaling numbers
+  (Phase 10; out of scope on this machine).
+- Reproduce `make bench` on a second machine, or via `modal run bench/modal_bench.py`
+  (Phase 12; no Modal credentials here). `bench/modal_bench.py` predates the 7B and
+  real-trace benchmarks.
+- Close the decode gap at 7B (TPOT 1.06–1.14× of vLLM, saturated throughput 0.91×): needs
+  a paged attention kernel that handles mixed prefill+decode batches well; routing decode
+  rows through FlashInfer's prefill kernel does not (M-025).
+- Find out why the Triton decode kernel, at parity with FlashInfer's in isolation, is 10%
+  slower in the engine (M-029).
+- Re-measure the pressure sweep's minfer rows, the composition study and the serve-level
+  speculation benchmark on the current default decode kernel; they were measured with the
+  Triton kernel and say so.
+- Read the four possibly overlapping preprints listed in DESIGN.md before making any
+  stronger statement about what the composition study adds.
+- Explain the two single `ServerDisconnectedError` failures in overloaded speculative runs
+  (M-028).

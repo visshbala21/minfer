@@ -7,37 +7,37 @@
   "bf16": {
    "setting": "bf16",
    "engine_overrides": {},
-   "generated_tokens": 58508,
-   "wall_seconds": 1.8396319330204278,
-   "output_tokens_per_second": 31804.188082307173,
+   "generated_tokens": 58115,
+   "wall_seconds": 1.9277085269568488,
+   "output_tokens_per_second": 30147.192476106575,
    "truncated_at_max_tokens": 12,
    "decode_step": [
     {
      "batch_size": 1,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 2.161782525945455,
-     "step_ms_p99": 2.3942085535964,
-     "step_ms_mean": 2.1781902492512017,
-     "tokens_per_second": 462.58122082037386
+     "step_ms_p50": 2.2297684918157756,
+     "step_ms_p99": 2.485195955378004,
+     "step_ms_mean": 2.245573599357158,
+     "tokens_per_second": 448.4770520663633
     },
     {
      "batch_size": 64,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 2.942735009128228,
-     "step_ms_p99": 3.1820648629218344,
-     "step_ms_mean": 2.999443793669343,
-     "tokens_per_second": 21748.475415378878
+     "step_ms_p50": 3.1674079946242273,
+     "step_ms_p99": 4.275081040686931,
+     "step_ms_mean": 3.2600831100717187,
+     "tokens_per_second": 20205.796066885534
     },
     {
      "batch_size": 256,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 5.305362516082823,
-     "step_ms_p99": 6.480639141518624,
-     "step_ms_mean": 5.380570161505602,
-     "tokens_per_second": 48253.064559481936
+     "step_ms_p50": 5.555741983698681,
+     "step_ms_p99": 7.127903911750765,
+     "step_ms_mean": 5.645720910397358,
+     "tokens_per_second": 46078.45374229753
     }
    ],
    "weight_bytes": 3104205824,
@@ -46,8 +46,8 @@
    "kv_store_bytes": 71596048384,
    "kv_bytes_per_token": 28672.0,
    "gpu_free_bytes_before_load": 84467187712,
-   "correct": 138,
-   "accuracy": 0.69,
+   "correct": 136,
+   "accuracy": 0.68,
    "no_answer_extracted": 0,
    "same_final_answer_as_first_setting": 200
   },
@@ -57,97 +57,97 @@
     "kv_cache_dtype": "fp8"
    },
    "generated_tokens": 55720,
-   "wall_seconds": 2.169363604974933,
-   "output_tokens_per_second": 25684.95197034701,
+   "wall_seconds": 2.1893264440004714,
+   "output_tokens_per_second": 25450.75000244596,
    "truncated_at_max_tokens": 8,
    "decode_step": [
     {
      "batch_size": 1,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 2.6723189803306013,
-     "step_ms_p99": 2.7075888245599344,
-     "step_ms_mean": 2.67530428187456,
-     "tokens_per_second": 374.2068246195245
+     "step_ms_p50": 2.6818425103556365,
+     "step_ms_p99": 2.89772552147043,
+     "step_ms_mean": 2.708890387439169,
+     "tokens_per_second": 372.87797331074114
     },
     {
      "batch_size": 64,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 3.6375469935592264,
-     "step_ms_p99": 3.9068480784771964,
-     "step_ms_mean": 3.683263337588869,
-     "tokens_per_second": 17594.27441441189
+     "step_ms_p50": 3.648009995231405,
+     "step_ms_p99": 4.155755352694543,
+     "step_ms_mean": 3.714094560709782,
+     "tokens_per_second": 17543.811580466976
     },
     {
      "batch_size": 256,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 5.876918003195897,
-     "step_ms_p99": 6.813829996390272,
-     "step_ms_mean": 5.960754142142832,
-     "tokens_per_second": 43560.24703097541
+     "step_ms_p50": 5.901544529478997,
+     "step_ms_p99": 6.691080341115632,
+     "step_ms_mean": 6.020527185173705,
+     "tokens_per_second": 43378.47468933702
     }
    ],
    "weight_bytes": 3104205824,
-   "kv_blocks": 299043,
-   "kv_capacity_tokens": 4784688,
-   "kv_store_bytes": 71043284992,
+   "kv_blocks": 299051,
+   "kv_capacity_tokens": 4784816,
+   "kv_store_bytes": 71045185536,
    "kv_bytes_per_token": 14848.0,
-   "gpu_free_bytes_before_load": 84121157632,
+   "gpu_free_bytes_before_load": 84119060480,
    "correct": 138,
    "accuracy": 0.69,
    "no_answer_extracted": 0,
-   "same_final_answer_as_first_setting": 149
+   "same_final_answer_as_first_setting": 144
   },
   "fp8_weights": {
    "setting": "fp8_weights",
    "engine_overrides": {
     "weight_dtype": "fp8"
    },
-   "generated_tokens": 57605,
-   "wall_seconds": 3.876156314043328,
-   "output_tokens_per_second": 14861.371764419531,
-   "truncated_at_max_tokens": 7,
+   "generated_tokens": 57714,
+   "wall_seconds": 4.020217472047079,
+   "output_tokens_per_second": 14355.93979711059,
+   "truncated_at_max_tokens": 9,
    "decode_step": [
     {
      "batch_size": 1,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 4.418502998305485,
-     "step_ms_p99": 4.612059340579436,
-     "step_ms_mean": 4.4342934066662565,
-     "tokens_per_second": 226.32099613455154
+     "step_ms_p50": 4.5414280029945076,
+     "step_ms_p99": 4.591019882936963,
+     "step_ms_mean": 4.546872894279659,
+     "tokens_per_second": 220.1950574446241
     },
     {
      "batch_size": 64,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 6.959397491300479,
-     "step_ms_p99": 7.2268354590050885,
-     "step_ms_mean": 7.010362687869929,
-     "tokens_per_second": 9196.198389300585
+     "step_ms_p50": 7.2035744960885495,
+     "step_ms_p99": 7.514899296220393,
+     "step_ms_mean": 7.268991796881892,
+     "tokens_per_second": 8884.478120515196
     },
     {
      "batch_size": 256,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 9.662668511737138,
-     "step_ms_p99": 10.579241750529038,
-     "step_ms_mean": 9.70486432488542,
-     "tokens_per_second": 26493.71648101553
+     "step_ms_p50": 9.941604541381821,
+     "step_ms_p99": 11.000340109458202,
+     "step_ms_mean": 10.013395868591033,
+     "tokens_per_second": 25750.370469314363
     }
    ],
    "weight_bytes": 1794010896,
-   "kv_blocks": 155642,
-   "kv_capacity_tokens": 2490272,
-   "kv_store_bytes": 71401537536,
+   "kv_blocks": 155638,
+   "kv_capacity_tokens": 2490208,
+   "kv_store_bytes": 71399702528,
    "kv_bytes_per_token": 28672.0,
-   "gpu_free_bytes_before_load": 84119060480,
-   "correct": 141,
-   "accuracy": 0.705,
+   "gpu_free_bytes_before_load": 84116963328,
+   "correct": 144,
+   "accuracy": 0.72,
    "no_answer_extracted": 0,
-   "same_final_answer_as_first_setting": 148
+   "same_final_answer_as_first_setting": 142
   },
   "fp8_weights_and_kv": {
    "setting": "fp8_weights_and_kv",
@@ -156,36 +156,36 @@
     "weight_dtype": "fp8"
    },
    "generated_tokens": 54338,
-   "wall_seconds": 4.176605989981908,
-   "output_tokens_per_second": 13010.085253513553,
+   "wall_seconds": 4.205014359031338,
+   "output_tokens_per_second": 12922.191307931047,
    "truncated_at_max_tokens": 11,
    "decode_step": [
     {
      "batch_size": 1,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 4.966803971910849,
-     "step_ms_p99": 5.032980480464175,
-     "step_ms_mean": 4.975129488157108,
-     "tokens_per_second": 201.33671585497987
+     "step_ms_p50": 4.973288043402135,
+     "step_ms_p99": 5.091691231355082,
+     "step_ms_mean": 5.000297065707855,
+     "tokens_per_second": 201.07421715230439
     },
     {
      "batch_size": 64,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 7.600891025504097,
-     "step_ms_p99": 8.000509853591215,
-     "step_ms_mean": 7.670402649091557,
-     "tokens_per_second": 8420.065461437855
+     "step_ms_p50": 7.610147004015744,
+     "step_ms_p99": 7.901766435243189,
+     "step_ms_mean": 7.673206063336693,
+     "tokens_per_second": 8409.824404998786
     },
     {
      "batch_size": 256,
      "context_tokens": 512,
      "steps": 100,
-     "step_ms_p50": 10.23754951893352,
-     "step_ms_p99": 11.016458388185129,
-     "step_ms_mean": 10.291931059909984,
-     "tokens_per_second": 25005.98405180348
+     "step_ms_p50": 10.293208004441112,
+     "step_ms_p99": 11.513086187187586,
+     "step_ms_mean": 10.386450679507107,
+     "tokens_per_second": 24870.769141121615
     }
    ],
    "weight_bytes": 1794010896,
@@ -197,7 +197,7 @@
    "correct": 148,
    "accuracy": 0.74,
    "no_answer_extracted": 0,
-   "same_final_answer_as_first_setting": 149
+   "same_final_answer_as_first_setting": 144
   }
  }
 }
