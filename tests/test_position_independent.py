@@ -192,3 +192,36 @@ def test_reuse_is_off_by_default():
     run(engine, [5, 6, 7, *document])
     prompt = [9, 9, 9, 9, 9, *document]
     assert run(engine, prompt) == (dense_greedy(model, prompt, 8), 0)
+
+
+def test_a_sequence_preempted_after_its_copy_was_queued(ratio=0.0):
+    """Found by the composition benchmark: the copy ran into a block table that was gone.
+
+    The pool holds the cached document and the new prompt up to the end of the copy, and
+    nothing more while the document's blocks are pinned as the copy's source: the
+    sequence's own next allocation preempts it, in the pass that had just queued the copy.
+    """
+    model = one_layer_model()
+    rng = random.Random(12)
+
+    def fresh(count: int) -> list[int]:
+        return [rng.randrange(4, 199) for _ in range(count)]
+
+    document = fresh(64)
+    config = EngineConfig(
+        attention_backend="reference",
+        num_blocks=39,
+        block_size=SIZE,
+        position_independent_reuse=True,
+        reuse_min_tokens=8,
+        reuse_recompute_ratio=ratio,
+        max_batched_tokens=16,
+    )
+    engine = Engine(model, config, eos_token_ids=())
+    first = [*fresh(6), *document]
+    assert run(engine, first)[0] == dense_greedy(model, first, 8)
+    prompt = [*fresh(9), *document, *fresh(60)]
+    output, _ = run(engine, prompt)
+    assert output == dense_greedy(model, prompt, 8)
+    assert engine.scheduler.num_preemptions >= 1  # the scenario did occur
+    assert_all_released(engine)

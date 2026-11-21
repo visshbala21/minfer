@@ -326,7 +326,8 @@ class Scheduler:
                 seq.restore = None
             adopted += seq.restore_hit_tokens
             seq.restore_hit_tokens = 0
-            if self.config.reuse_min_tokens is not None:
+            if self.config.reuse_min_tokens is not None and not seq.num_preemptions:
+                # Not after a preemption: the pinned sources may be what it lacked room for.
                 self._plan_reuse(seq)
             if cache is not None:
                 stats = cache.stats
@@ -455,4 +456,14 @@ class Scheduler:
             if self._reserve(seq, seq.num_cached + count):
                 plan.prefill.append((seq, count))
                 prefill_budget -= count
+        if plan.copies:
+            # A sequence can be preempted after its copy was queued (by its own next
+            # allocation in this very pass): its table is gone, the copy must not run.
+            kept = []
+            for seq, span in plan.copies:
+                if seq.status is SequenceStatus.RUNNING:
+                    kept.append((seq, span))
+                else:
+                    self.blocks.release(span.source_blocks)
+            plan.copies = kept
         return plan
