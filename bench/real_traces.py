@@ -505,12 +505,18 @@ class ReplayOptions:
             because the history is scripted and the output is not what is replayed.
         extra_body: Extra request fields for every request.
         max_sessions: Stop after this many sessions (``None``: the whole trace).
+        duration: Stop sending requests this many seconds into the replay (requests in
+            flight complete). ``None``: until the sessions run out.
+        ramp: Seconds over which the workers' first sessions are started, evenly spaced,
+            instead of all at once.
     """
 
     concurrency: int
     session_hints: bool = False
     extra_body: dict[str, Any] = field(default_factory=dict)
     max_sessions: int | None = None
+    duration: float | None = None
+    ramp: float = 0.0
 
 
 async def replay(
@@ -534,10 +540,16 @@ async def replay(
     origin = time.perf_counter()
     finished = 0
 
-    async def worker(http: aiohttp.ClientSession) -> None:
+    def expired() -> bool:
+        return options.duration is not None and time.perf_counter() - origin >= options.duration
+
+    async def worker(index: int, http: aiohttp.ClientSession) -> None:
         nonlocal finished
+        await asyncio.sleep(options.ramp * index / options.concurrency)
         for session in queue:
             for turn, call in enumerate(session.calls):
+                if expired():
+                    return
                 body = {
                     "model": model,
                     "prompt": render(session, call, tokenizer),
@@ -566,19 +578,30 @@ async def replay(
     timeout = aiohttp.ClientTimeout(total=None, sock_read=900)
     connector = aiohttp.TCPConnector(limit=0)
     async with aiohttp.ClientSession(timeout=timeout, connector=connector) as http:
-        await asyncio.gather(*(worker(http) for _ in range(options.concurrency)))
+        await asyncio.gather(*(worker(index, http) for index in range(options.concurrency)))
     return records, time.perf_counter() - origin
 
 
-def summarize(records: list[aw.RequestRecord], duration: float) -> dict[str, Any]:
+def summarize(
+    records: list[aw.RequestRecord], duration: float, warmup: float = 0.0
+) -> dict[str, Any]:
     """The agent workload's summary plus what matters under memory pressure.
 
-    ``prefill_tokens_computed`` is the prompt tokens the server reported as *not* served
-    from cache: the work the KV management policy failed to avoid.
+    Only requests sent at least ``warmup`` seconds into the replay are counted (rates are
+    over the remaining time). ``prefill_tokens_computed`` is the prompt tokens the server
+    reported as *not* served from its cache — the work its KV management failed to avoid —
+    and ``cache_hit_rate`` the share it did serve; ``sessions`` counts distinct sessions
+    that sent a counted request.
     """
-    summary = aw.summarize(records, duration)
-    good = [r for r in records if r.error is None and r.cached_tokens is not None]
-    summary["prefill_tokens_computed"] = sum(r.prompt_tokens - r.cached_tokens for r in good)
+    counted = [r for r in records if r.sent >= warmup]
+    summary = aw.summarize(counted, duration - warmup)
+    good = [r for r in counted if r.error is None and r.cached_tokens is not None]
+    prompt = sum(r.prompt_tokens for r in good)
+    computed = sum(r.prompt_tokens - r.cached_tokens for r in good)
+    summary["prefill_tokens_computed"] = computed
+    summary["cache_hit_rate"] = 1.0 - computed / prompt if prompt else None
+    summary["sessions"] = len({r.session_id for r in counted})
+    summary["warmup_s"] = warmup
     return summary
 
 

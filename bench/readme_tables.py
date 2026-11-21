@@ -533,6 +533,84 @@ def fairness_audit_table() -> str:
     return _table(header, rows)
 
 
+def real_trace_table() -> str:
+    """Shape of the real coding-agent trace and what each kind of KV reuse could serve."""
+    data = _load("real_trace_stats_7b.json")
+    if not data:
+        return MISSING
+
+    def spread(key: str, fmt: str = ",.0f") -> str:
+        d = data[key]
+        return f"{d['p50']:{fmt}} / {d['p90']:{fmt}} / {d['max']:{fmt}}"
+
+    pause = data["pause_seconds"]
+    over = data["pause_seconds_fraction_over"]
+    tools = ", ".join(f"{name} {count:,}" for name, count in data["tool_calls"].items())
+    rows = [
+        ["sessions (cut at the 32k-token context limit)", f"{data['sessions']} "
+         f"({data['sessions_truncated_at_context_limit']})"],
+        ["model calls", f"{data['model_calls']:,}"],
+        ["model calls per session, p50 / p90 / max", spread("calls_per_session")],
+        ["prompt tokens per call, p50 / p90 / max", spread("prompt_tokens")],
+        ["tokens appended per call, p50 / p90 / max", spread("appended_tokens_per_call")],
+        ["output tokens per call, p50 / p90 / max", spread("output_tokens")],
+        ["tool calls", tools],
+        ["pause after a call (s), p50 / p75 / p90 / p99",
+         f"{pause['p50']:.2f} / {pause['p75']:.1f} / {pause['p90']:.0f} / {pause['p99']:.0f}"],
+        ["pauses longer than 1 s / 10 s / 30 s",
+         f"{over['1s']:.0%} / {over['10s']:.0%} / {over['30s']:.0%}"],
+    ]  # fmt: skip
+    for label, key in (
+        ("all prompt tokens", "token_fractions"),
+        ("first call of a session", "token_fractions_first_call"),
+        ("later calls", "token_fractions_later_calls"),
+    ):
+        f = data[key]
+        rows.append(
+            [
+                f"prefix / shifted duplicate / novel — {label}",
+                f"{f['prefix']:.1%} / {f['shifted_duplicate']:.1%} / {f['novel']:.1%}",
+            ]
+        )
+    return _table(["real trace (Qwen2.5-7B tokenizer)", "value"], rows)
+
+
+def pressure_table(name: str = "pressure_7b.json") -> str:
+    """KV memory pressure on the real trace: every configuration at every concurrency."""
+    data = _load(name)
+    if not data:
+        return MISSING
+    levels = sorted({int(c) for entry in data["configs"].values() for c in entry["runs"]})
+    rows = []
+    for level in levels:
+        first = True
+        for entry in data["configs"].values():
+            run = entry["runs"].get(str(level))
+            if run is None:
+                continue
+            head = [str(level) if first else "", entry["label"]]
+            first = False
+            if "error" in run:
+                rows.append([*head, "did not start", "", "", "", "", "", ""])
+                continue
+            hit = run["cache_hit_rate"]
+            rows.append(
+                [
+                    *head,
+                    f"{run['completed']}",
+                    "—" if hit is None else f"{hit:.1%}",
+                    f"{run['prefill_tokens_computed'] / max(1, run['completed']):,.0f}",
+                    f"{run['ttft_ms']['p50']:.0f} / {run['ttft_ms']['p99']:.0f}",
+                    f"{run['tpot_ms']['p50']:.1f}",
+                    f"{run['output_tokens_per_second']:.0f}",
+                    str(run["failed"]),
+                ]
+            )
+    header = ["concurrent sessions", "configuration", "calls completed", "cache hit rate"]
+    header += ["prefill tokens computed per call", "TTFT p50 / p99 (ms)", "TPOT p50 (ms)"]
+    return _table([*header, "out tok/s", "failed"], rows)
+
+
 SECTIONS: dict[str, Callable[[], str]] = {
     "headline": headline,
     "agent-results": agent_table,
@@ -548,6 +626,8 @@ SECTIONS: dict[str, Callable[[], str]] = {
     "fp8": fp8_table,
     "triton": triton_table,
     "fairness-audit": fairness_audit_table,
+    "real-trace": real_trace_table,
+    "pressure": pressure_table,
     "equivalence": equivalence_table,
     "profile": profile_table,
     "reproduction": reproduction_table,

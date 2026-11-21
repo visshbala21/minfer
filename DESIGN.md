@@ -1681,3 +1681,193 @@ structure, and TraceLab supplies tool-call pause durations, sampled per tool nam
   idle machine. Rule adopted, extending B-004: **while a benchmark is running, nothing else
   runs — no tests, no tokenization, no downloads — only editing.** Results now also record
   the commit they ran on (`code` in each results file).
+
+### B-007 The HTTP front end and the engine process deadlocked on their pipes (fixed)
+
+- **Symptom.** The clean rerun of the 7B matrix stopped during minfer's ShareGPT "max" run
+  (1,000 requests at once): `vllm bench serve` sat at 0/1000 for twelve minutes, the GPU
+  was idle, and the server answered neither `/health` nor `/metrics`.
+- **Diagnosis.** `/proc/<pid>/wchan` of both processes read `pipe_write`: the front end was
+  blocked writing a command to the engine and the engine was blocked writing results to the
+  front end. Neither could reach the read that would have released the other.
+- **Root cause.** Present since Phase 5 (D-025). The event loop wrote commands to the
+  engine with a blocking `Connection.send`. A pipe holds 64 KB. The engine blocks on its
+  results pipe whenever the front end falls behind on reading (ordinary back-pressure, and
+  with a thousand streams the front end does fall behind); if the event loop then submits a
+  request whose command does not fit in what is left of the *command* pipe, it blocks too —
+  and a blocked event loop reads no results. It had survived every earlier run by timing:
+  at 1.5B an engine step is a third as long, so the engine drained commands three times as
+  often.
+- **Fix.** Commands are queued and written by a dedicated thread
+  (`AsyncEngine._write_commands`); the event loop never touches the command pipe and
+  therefore always gets back to reading results. Regression test
+  `test_commands_sent_while_results_are_backed_up_do_not_deadlock`: it backs the results
+  pipe up, then submits 500 KB of commands; it hangs on the old code (verified: killed by a
+  90 s time limit) and passes with the fix.
+- **Consequence for the numbers.** None of the published 1.5B results came from a
+  deadlocked run (a deadlock cannot produce a result), but minfer's ShareGPT "max" rows were
+  one unlucky interleaving away from not existing. The 7B matrix was restarted once more
+  from scratch on the fixed code, so that all of minfer's rows come from one commit.
+
+---
+
+## Phase 14B — Real traces
+
+### D-039 Two datasets, because no public one has both halves
+
+- **Content** comes from `nvidia/Open-SWE-Traces` (`claudecode` split, one 54 MB shard,
+  382 trajectories; CC BY 4.0): complete Claude-Code-harness sessions on repository issues —
+  system prompt, three tool definitions (Bash, Read, Edit), every assistant message with
+  its tool calls, every tool result. No timestamps.
+- **Timing** comes from TraceLab `v0.0.1` (CC BY 4.0): 141,824 tool calls of real Claude
+  Code sessions with emit and result timestamps, and no text at all. A model call's pause is
+  sampled from the empirical latency distribution of the tool it calls (the slowest, if it
+  calls several), from a committed table of 201 quantiles per tool
+  (`bench/data/tracelab_tool_latency.json`, 24 KB; `python -m bench.real_traces latency`
+  rebuilds it from the release, whose SHA-256 it records).
+- **What is real and what is not.** Token sequences, turn structure, tool names and the
+  marginal distribution of pauses per tool are real. The *pairing* of a particular pause
+  with a particular call is sampled, so any correlation between what a command does and how
+  long it takes (beyond the tool's name) is lost. Human think time does not occur: these
+  are autonomous runs on one issue each.
+- **Replay** follows D-027: the request for a call is the chat-templated conversation up to
+  it, with the *recorded* assistant messages in the history, asking for exactly as many
+  tokens as the recorded reply has — byte-identical prompts for every engine. Sessions run
+  closed-loop at a fixed concurrency.
+- **Context limit.** Qwen2.5 has 32,768 positions; the plan's 16k–48k-token histories are
+  therefore 16k–32k. A session keeps the calls that fit 32,000 tokens and ends there:
+  163 of 300 sessions are cut this way. Real Claude Code sessions are far longer (TraceLab:
+  median prefix 126k tokens); this trace is the part of them a 32k-context model can serve.
+
+### M-021 What the real trace looks like (`bench/results/real_trace_stats_7b.json`)
+
+300 sessions, 8,112 model calls, 141 M prompt tokens and 1.5 M output tokens in total.
+
+| | p50 | p90 | max |
+|---|---|---|---|
+| model calls per session | 28 | 42 | 57 |
+| prompt tokens per call | 17,806 | 28,482 | 31,938 |
+| tokens appended per call | 549 | 1,916 | 26,443 |
+| output tokens per call | 100 | 451 | 7,179 |
+
+Pauses (after clipping at 120 s): p50 0.26 s, p75 3.5 s, p90 30 s, p99 120 s; 40% of
+pauses exceed 1 s, 16% exceed 10 s, 10% exceed 30 s. Per tool in TraceLab: Bash p50 0.41 s /
+p90 30 s (66,850 calls), Read 0.04 s / 0.43 s, Edit 0.10 s / 2.2 s.
+
+**How much of the prompt each kind of reuse could serve** (rolling-hash fingerprints, cache
+of unlimited size, sessions one after another; a token is *prefix* if a 16-token-aligned
+prefix containing it was seen before, *shifted duplicate* if it is not but lies in a
+32-token window seen before at another position, *novel* otherwise):
+
+| | prefix | shifted duplicate | novel |
+|---|---|---|---|
+| all prompt tokens | 94.4% | 0.8% | 4.8% |
+| first call of a session | 6.3% | 66.8% | 26.9% |
+| later calls | 94.7% | 0.6% | 4.7% |
+
+Three things this says before any engine runs:
+
+1. **Exact-prefix caching already covers 94% of the tokens**, if nothing is ever evicted.
+   Everything else in this study is about the remaining 5.6% and about what eviction takes
+   away from the 94%.
+2. **Position-independent reuse has little to find here: 0.8% of prompt tokens**, 14% of
+   the tokens a perfect prefix cache still has to compute. Almost all of it is the system
+   prompt of a session's first call: Claude Code's system prompt begins with the working
+   directory, the date and a git status, so two sessions share their long system prompt
+   only *after* a different first paragraph — which defeats prefix caching (6.3% hit on
+   first calls) and is exactly the shifted-duplicate case (66.8%). Within a session,
+   re-read files and repeated tool output amount to 0.6% of tokens.
+3. **Pauses are short and heavy-tailed, not "2–30 s".** Half of them are under 0.3 s. A
+   retention policy has to be right about the 16% of pauses longer than 10 s, which carry
+   almost all of the paused time.
+
+---
+
+## Phase 15 — Tool-call-aware KV retention and a host-memory tier
+
+Neither mechanism is new: KV time-to-live for paused agent sessions is Continuum
+(arXiv 2511.02230), predictive eviction by expected time to next reuse is CacheWise
+(arXiv 2606.16824), and DRAM offload of KV is in LMCache, in vLLM and in SGLang's
+hierarchical cache. What this phase adds is both of them in one engine where each can be
+switched off, measured on the same real trace next to the baselines' own offloading.
+
+### D-040 Retention is a ranking by expected time to next use, not a pin with a deadline
+
+- **Interface.** A request may carry `session_id`, and optionally `session_tools` (the
+  tools the client runs after this response) and `session_final`. Without the last two the
+  server reads them off its own output (`<tool_call>` blocks: tool names; none: a final
+  answer) and tells the engine after the response (`Engine.note_session`). In the replay
+  benchmarks the client sends them, because the history is scripted and the generated text
+  is not what the next request contains; this is the same information a server parsing its
+  own output has, one message earlier.
+- **Policy** (`minfer/cache/retention.py`). Every cached leaf gets a score: the expected
+  seconds until it is next needed. Eviction takes the highest score first, trimming a leaf
+  from its tail as before.
+  - session said it is over → never (evicted first, however recently it was used);
+  - session paused in a tool call → `E[pause − elapsed | pause > elapsed]` over the pauses
+    observed so far for that tool (falling back to all tools, then to `elapsed` itself);
+  - a request of the session is in the engine → 0;
+  - KV of no session → its idle time, which orders such entries exactly as LRU does.
+- **Why a ranking and not Continuum's TTL.** A TTL answers "may this be evicted yet?"; under
+  memory pressure something must go regardless, and the question is which. Ranking by
+  expected remaining pause gives the TTL's behaviour where it applies (a session two
+  seconds into a pause that usually takes five is kept) and still has an answer when every
+  candidate is inside its TTL.
+- **Why the conditional expectation.** Tool latencies are heavy-tailed (M-021): a session
+  ten seconds into a `Bash` pause whose median is 0.4 s is not about to return, it is in the
+  tail. Conditioning on the time already elapsed makes its score *rise* the longer it
+  stays away, which is the opposite of what "it has been gone a long time, it must be due"
+  intuition (and LRU's opposite, "it has been gone a long time, drop it") would do, and it
+  is what the data says.
+- **Tradeoffs.** (1) The predictor learns online from this server's own traffic (the last
+  512 pauses per tool set): it starts with no history, where it degenerates to LRU order.
+  (2) Scoring walks every leaf at each eviction: O(sessions) per call, measured below.
+  (3) A node shared by several sessions carries the mark of whichever finished last; it is
+  only ever scored after all private tails below it are gone.
+- `--eviction-policy lru` restores the previous behaviour and ignores session fields.
+
+### D-041 Host tier: offload at every pause, demote on eviction, restore on return
+
+`minfer/cache/host_tier.py`, `--host-kv-gb N`.
+
+- **Offload eagerly, incrementally.** When a session's request completes and the session is
+  not over, the blocks on its cached path that have no host copy yet are copied to pinned
+  host memory. KV is immutable once published, so every block is copied at most once and a
+  turn costs only its new tokens (median 549 appended + 100 generated tokens ≈ 40 blocks ≈
+  37 MB at 7B). Considered and rejected: copying only at eviction time. It makes eviction —
+  which happens inside admission, on the request path — wait for a gather of exactly the
+  bytes it is trying to free, at the moment memory is tightest.
+- **Demotion is free.** Evicting a block that has a host copy drops the GPU copy and keeps
+  the tokens in the radix tree as a *host-only* node (the leaf is split at the boundary).
+  Blocks without a copy are forgotten as before, together with any host-only KV below them,
+  which could never be reached again.
+- **Restore on return.** At admission, after a sequence has adopted what the GPU cache
+  holds, the tree is asked for host-only nodes that continue its prefix. If there are at
+  least `--min-restore-blocks` (8) of them, GPU blocks are allocated (evicting colder KV if
+  need be), the copy is started, and the sequence steps out of the queue; other sequences
+  keep being admitted and stepped. When the copy's CUDA event has completed the nodes
+  become GPU-resident again and the sequence rejoins the front of the queue, where the
+  ordinary prefix-cache hit path picks the blocks up. A restored block keeps its host copy,
+  so being evicted again is another free demotion.
+- **Asynchrony.** Copies run on their own CUDA stream. The GPU store is layer-major (what
+  the kernels index) and the host pool block-major, so a run of host blocks is one
+  contiguous pinned range; an offload gathers into a staging tensor on the engine's stream
+  (after which the GPU blocks may be reused at once) and copies it out on the transfer
+  stream; a restore copies into a staging tensor on the transfer stream and the engine
+  scatters it into the store once the event is done. The engine polls and never waits.
+- **Host pool full.** Room is made by dropping host-only KV whose score is higher than the
+  pausing session's own — KV needed later than the newcomer. A host-only node is the only
+  copy of its tokens, so it is not given up for a backup of something needed later than it.
+- **No predictive prefetch, and why.** The plan asks for bringing KV back *before* the next
+  turn arrives. With heavy-tailed pauses there is no moment at which a paused session
+  becomes "about to return": its expected remaining pause only grows with the time it has
+  been away (D-040). The sessions likely to return soon are the ones that paused a moment
+  ago, and those are the last to be demoted in the first place. What is implemented is
+  overlap rather than anticipation: a restore runs concurrently with the engine's other
+  work and only its own request waits for it.
+- **Restore or recompute.** Measured, not assumed: M-022.
+- **Correctness.** On the CPU float32 model, a randomized test with eight sessions, a GPU
+  pool and a host pool both too small for them asserts every output equal to the cache-free
+  oracle and the tree/pool invariants after every step. On the GPU, an evicted and restored
+  session continues bit-for-bit as it does in an engine with room for everything
+  (`tests/test_host_tier.py`): restored KV *is* the KV that was computed.

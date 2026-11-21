@@ -269,6 +269,50 @@ def plot_triton_kernel() -> None:
     )
 
 
+PRESSURE_STYLE = {
+    "minfer/lru": ("#9ec5f0", "minfer, LRU"),
+    "minfer/session": ("#2a78d6", "minfer, session-aware"),
+    "minfer/session_host": ("#0b3d7a", "minfer, session-aware + host tier"),
+    "vllm/default": ("#eb6834", "vLLM"),
+    "vllm/offload": ("#8f3410", "vLLM + KV offloading"),
+    "sglang/default": ("#1baf7a", "SGLang"),
+    "sglang/hicache": ("#0c6b49", "SGLang + hierarchical cache"),
+}
+
+
+def plot_pressure(name: str = "pressure_7b") -> None:
+    """Hit rate, TTFT and throughput against concurrent sessions on the real trace."""
+    path = RESULTS / f"{name}.json"
+    if not path.exists():
+        return
+    data = json.loads(path.read_text())
+    panels = [
+        ("cache_hit_rate", "Prompt tokens served from cache"),
+        ("ttft_ms.p50", "TTFT p50 (ms)"),
+        ("ttft_ms.p99", "TTFT p99 (ms)"),
+        ("output_tokens_per_second", "Output throughput (tok/s)"),
+    ]
+    fig, axes = plt.subplots(1, 4, figsize=(17, 4.4))
+    for ax, (metric, label) in zip(axes, panels, strict=True):
+        for config, entry in data["configs"].items():
+            runs = {int(c): r for c, r in entry["runs"].items() if "error" not in r}
+            xs = sorted(runs)
+            ys = [_agent_value(runs[x], metric) for x in xs]
+            color, text = PRESSURE_STYLE.get(config, (MUTED, entry["label"]))
+            _line(ax, [str(x) for x in xs], ys, color, text)
+        ax.set_title(label)
+        ax.set_xlabel("concurrent sessions")
+        ax.set_ylim(bottom=0)
+        ax.margins(x=0.1)
+    budget = data.get("kv_budget_gb")
+    note = (
+        "Real coding-agent trace (Open-SWE-Traces content, TraceLab tool-call pauses), "
+        f"{data['model'].rsplit('/', 1)[-1]}, closed loop; "
+        + (f"KV cache limited to {budget:g} GB for every engine." if budget else "whole GPU.")
+    )
+    _finish(fig, list(axes), "KV memory pressure: sessions past GPU capacity", note, f"{name}.png")
+
+
 def main() -> None:
     argparse.ArgumentParser(description=__doc__.split("\n\n")[0]).parse_args()
     # The 7B model's charts carry the plain file names; the 1.5B model's a suffix.
@@ -291,6 +335,7 @@ def main() -> None:
     plot_decode_latency()
     plot_chunked_prefill()
     plot_triton_kernel()
+    plot_pressure()
 
 
 if __name__ == "__main__":
