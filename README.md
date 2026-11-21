@@ -146,6 +146,118 @@ How a request flows:
 | Server | `minfer/server/` | OpenAI-compatible; engine in its own process |
 | Benchmarks | `bench/` | agent workload generator + replay client, three-engine matrix, ablations, plots |
 
+## Real coding-agent traces under memory pressure
+
+The comparison above uses a synthetic agent workload that fits in GPU memory. This section
+uses real trajectories, and asks what happens when the sessions' KV does not fit.
+
+**The trace** ([`bench/real_traces.py`](bench/real_traces.py)). No public dataset has both
+the content and the timing of real agent sessions, so two are combined: token sequences and
+turn structure from `nvidia/Open-SWE-Traces` (Claude Code harness: full system prompt, tool
+definitions, every assistant message and tool result), and tool-call pause durations
+sampled per tool name from the 141,824 real tool-call timings of TraceLab. Sessions are cut
+at Qwen2.5's 32k-token context.
+
+<!-- BEGIN real-trace -->
+| real trace (Qwen2.5-7B tokenizer) | value |
+|---|---|
+| sessions (cut at the 32k-token context limit) | 300 (163) |
+| model calls | 8,112 |
+| model calls per session, p50 / p90 / max | 28 / 42 / 57 |
+| prompt tokens per call, p50 / p90 / max | 17,806 / 28,482 / 31,938 |
+| tokens appended per call, p50 / p90 / max | 549 / 1,916 / 26,443 |
+| output tokens per call, p50 / p90 / max | 100 / 451 / 7,179 |
+| tool calls | Bash 7,404, Read 1,407, Edit 1,259 |
+| pause after a call (s), p50 / p75 / p90 / p99 | 0.26 / 3.5 / 30 / 120 |
+| pauses longer than 1 s / 10 s / 30 s | 40% / 16% / 10% |
+| prefix / shifted duplicate / novel — all prompt tokens | 94.4% / 0.8% / 4.8% |
+| prefix / shifted duplicate / novel — first call of a session | 6.3% / 66.8% / 26.9% |
+| prefix / shifted duplicate / novel — later calls | 94.7% / 0.6% / 4.7% |
+<!-- END real-trace -->
+
+A token is *prefix* if an exact-prefix cache of unlimited size could serve it, *shifted
+duplicate* if it is not but repeats, at another position, 32 tokens seen before (what
+position-independent caching could add), *novel* otherwise. Two things follow before any
+engine runs: prefix caching already covers 94% of the tokens if nothing is evicted, and
+position-independent reuse has 0.8% of them to find, nearly all in the system prompt of a
+session's first call (Claude Code's system prompt starts with the working directory, the
+date and a git status, so sessions share it only *after* a different first paragraph).
+
+**Memory pressure** ([`bench/pressure.py`](bench/pressure.py)). The trace replayed
+closed-loop at 32–128 concurrent sessions; at 7B one H100 holds the KV of about 55–65
+sessions. minfer is run with LRU eviction, with session-aware retention (the eviction
+order follows the expected remaining tool-call pause of each session — the idea of
+Continuum and CacheWise), and with a 96 GB host-memory tier on top (a session's KV is
+copied to pinned memory when it pauses and copied back when it returns); vLLM and SGLang
+are run with and without the CPU-memory KV offloading each ships (96 GB each).
+
+<!-- BEGIN pressure -->
+| concurrent sessions | configuration | calls completed | cache hit rate | prefill tokens computed per call | TTFT p50 / p99 (ms) | TPOT p50 (ms) | out tok/s | failed |
+|---|---|---|---|---|---|---|---|---|
+| 32 | minfer, session-aware retention | 627 | 94.2% | 959 | 101 / 287 | 10.7 | 376 | 0 |
+|  | vLLM | 654 | 93.9% | 1,005 | 131 / 277 | 8.6 | 403 | 0 |
+|  | SGLang | 653 | 94.1% | 972 | 109 / 317 | 8.9 | 400 | 0 |
+| 64 | minfer, LRU eviction | 1030 | 88.5% | 1,906 | 134 / 1350 | 27.7 | 564 | 0 |
+|  | minfer, session-aware retention | 1074 | 91.0% | 1,496 | 128 / 1245 | 25.5 | 593 | 0 |
+|  | minfer, session-aware retention + 96 GB host tier | 1101 | 94.2% | 962 | 128 / 478 | 25.7 | 604 | 0 |
+|  | vLLM | 1238 | 89.9% | 1,695 | 165 / 875 | 17.6 | 701 | 0 |
+|  | vLLM + native KV offloading (96 GB) | 1272 | 94.1% | 1,002 | 174 / 392 | 16.5 | 717 | 0 |
+|  | SGLang | 1202 | 88.7% | 1,891 | 134 / 1025 | 18.5 | 670 | 0 |
+|  | SGLang + hierarchical cache (96 GB host) | 1264 | 93.8% | 1,053 | 126 / 528 | 16.9 | 729 | 0 |
+| 96 | minfer, LRU eviction | 788 | 55.3% | 6,913 | 1142 / 37006 | 62.9 | 388 | 0 |
+|  | minfer, session-aware retention | 788 | 59.7% | 6,227 | 1204 / 28856 | 69.0 | 398 | 0 |
+|  | minfer, session-aware retention + 96 GB host tier | 1194 | 94.0% | 985 | 266 / 3913 | 46.8 | 641 | 0 |
+|  | vLLM | 1302 | 82.2% | 3,012 | 221 / 1703 | 38.3 | 696 | 0 |
+|  | vLLM + native KV offloading (96 GB) | 1494 | 91.0% | 1,545 | 206 / 1091 | 27.2 | 809 | 0 |
+|  | SGLang | 824 | 50.2% | 8,024 | 410 / 19150 | 42.9 | 406 | 0 |
+|  | SGLang + hierarchical cache (96 GB host) | 1446 | 90.1% | 1,702 | 153 / 1409 | 29.7 | 772 | 0 |
+| 128 | minfer, LRU eviction | 722 | 34.0% | 9,506 | 8607 / 55017 | 77.1 | 319 | 0 |
+|  | minfer, session-aware retention | 736 | 42.5% | 8,287 | 8973 / 45232 | 84.8 | 338 | 0 |
+|  | minfer, session-aware retention + 96 GB host tier | 1183 | 89.5% | 1,655 | 3501 / 14640 | 55.0 | 605 | 0 |
+|  | vLLM | 791 | 35.2% | 9,877 | 2736 / 26787 | 138.8 | 362 | 0 |
+|  | vLLM + native KV offloading (96 GB) | 1484 | 85.0% | 2,472 | 704 / 7278 | 45.4 | 765 | 0 |
+|  | SGLang | 743 | 29.4% | 10,572 | 10280 / 30487 | 135.5 | 333 | 0 |
+|  | SGLang + hierarchical cache (96 GB host) | 1356 | 84.7% | 2,486 | 3071 / 12147 | 45.8 | 694 | 0 |
+<!-- END pressure -->
+
+![KV memory pressure](bench/plots/pressure_7b.png)
+
+What the sweep shows:
+
+- **Below capacity (32 sessions) nothing differs**: all three engines sit at the 94%
+  ceiling.
+- **Without a host tier every engine falls off a cliff** once live KV exceeds GPU memory:
+  at 128 sessions the hit rate is 29–43%, engines prefill 8–11k tokens per call instead of
+  1k, and median time-to-first-token is 3–10 seconds.
+- **Session-aware retention alone is a small, consistent gain** over LRU in the same engine
+  (+2.5 to +8.5 points of hit rate, 10–22% fewer prefill tokens, 8–22% lower TTFT p99) and
+  **does not prevent the collapse**. When the live sessions do not fit, which one is
+  evicted matters little: half of this trace's pauses are under 0.3 s, so every victim is
+  about to return.
+- **A host-memory tier is what decides this workload, for every engine.** With one, all
+  three are back at the ceiling at 64 sessions, at 90–94% at 96 and at 85–90% at 128.
+  Copying a 30,000-token history back from host memory takes 32 ms on this machine;
+  recomputing it takes 928 ms:
+
+<!-- BEGIN host-tier-cost -->
+| history (tokens) | KV (MB) | restore from host (ms) | GB/s | recompute (ms) | recompute / restore |
+|---|---|---|---|---|---|
+| 1,024 | 56 | 1.2 | 44 | 23 | 18× |
+| 4,096 | 224 | 4.8 | 45 | 93 | 19× |
+| 8,192 | 448 | 9.1 | 48 | 193 | 21× |
+| 16,384 | 896 | 17.8 | 49 | 423 | 24× |
+| 30,000 | 1,641 | 31.8 | 50 | 928 | 29× |
+<!-- END host-tier-cost -->
+
+- **With a host tier, vLLM is the fastest system here and minfer the one that recomputes
+  least.** At 96 and 128 sessions minfer computes 33–42% fewer prefill tokens per call
+  than vLLM or SGLang with their offloading (it offloads at every pause and demotes by
+  expected return), and still delivers 0.79× of vLLM's throughput with a higher TTFT at
+  the median and the tail. The cause is not KV management but the decode path described
+  [below](#where-minfer-loses-to-vllm-and-sglang-and-why): on this trace every engine step
+  has prefill work, which is where minfer's two passes per step cost most (per-token
+  latency 1.56× vLLM's at 64 sessions, where both are at the hit-rate ceiling).
+
 ## Results
 
 All numbers below are generated from the JSON files in [`bench/results/`](bench/results) by

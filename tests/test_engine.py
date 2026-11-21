@@ -104,8 +104,8 @@ def test_greedy_matches_dense_oracle(model, oracle):
         {"block_size": 16, "num_blocks": 64},
         {"prefix_cache": False},
         {"prefix_cache": False, "max_batched_tokens": 7},
-        {"unified_batches": False},
-        {"unified_batches": False, "prefill_chunk_tokens": 5},
+        {"unified_batches": True},
+        {"unified_batches": True, "prefill_chunk_tokens": 5},
     ],
     ids=[
         "serial",
@@ -116,8 +116,8 @@ def test_greedy_matches_dense_oracle(model, oracle):
         "block-16",
         "no-cache",
         "no-cache-token-budget",
-        "split-passes",
-        "split-passes-chunked-prefill",
+        "unified-passes",
+        "unified-passes-chunked-prefill",
     ],
 )
 def test_greedy_is_invariant_to_batching(model, oracle, config):

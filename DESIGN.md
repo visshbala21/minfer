@@ -1963,3 +1963,143 @@ first token (one request, chunked prefill off).
   and happens during the pause, off the request path.
 - At 57 KB per token a 96 GB host tier holds 1.8 M tokens, 1.9× what the GPU pool holds at
   7B (963k tokens).
+
+### M-024 KV memory pressure on the real trace: three engines, with and without a host tier (Phase 15 acceptance)
+
+Script: `bench/pressure.py` → `bench/results/pressure_7b.json`, plot
+`bench/plots/pressure_7b.png`. Qwen2.5-7B, the 300-session real trace (D-039) replayed
+closed-loop at 32, 64, 96 and 128 concurrent sessions; a fresh server per run; 360 s of
+load of which the first 120 s (30 s of staggered starts, then warm-up) are not counted; the
+whole GPU for every engine. 0 failed requests in all 24 runs. During the four hours of the
+sweep only documentation and result-rendering code changed in the repository
+(`git diff 558a87f 5848785 -- minfer bench/pressure.py bench/real_traces.py
+bench/servers.py` is empty), which is why the recorded commits differ between rows.
+
+**Capacity.** One session holds 17k tokens of KV at the median call and 26k at its end
+(M-021). GPU KV pools at 7B: minfer 963k tokens, vLLM 1,106k, SGLang 952k — about 55–65
+median sessions. Host tiers, 96 GB each (the most vLLM's native offloading can place in
+this machine's `/dev/shm`): minfer 1.80 M tokens, SGLang 1.67 M, vLLM a 103 GB region.
+vLLM is the baselines' `--kv-offloading-size 96 --kv-offloading-backend native`, SGLang
+`--enable-hierarchical-cache --hicache-size 96`; LMCache is not installed in the pinned
+vLLM environment and was not tried.
+
+| sessions | configuration | calls | hit rate | prefill tokens / call | TTFT p50 / p99 (ms) | TPOT p50 (ms) | out tok/s |
+|---|---|---|---|---|---|---|---|
+| 32 | minfer, session-aware | 627 | 94.2% | 959 | 101 / 287 | 10.7 | 376 |
+| | vLLM | 654 | 93.9% | 1,005 | 131 / 277 | 8.6 | 403 |
+| | SGLang | 653 | 94.1% | 972 | 109 / 317 | 8.9 | 400 |
+| 64 | minfer, LRU | 1,030 | 88.5% | 1,906 | 134 / 1,350 | 27.7 | 564 |
+| | minfer, session-aware | 1,074 | 91.0% | 1,496 | 128 / 1,245 | 25.5 | 593 |
+| | minfer, session-aware + host tier | 1,101 | 94.2% | 962 | 128 / 478 | 25.7 | 604 |
+| | vLLM | 1,238 | 89.9% | 1,695 | 165 / 875 | 17.6 | 701 |
+| | vLLM + KV offloading | 1,272 | 94.1% | 1,002 | 174 / 392 | 16.5 | 717 |
+| | SGLang | 1,202 | 88.7% | 1,891 | 134 / 1,025 | 18.5 | 670 |
+| | SGLang + hierarchical cache | 1,264 | 93.8% | 1,053 | 126 / 528 | 16.9 | 729 |
+| 96 | minfer, LRU | 788 | 55.3% | 6,913 | 1,142 / 37,006 | 62.9 | 388 |
+| | minfer, session-aware | 788 | 59.7% | 6,227 | 1,204 / 28,856 | 69.0 | 398 |
+| | minfer, session-aware + host tier | 1,194 | 94.0% | 985 | 266 / 3,913 | 46.8 | 641 |
+| | vLLM | 1,302 | 82.2% | 3,012 | 221 / 1,703 | 38.3 | 696 |
+| | vLLM + KV offloading | 1,494 | 91.0% | 1,545 | 206 / 1,091 | 27.2 | 809 |
+| | SGLang | 824 | 50.2% | 8,024 | 410 / 19,150 | 42.9 | 406 |
+| | SGLang + hierarchical cache | 1,446 | 90.1% | 1,702 | 153 / 1,409 | 29.7 | 772 |
+| 128 | minfer, LRU | 722 | 34.0% | 9,506 | 8,607 / 55,017 | 77.1 | 319 |
+| | minfer, session-aware | 736 | 42.5% | 8,287 | 8,973 / 45,232 | 84.8 | 338 |
+| | minfer, session-aware + host tier | 1,183 | 89.5% | 1,655 | 3,501 / 14,640 | 55.0 | 605 |
+| | vLLM | 791 | 35.2% | 9,877 | 2,736 / 26,787 | 138.8 | 362 |
+| | vLLM + KV offloading | 1,484 | 85.0% | 2,472 | 704 / 7,278 | 45.4 | 765 |
+| | SGLang | 743 | 29.4% | 10,572 | 10,280 / 30,487 | 135.5 | 333 |
+| | SGLang + hierarchical cache | 1,356 | 84.7% | 2,486 | 3,071 / 12,147 | 45.8 | 694 |
+
+"Hit rate" is the share of prompt tokens the server reported as served from cache; with
+an unlimited cache this trace gives 94.4% (M-021).
+
+**1. Below capacity nothing differs** (32 sessions): 93.9–94.2% for all three, i.e. the
+ceiling.
+
+**2. Without a host tier every engine collapses once live KV exceeds GPU memory**, and it
+is a cliff: minfer's LRU goes from 88.5% at 64 sessions to 55.3% at 96 and 34.0% at 128,
+SGLang 88.7 → 50.2 → 29.4%, vLLM 89.9 → 82.2 → 35.2% (its pool is 15% larger and it drains
+requests faster, which moves its cliff from before 96 to before 128, not away). Past the
+cliff an engine prefills 7–10k tokens per call instead of 1k, median TTFT is measured in
+seconds, and throughput halves.
+
+**3. Session-aware retention alone is a small, consistent gain and does not prevent the
+collapse.** Against LRU in the same engine: hit rate +2.5 / +4.5 / +8.5 points at
+64 / 96 / 128 sessions, prefill tokens per call −22% / −10% / −13%, TTFT p99 −8% / −22% /
+−18%, throughput +5% / +2% / +6%. When the live sessions do not fit, *which* one is evicted
+matters little: on this trace every session comes back within seconds (median pause
+0.26 s), so every victim is the wrong one. Continuum reports much larger gains; its
+design also includes program-level scheduling, which this engine does not have, and its
+models and workloads differ, so the two results are not a like-for-like comparison. On
+this trace, with this policy alone, the honest size of the effect is the numbers above.
+
+**4. A host-memory tier is what decides this workload — for every engine.** minfer with
+its tier is back at the ceiling at 64 and 96 sessions (94.2%, 94.0%) and at 89.5% at 128,
+where the host pool is full as well; throughput is 1.6× and 1.8× that of the same engine
+without it at 96 and 128, TTFT p99 7× and 3× lower. vLLM's and SGLang's own offloading do
+the same for them (throughput 2.1× at 128 for both). At 96 sessions minfer served 748
+requests from host memory in the six-minute run, copying 10 M tokens of KV back.
+
+**5. With a host tier, the baselines match or beat minfer on latency and throughput;
+minfer avoids the most prefill work.**
+
+| with host tier, 64 / 96 / 128 sessions | minfer | vLLM | SGLang |
+|---|---|---|---|
+| hit rate | **94.2 / 94.0 / 89.5%** | 94.1 / 91.0 / 85.0% | 93.8 / 90.1 / 84.7% |
+| prefill tokens per call | **962 / 985 / 1,655** | 1,002 / 1,545 / 2,472 | 1,053 / 1,702 / 2,486 |
+| output tok/s | 604 / 641 / 605 | 717 / **809 / 765** | **729** / 772 / 694 |
+| TTFT p50 (ms) | 128 / 266 / 3,501 | 174 / 206 / **704** | **126 / 153** / 3,071 |
+| TTFT p99 (ms) | 478 / 3,913 / 14,640 | **392 / 1,091 / 7,278** | 528 / 1,409 / 12,147 |
+| TPOT p50 (ms) | 25.7 / 46.8 / 55.0 | **16.5 / 27.2 / 45.4** | 16.9 / 29.7 / 45.8 |
+
+minfer computes 36% fewer prefill tokens per call than vLLM at 96 sessions and 33% fewer
+at 128 (offload at every pause plus session-aware demotion keep more of the history
+reachable), and it still delivers 0.79× of vLLM's throughput at both, with a higher TTFT
+at the median and the tail. The reason is not KV management: it is the decode path of
+M-022. On this trace *every* step has prefill work (a call appends ~950 tokens), so minfer
+pays its two passes per step all the time: TPOT is 1.56× vLLM's at 64 sessions, where
+both engines are at the hit-rate ceiling and KV management plays no part.
+
+**Phase 15 acceptance, honestly.** Plots and results are committed for all three engines
+and the three minfer variants; policy and tradeoffs are D-040 and D-041. The headline the
+plan hoped for — tool-call-aware retention beating recency under pressure — is true and
+small (finding 3). The technique that matters is the host tier, the baselines have it
+too, and with it they are faster than minfer end to end (finding 5).
+
+---
+
+## Phase 16B — Close the decode gap (optional; one item attempted)
+
+### M-025 Unified prefill+decode passes: better at low load, worse at saturation
+
+`--unified-batches`: in a step with both kinds of work, decoding sequences join the ragged
+prefill pass as one-token spans instead of getting a second pass over the weights; prefill
+CUDA graphs are captured for up to 256 spans. On the CPU model the outputs equal the
+oracle under both settings and a mixed step is one pass (`tests/test_engine.py`).
+
+`bench/unified_batches.py` → `bench/results/unified_batches_7b.json`, agent workload at 7B,
+same traces, fresh server per setting:
+
+| | 4 req/s | 16 req/s | "max" |
+|---|---|---|---|
+| split passes: TPOT p50 (ms) | 7.29 | 9.58 | 26.69 |
+| unified: TPOT p50 (ms) | 7.18 | 9.31 | 36.66 |
+| split passes: TTFT p50 (ms) | 53.3 | 57.9 | 106.2 |
+| unified: TTFT p50 (ms) | 47.4 | 55.9 | 141.9 |
+| split passes: output tok/s | 256 | 743 | 1,858 |
+| unified: output tok/s | 257 | 745 | 1,429 |
+
+- **It helps where steps are small** (TPOT −1.5% and −2.8%, TTFT p50 −6 and −2 ms at 4 and
+  16 req/s) **and costs 23% of saturated throughput.** A unified pass serves every decoding
+  sequence through FlashInfer's batch *prefill* kernel as a one-token query over a context
+  of 6–14k tokens; the split design serves them through the Triton decode kernel inside a
+  decode-shaped CUDA graph. With 64 sequences decoding, the second pass over the weights
+  that unification saves is cheaper than what the prefill kernel loses on those rows.
+  (Inferred from the load-dependence; the two kernels were not timed side by side on
+  one-token spans.)
+- **Off by default, kept as an option**, as the plan's ground rules require for a feature
+  that underperforms. Closing the gap this way needs a paged attention kernel that is good
+  at mixed batches — what vLLM's FlashAttention path is — not a rerouting of rows.
+- Items (b) fusing the KV write into the RoPE kernel and (c) further profiling were not
+  attempted: the phase is optional in the revised plan and its first item gave a negative
+  result. The decode gap of M-022 stands.

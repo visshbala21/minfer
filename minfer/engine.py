@@ -94,7 +94,11 @@ class EngineConfig:
             are rounded down to it.
         unified_batches: In a step that has both prefill and decode work, run them as one
             ragged pass — decoding sequences as one-token spans next to the prefill chunks
-            — instead of a prefill pass and a decode pass, each over all the weights.
+            — instead of a prefill pass and a decode pass, each over all the weights. Off
+            by default: measured at 7B it is 2–3% faster per token at low and medium load
+            and 23% slower at saturation, where FlashInfer's prefill kernel serves many
+            one-token spans over long contexts worse than the decode kernel does
+            (DESIGN.md M-025).
         prefill_chunk_tokens: Chunked prefill: while any sequence is decoding, at most this
             many prefill tokens per step, so a long prompt is interleaved with decode steps
             instead of stalling them. ``None`` disables chunking (prefill is bounded by
@@ -157,7 +161,7 @@ class EngineConfig:
     cuda_graphs: bool = True
     prefill_graphs: bool = True
     cuda_graph_batch_sizes: tuple[int, ...] = (1, 2, 4, 8, 16, 32, 64, 128, 256)
-    unified_batches: bool = True
+    unified_batches: bool = False
     prefill_chunk_tokens: int | None = 2048
     prefix_cache: bool = True
     cache_aware_scheduling: bool = True

@@ -520,9 +520,7 @@ def test_prefill_graph_buckets_cover_what_they_claim(engine):
     assert graphs.bucket(2, 767) == (4, 896)
     assert graphs.bucket(2, 766) == (4, 768)
     assert graphs.bucket(1, 1025) is None  # large passes run eagerly
-    # Unified passes carry decoding sequences as one-token spans: up to 256 spans.
-    assert graphs.bucket(40, 100) == (64, 128)
-    assert graphs.bucket(300, 400) is None and graphs.bucket(1, 5000) is None
+    assert graphs.bucket(40, 100) is None and graphs.bucket(1, 5000) is None
     for seqs, tokens in graphs._buckets:
         assert tokens >= seqs
 
@@ -576,3 +574,16 @@ def test_engine_without_prefill_graphs(tokenizer):
     prompts = chat_prompts(tokenizer, 8)
     params = mixed_params(8)
     check_outputs(eager, eager.generate(prompts, params), params)
+
+
+def test_engine_with_unified_batches(tokenizer):
+    """Decoding sequences ride in the ragged prefill pass; graphs cover up to 256 spans."""
+    unified = Engine.from_pretrained(
+        PRIMARY_MODEL,
+        EngineConfig(num_blocks=4096, unified_batches=True, max_batched_tokens=96),
+    )
+    graphs = unified.prefill_graphs
+    assert graphs.bucket(40, 100) == (64, 128) and graphs.bucket(300, 400) is None
+    prompts = chat_prompts(tokenizer, 48)
+    params = mixed_params(48)
+    check_outputs(unified, unified.generate(prompts, params), params)
