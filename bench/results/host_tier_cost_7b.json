@@ -1,0 +1,68 @@
+{
+ "model": "Qwen/Qwen2.5-7B-Instruct",
+ "gpu": "NVIDIA H100 80GB HBM3",
+ "kv_megabytes_per_1k_tokens": 54.6875,
+ "what": "median of 5; restore includes the scatter into the GPU store",
+ "rows": [
+  {
+   "tokens": 1024,
+   "blocks": 64,
+   "megabytes": 56.0,
+   "offload_ms": 1.2981019681319594,
+   "restore_ms": 1.2441300204955041,
+   "recompute_ms": 22.983301023487,
+   "restore_gb_per_s": 43.9564186211176,
+   "offload_gb_per_s": 42.128816797572796,
+   "recompute_tokens_per_s": 44554.087289443676,
+   "recompute_over_restore": 18.473391562670724
+  },
+  {
+   "tokens": 4096,
+   "blocks": 256,
+   "megabytes": 224.0,
+   "offload_ms": 5.0510159926488996,
+   "restore_ms": 4.813462030142546,
+   "recompute_ms": 93.11119996709749,
+   "restore_gb_per_s": 45.44546079934943,
+   "offload_gb_per_s": 43.30811866728641,
+   "recompute_tokens_per_s": 43990.41148054579,
+   "recompute_over_restore": 19.343914916960525
+  },
+  {
+   "tokens": 8192,
+   "blocks": 512,
+   "megabytes": 448.0,
+   "offload_ms": 9.278206038288772,
+   "restore_ms": 9.133948013186455,
+   "recompute_ms": 193.27990902820602,
+   "restore_gb_per_s": 47.89823626852179,
+   "offload_gb_per_s": 47.15351202533657,
+   "recompute_tokens_per_s": 42384.12590935415,
+   "recompute_over_restore": 21.16060971106608
+  },
+  {
+   "tokens": 16384,
+   "blocks": 1024,
+   "megabytes": 896.0,
+   "offload_ms": 17.738664988428354,
+   "restore_ms": 17.76215701829642,
+   "recompute_ms": 422.5807059556246,
+   "restore_gb_per_s": 49.262034959981555,
+   "offload_gb_per_s": 49.327274660793115,
+   "recompute_tokens_per_s": 38771.292132112845,
+   "recompute_over_restore": 23.791069154513902
+  },
+  {
+   "tokens": 30000,
+   "blocks": 1875,
+   "megabytes": 1640.625,
+   "offload_ms": 31.886145006865263,
+   "restore_ms": 31.779190991073847,
+   "recompute_ms": 927.8000129852444,
+   "restore_gb_per_s": 50.415784719394495,
+   "offload_gb_per_s": 50.24667770963042,
+   "recompute_tokens_per_s": 32334.554408415508,
+   "recompute_over_restore": 29.195205543333223
+  }
+ ]
+}

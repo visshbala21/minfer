@@ -38,7 +38,7 @@ from bench import real_traces as rt
 from bench.run_matrix import scrape
 from bench.servers import code_version, launch
 
-HOST_GB = 64
+HOST_GB = 96
 CONCURRENCY = (16, 32, 48, 64, 96)
 
 # "<engine>/<name>": (label, server flags, send session hints)
