@@ -17,7 +17,19 @@ not a wrapper around another serving engine.
 ## Headline result
 
 <!-- BEGIN headline -->
-_Not measured yet._
+On the multi-turn agent workload at 1–16 req/s (Qwen2.5-7B-Instruct, bf16, one H100, greedy, identical traces):
+
+| | minfer | vLLM | SGLang |
+|---|---|---|---|
+| TTFT p50 (ms) | 46–59 | 78–81 | 57–67 |
+| TTFT p99 (ms) | 87–126 | 121–136 | 97–125 |
+| TPOT p50 (ms) | 6.67–9.68 | 6.26–7.88 | 6.27–8.20 |
+| prefix-cache hit rate | 93.0%–93.6% | 92.6%–93.2% | 93.1%–93.7% |
+| saturated output tok/s ("max") | 1858 | 2258 | 2264 |
+| TTFT p50 relative to vLLM | 0.59–0.73× | 1.00× | 0.73–0.82× |
+| TPOT p50 relative to vLLM | 1.06–1.23× | 1.00× | 1.00–1.04× |
+| saturated tok/s relative to vLLM | 0.82× | 1.00× | 1.00× |
+| saturated TTFT p50 / p99 (ms) | 105 / 299 | 161 / 835 | 146 / 338 |
 <!-- END headline -->
 
 The same comparison on the model the engine was developed on (Qwen2.5-1.5B, measured before the
@@ -39,26 +51,26 @@ On the multi-turn agent workload at 1–16 req/s (Qwen2.5-1.5B-Instruct, bf16, o
 | saturated TTFT p50 / p99 (ms) | 83 / 241 | 144 / 570 | 119 / 460 |
 <!-- END headline-1.5b -->
 
-**minfer answers first.** It has the lowest time-to-first-token of the three engines at
-every request rate on the agent workload, at the median and at the 99th percentile, and
-keeps that lead when saturated. All three engines reuse the same share of prompt tokens (hit-rate row) —
-on this workload their prefix caches are equally effective — so the TTFT lead is not a
-better hit rate; it is a shorter path from socket to first token for a request that is
-mostly cache hits. A [fairness audit](#fairness-audit) took that path apart: when clients
-send token ids instead of text, minfer's lead over vLLM is unchanged (16 vs 36 ms) but its
-lead over SGLang shrinks from about 10 ms to about 3 ms, and disappears at the median when
+**minfer answers first.** At 7B it has the lowest median time-to-first-token of the three
+engines at every request rate on the agent workload and when saturated, and the lowest
+99th percentile at every rate but one (16 req/s, where SGLang's is 121 ms against 127 ms).
+All three engines reuse the same share of prompt tokens (hit-rate row) — on this workload
+their prefix caches are equally effective — so the lead is not a better hit rate; it is a
+shorter path from socket to first token for a request that is mostly cache hits. A
+[fairness audit](#fairness-audit), run at 1.5B, took that path apart: when clients send
+token ids instead of text, minfer's lead over vLLM is unchanged (16 vs 36 ms) but its lead
+over SGLang shrinks from about 10 ms to about 3 ms, and disappears at the median when
 saturated. Against SGLang, most of the lead is therefore the HTTP front end (batched
 tokenization off the event loop), not the engine; against vLLM it is the engine path
 (block-sharing admission with no copy, and a CUDA-graph prefill pass for the few hundred
 tokens that are actually new).
 
-**It does not generate fastest.** Per-token latency is behind vLLM at every rate and
-close to SGLang's, and saturated throughput is below both (ratios in the last rows of the
-table). End-to-end latency for a turn comes out about even at low rates and behind at high
-rates. The sections below show exactly where, and why. The audit also found that SGLang
-with its batch tokenizer enabled — a documented flag these tables were measured without —
-reaches 5,780 tok/s saturated, which puts minfer at 0.73× of the best baseline rather than
-the 0.83× shown here.
+**It does not generate fastest, and at 7B the gap widens with load.** Per-token latency is
+5–8% behind both baselines at 1–4 req/s, and at 16 req/s 23% behind vLLM and 18% behind
+SGLang; saturated throughput is 0.82× of either. A turn's end-to-end latency is within 3–4%
+of the best engine at 1–4 req/s (the head start on the first token nearly pays for the
+slower tokens after it) and 15% behind at 16 req/s. See
+[where minfer loses](#where-minfer-loses-to-vllm-and-sglang-and-why).
 
 ## Architecture
 
@@ -147,8 +159,29 @@ SGLang 0.5.23, PyTorch 2.14, FlashInfer 0.7.3.
 **Qwen2.5-7B-Instruct** (baselines with the flags the fairness audit selected):
 
 <!-- BEGIN agent-results -->
-_Not measured yet._
+| rate (req/s) | engine | out tok/s | TTFT p50 (ms) | TTFT p99 (ms) | TPOT p50 (ms) | TPOT p99 (ms) | E2E p50 (ms) | E2E p99 (ms) | prefix hit rate | failed |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | minfer | 88 | **46.4** | **92.1** | 6.67 | 7.95 | 444 | 1489 | 93.6% | 0 |
+|  | vLLM | 88 | 78.2 | 120.5 | **6.26** | **7.09** | 453 | 1451 | 93.2% | 0 |
+|  | SGLang | **89** | 56.8 | 96.6 | 6.27 | 7.34 | **433** | **1408** | **93.7%** | 0 |
+| 2 | minfer | 143 | **51.7** | **87.3** | 6.76 | 7.52 | 470 | 1564 | 93.1% | 0 |
+|  | vLLM | 143 | 80.5 | 124.5 | **6.38** | **6.95** | 475 | 1505 | 92.8% | 0 |
+|  | SGLang | 143 | 60.4 | 104.3 | 6.41 | 7.21 | **455** | **1477** | **93.2%** | 0 |
+| 4 | minfer | 256 | **54.0** | **93.6** | 7.27 | 10.63 | 495 | 1430 | 93.1% | 0 |
+|  | vLLM | 256 | 78.4 | 127.1 | **6.72** | **7.71** | 485 | 1367 | 92.7% | 0 |
+|  | SGLang | **257** | 61.6 | 104.4 | 6.78 | 8.05 | **474** | **1342** | **93.2%** | 0 |
+| 8 | minfer | 415 | **56.9** | **120.6** | 7.88 | 10.67 | 550 | 1750 | 93.0% | 0 |
+|  | vLLM | 417 | 81.1 | 136.4 | **7.01** | **8.83** | 512 | 1603 | 92.6% | 0 |
+|  | SGLang | **418** | 65.0 | 124.7 | 7.19 | 9.26 | 512 | 1603 | **93.1%** | 0 |
+| 16 | minfer | 743 | **59.4** | 126.5 | 9.68 | 13.34 | 637 | 2240 | 93.2% | 0 |
+|  | vLLM | **749** | 81.4 | 136.2 | **7.88** | **10.16** | **555** | **1790** | 92.8% | 0 |
+|  | SGLang | 748 | 67.0 | **121.0** | 8.20 | 11.21 | 561 | 1864 | **93.3%** | 0 |
+| max | minfer | 1858 | **105.2** | **299.0** | 26.86 | 30.84 | 1669 | 5267 | 92.8% | 0 |
+|  | vLLM | 2258 | 161.1 | 835.4 | **19.89** | **23.86** | 1379 | **4078** | 92.5% | 0 |
+|  | SGLang | **2264** | 146.0 | 338.0 | 20.75 | 25.04 | **1368** | 4189 | **92.9%** | 0 |
 <!-- END agent-results -->
+
+![Agent workload, 7B](bench/plots/agent_vs_rate.png)
 
 **Qwen2.5-1.5B-Instruct:**
 
@@ -191,8 +224,29 @@ no think time. A value is bold when it is the best of the three at the printed p
 **Qwen2.5-7B-Instruct:**
 
 <!-- BEGIN sharegpt-results -->
-_Not measured yet._
+| rate (req/s) | engine | out tok/s | TTFT p50 (ms) | TTFT p99 (ms) | TPOT p50 (ms) | TPOT p99 (ms) | E2E p50 (ms) | E2E p99 (ms) | failed |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | minfer | 214 | **21.9** | **49.1** | 6.31 | 6.68 | 1045 | 4909 | 0 |
+|  | vLLM | 214 | 37.6 | 58.9 | 6.21 | **6.53** | 1054 | 4883 | 0 |
+|  | SGLang | 214 | 26.0 | 103.6 | **6.19** | 6.60 | **1033** | **4838** | 0 |
+| 2 | minfer | 424 | **20.7** | **26.9** | 6.37 | 7.06 | 1055 | 4932 | 0 |
+|  | vLLM | 424 | 35.9 | 50.8 | 6.28 | **6.72** | 1057 | 4906 | 0 |
+|  | SGLang | 424 | 29.3 | 42.5 | **6.26** | 7.04 | **1042** | **4898** | 0 |
+| 4 | minfer | 817 | **21.6** | **40.0** | 6.57 | 7.36 | 1076 | 5106 | 0 |
+|  | vLLM | **819** | 34.6 | 55.9 | **6.28** | **6.93** | **1049** | **4891** | 0 |
+|  | SGLang | 818 | 28.5 | 44.0 | 6.44 | 7.31 | 1062 | 5051 | 0 |
+| 8 | minfer | 1665 | **22.2** | **43.9** | 6.99 | 8.93 | 1240 | 5407 | 0 |
+|  | vLLM | **1669** | 38.4 | 63.3 | **6.50** | **7.52** | **1169** | **5061** | 0 |
+|  | SGLang | 1667 | 30.8 | 45.9 | 6.77 | 8.47 | 1196 | 5263 | 0 |
+| 16 | minfer | 3088 | **23.6** | **49.2** | 7.96 | 10.71 | 1242 | 6168 | 0 |
+|  | vLLM | **3106** | 47.8 | 82.2 | **6.82** | **7.73** | **1084** | **5397** | 0 |
+|  | SGLang | 3098 | 36.4 | 55.2 | 7.66 | 10.76 | 1193 | 5974 | 0 |
+| max | minfer | 12151 | 4248.7 | 10437.8 | 15.29 | **21.00** | 7616 | 15302 | 0 |
+|  | vLLM | **14737** | 3480.3 | 7599.9 | **12.50** | 23.88 | **6462** | **12532** | 0 |
+|  | SGLang | 14008 | **3278.5** | **3394.7** | 33.12 | 136.83 | 8102 | 13749 | 0 |
 <!-- END sharegpt-results -->
+
+![ShareGPT, 7B](bench/plots/sharegpt_vs_rate.png)
 
 **Qwen2.5-1.5B-Instruct:**
 
@@ -279,30 +333,30 @@ What the audit changed:
 
 minfer is behind in three places, all visible in the tables above.
 
-1. **Time per output token, at every rate.** A decode step is a replayed CUDA graph whose
-   cost at small batch sizes is the number of kernels it launches. Phase 11 cut that to
-   about a third (profile table below), which closed most of what was a 2× gap, but vLLM
-   compiles the model with `torch.compile` and SGLang uses a longer list of fused
-   operators, and both still launch fewer. What remains in minfer's step: the K/V write
-   (two scatter kernels per layer), the unmerged output projections, and host work in the
-   scheduler and radix tree.
-2. **Saturated throughput on the agent workload.** With 64 sessions running flat out,
-   almost every engine step both admits a request and decodes. minfer runs those as two
-   passes over the weights (a ragged prefill pass and a fixed-shape decode pass — the
-   design that makes the decode graphs simple); vLLM runs one mixed batch. Large prefill
-   passes also still run eagerly rather than from a graph.
-3. **Queueing at extreme concurrency on ShareGPT.** With every request submitted at once
-   ("max") minfer has the highest throughput and the lowest per-token latency, but the
-   worst median TTFT of the three: it caps the number of running sequences and queues the
-   rest,
-   where the other engines admit more requests at once and pay for it in per-token latency
-   instead. That is a default (`--max-num-seqs`), not a measured optimum.
+1. **Time per output token, at every rate, and more so under load at 7B.** At 1.5B a
+   decode step was bound by the number of kernels it launches, and Phase 11 closed most of
+   a 2× gap by fusing them. At 7B the matmuls dominate, and the gap grows with the request
+   rate: 6% at 1 req/s, 23% at 16 req/s. The likely cause — consistent with that
+   load-dependence, but not isolated by a measurement at 7B — is the structural difference
+   that is left: in a step that has both prefill and decode work, minfer runs two passes
+   over 15 GB of weights (a ragged prefill pass and a fixed-shape decode pass, the design
+   that keeps the decode graphs simple) where vLLM runs one mixed batch, and the busier
+   the server, the more steps are mixed.
+2. **Saturated throughput on the agent workload: 0.82× of both baselines at 7B**,
+   presumably for the same reason: with 64 sessions running flat out almost every step is
+   mixed. Prefill passes above 1,024 tokens also still run eagerly rather than from a graph.
+3. **Throughput at extreme concurrency on ShareGPT at 7B.** With 1,000 requests submitted
+   at once vLLM and SGLang deliver 14–15k tok/s and minfer 12k, and minfer's median TTFT is
+   the worst of the three (4.2 s against 3.3–3.5 s): it caps the number of running
+   sequences at 256 and queues the rest. At 1.5B the same cap gave it the highest
+   throughput; at 7B it does not. That is a default (`--max-num-seqs`), not a measured
+   optimum.
 
-Two more caveats belong here. The comparison is one model (1.5B parameters) on one GPU: a
-larger model shifts time from kernel launches to matmuls, where none of minfer's
-advantages or disadvantages above necessarily hold. And the agent traces use scripted
-assistant turns so that every engine sees identical prompts; a live agent loop re-sends
-the model's own output, which this benchmark cannot credit any engine for caching.
+Unifying the two passes was the next item of the original plan; the plan was revised to
+study KV management on real traces first (below), and the decode path is as it was at
+Phase 12. One more caveat: the agent traces use scripted assistant turns so that every
+engine sees identical prompts; a live agent loop re-sends the model's own output, which
+this benchmark cannot credit any engine for caching.
 
 ### Ablations
 

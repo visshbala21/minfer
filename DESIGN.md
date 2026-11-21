@@ -1698,16 +1698,78 @@ structure, and TraceLab supplies tool-call pause durations, sampled per tool nam
   and a blocked event loop reads no results. It had survived every earlier run by timing:
   at 1.5B an engine step is a third as long, so the engine drained commands three times as
   often.
-- **Fix.** Commands are queued and written by a dedicated thread
-  (`AsyncEngine._write_commands`); the event loop never touches the command pipe and
-  therefore always gets back to reading results. Regression test
+- **Fix.** The command pipe is non-blocking on the front end's side
+  (`AsyncEngine._send`/`_flush`): whatever a write cannot take is buffered and flushed when
+  the pipe becomes writable, framed exactly as `Connection.send` frames it so the engine
+  still reads with `recv`. The event loop therefore never blocks on the pipe and always
+  gets back to reading results. (A first version used a dedicated writer thread; it was
+  replaced before any result was kept, to rule out GIL contention while chasing B-008.)
+  Regression test
   `test_commands_sent_while_results_are_backed_up_do_not_deadlock`: it backs the results
   pipe up, then submits 500 KB of commands; it hangs on the old code (verified: killed by a
   90 s time limit) and passes with the fix.
 - **Consequence for the numbers.** None of the published 1.5B results came from a
   deadlocked run (a deadlock cannot produce a result), but minfer's ShareGPT "max" rows were
-  one unlucky interleaving away from not existing. The 7B matrix was restarted once more
-  from scratch on the fixed code, so that all of minfer's rows come from one commit.
+  one unlucky interleaving away from not existing. minfer's 7B rows were measured again on
+  the fixed code, so that all of them come from one commit.
+
+### B-008 Score-based eviction rescanned the whole cache on every call (fixed)
+
+- **Symptom.** With session-aware retention on by default, minfer's 7B matrix rows at high
+  load got worse from one commit to the next (agent "max" 1,663 → 1,535 tok/s; ShareGPT at
+  16 req/s TPOT 10.7 → 13.3 ms) although no request in those workloads names a session.
+- **Isolation.** First suspect was the writer thread of B-007's first fix (GIL contention);
+  replacing it with non-blocking writes changed nothing (1,529 tok/s), so it was not that.
+  A/B on identical traces with a fresh server: `--eviction-policy lru` 1,874 tok/s,
+  `session` 1,704 tok/s.
+- **Root cause.** `PrefixCache._evict_by_score` walks every node and sorts every leaf per
+  call, and it is called with the handful of blocks a decode step is short of — several
+  times per engine step once the cache is full, which at 7B (1.0 M tokens of KV, 6–14k per
+  session) is after about a hundred sessions. In the full matrix the cache holds a few
+  thousand leaves by the time the high rates run.
+- **Fix.** One scoring pass frees at least 1/256 of the pool (249 blocks at 7B), so passes
+  are rare; and the pause predictor answers `E[pause − elapsed | pause > elapsed]` from
+  sorted pauses with suffix sums (a binary search) instead of a scan of 512 samples per
+  leaf. Same A/B afterwards: 1,869 tok/s, equal to LRU.
+- **What it cost in rigor.** The 7B matrix was measured five times before its minfer rows
+  came from code without a known defect (B-006, B-007 twice, B-008). Only the last is
+  committed; the earlier result files are kept out of the repository.
+
+### M-022 The three-engine matrix at 7B (Phase 14 acceptance)
+
+`bench/results/matrix_7b/*.json` (`python -m bench.run_matrix --model 7b`), plots
+`bench/plots/{agent,sharegpt}_vs_rate.png`. Qwen2.5-7B-Instruct, bf16, one H100; baselines
+with the flags of M-020 (vLLM: access log off; SGLang: dynamic batch tokenizer); 0 failed
+requests in every run. minfer's rows are from commit 9b0010f, measured after the
+baselines' rows in a separate invocation on the same idle machine (B-008). minfer's fp32
+logits match transformers at 7B to 2.3e-4 (`bench/results/model_numerics_7b.json`).
+
+| agent workload | minfer | vLLM | SGLang |
+|---|---|---|---|
+| TTFT p50, 1–16 req/s (ms) | 46–59 | 78–81 | 57–67 |
+| TTFT p99, 1–16 req/s (ms) | 87–126 | 121–136 | 97–125 |
+| TPOT p50, 1–16 req/s (ms) | 6.67–9.68 | 6.26–7.88 | 6.27–8.20 |
+| E2E p50, 1–16 req/s (ms) | 444–637 | 453–555 | 433–561 |
+| "max": output tok/s | 1,858 | 2,258 | 2,264 |
+| "max": TTFT p50 / p99 (ms) | 105 / 299 | 161 / 835 | 146 / 338 |
+| "max": TPOT p50 (ms) | 26.9 | 19.9 | 20.8 |
+
+- **TTFT: minfer leads at the median at every rate and at saturation**, by 22–32 ms over
+  vLLM and 8–10 ms over SGLang; at the 99th percentile it leads everywhere except 16 req/s
+  (126.5 ms vs SGLang's 121.0 ms).
+- **TPOT: behind at every rate, and the gap grows with load** — 1.06× of vLLM at 1 req/s,
+  1.12× at 8, 1.23× at 16, 1.35× at "max". At 1.5B the gap was 1.06–1.24× with no such
+  trend at low rates.
+- **Saturated throughput: 0.82× of both** (1.5B: 0.83× of vLLM).
+- **ShareGPT:** TTFT p50 21–24 ms vs 35–48 (vLLM) and 26–36 (SGLang) at 1–16 req/s; TPOT
+  p50 6.31–7.96 vs 6.21–6.82 and 6.19–7.66 ms. With 1,000 requests at once: 12.2k /
+  14.7k / 14.0k output tok/s and median TTFT 4.2 / 3.5 / 3.3 s — at 7B minfer no longer has
+  the highest burst throughput it had at 1.5B.
+- **What scaling the model changed.** The TTFT lead is intact: minfer's median is
+  0.59–0.73× of vLLM's and 0.82–0.89× of SGLang's at 1–16 req/s.
+  The decode gap, which at 1.5B was a matter of kernel counts, did not close with a model
+  whose steps are matmul-bound; it became load-dependent instead. Not isolated by
+  measurement: whether the two passes of a mixed step (D-013) account for all of it.
 
 ---
 
