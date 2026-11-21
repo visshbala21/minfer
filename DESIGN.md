@@ -2179,3 +2179,67 @@ are compared with the exact prefill's at 4,679 positions.
   0.8% of prompt tokens (M-021). The saving is about a thousand tokens of prefill — some
   25 ms at 7B (M-023) — once per session, paid for with the approximation above for the
   rest of the session. The composition study measures it end to end.
+
+---
+
+## Phase 16 — Making speculative decoding pay off
+
+### D-043 Verification in a CUDA graph; one pass per speculative step; per-request pausing
+
+- **Why Phase 7's speculation lost** (M-010): a verification span needs the prediction of
+  every row, which the captured prefill graphs (one row per span) did not give, so it ran
+  in the eager prefill pass — and the sequences without a draft took a second, decode pass.
+- **`VerifyGraphs`** (`minfer/attention/prefill_graphs.py`) captures the pass at shapes
+  `(S, S·m)` for S ∈ {2 … 256} spans and m = 1 … 1 + `num_draft_tokens`, applies the
+  unembedding to *every* row and takes the argmax inside the graph, so only token ids
+  leave the device. Greedy sequences that have no draft this step ride along as one-token
+  spans: a speculative step is one graph replay instead of an eager pass plus a decode
+  replay. Sampling requests still need full distributions and fall back to the eager pass.
+- **Adaptive draft length, with an off switch per request.** The draft length still doubles
+  after a fully accepted draft and falls to `accepted + 1` after a rejection (D-029). New:
+  a running acceptance average per request (`0.7·old + 0.3·accepted/drafted`); below
+  `--draft-min-acceptance` (0.3) nothing is drafted for that request for
+  `--draft-cooldown-steps` (32) decode steps, then it starts again at one token.
+- **Greedy outputs are unchanged by construction**: the accept rule is the same, fed with
+  the same argmaxes. On the CPU float32 model outputs with speculation equal the oracle
+  for scripted drafts of any quality and with pausing (`tests/test_speculation.py`, 35
+  tests); on the GPU the bf16 near-tie caveat of M-010 applies as before.
+
+### M-027 Speculation through the server at 7B (Phase 16 acceptance)
+
+Script: `bench/speculation_serve.py` → `bench/results/speculation_serve_7b.json`. A fresh
+`minfer serve` per configuration, the matrix's agent traces at 1, 4 and 8 req/s, greedy.
+
+| configuration | TPOT p50 (ms) at 1 / 4 / 8 req/s | vs off | TPOT p99 (ms) | E2E p50 (ms) | drafts accepted | output from drafts |
+|---|---|---|---|---|---|---|
+| no speculation | 6.63 / 7.26 / 7.88 | — | 7.8 / 9.0 / 12.3 | 441 / 493 / 545 | — | — |
+| n=3, ≤ 4 drafted | 5.76 / 6.84 / 8.21 | 0.87× / 0.94× / 1.04× | 8.8 / 13.1 / 16.8 | 391 / 472 / 596 | 62–64% | 24–28% |
+| n=2, ≤ 4 drafted | 5.91 / 6.99 / 9.01 | 0.89× / 0.96× / 1.14× | 8.7 / 13.5 / 17.0 | 401 / 498 / 635 | 54–55% | 23–26% |
+| n=4, ≤ 4 drafted | 6.03 / 6.81 / 8.52 | 0.91× / 0.94× / 1.08× | 8.6 / 13.0 / 17.0 | 387 / 488 / 609 | 64–67% | 21–26% |
+| **n=3, ≤ 8 drafted** | **5.71 / 6.71 / 7.93** | **0.86× / 0.92× / 1.01×** | 8.6 / 12.7 / 16.2 | 384 / 463 / 570 | 52–54% | 26–29% |
+| n=5, ≤ 8 drafted | 5.96 / 6.77 / 8.09 | 0.90× / 0.93× / 1.03× | 8.6 / 13.0 / 15.7 | 386 / 457 / 587 | 55–58% | 22–25% |
+| n=3, ≤ 4, never paused | 5.59 / 6.72 / 8.27 | 0.84× / 0.93× / 1.05× | 8.8 / 12.9 / 16.9 | 389 / 474 / 594 | 61–63% | 25–29% |
+| n=3, ≤ 4, eager verification (Phase 7) | 6.34 / 8.36 / 11.17 | 0.96× / 1.15× / 1.42× | 11.6 / 17.4 / 20.7 | 422 / 619 / 774 | 62–63% | 24–28% |
+
+- **The target is met at low and medium rates, not beyond.** With the best setting (n=3,
+  up to 8 drafted tokens) median TPOT is 14% lower than without speculation at 1 req/s and
+  8% lower at 4 req/s; at 8 req/s it is level (+1%). End-to-end latency of a turn follows:
+  −13%, −6%, +5%.
+- **The graph is what made the difference.** The same drafts verified eagerly (last row;
+  Phase 7's design) are 4% faster at 1 req/s and 15% and 42% *slower* at 4 and 8.
+- **The tail gets worse in every speculative configuration**: TPOT p99 8.6–8.8 ms against
+  7.8 at 1 req/s, 13 against 9 at 4, 16–17 against 12 at 8. A request whose drafts are
+  rejected pays for verification rows that produced nothing, and a verification pass with
+  many rows delays every stream in that step.
+- **Why the gain fades with load.** A quarter of the output tokens come from drafts
+  (24–29%), so a stream needs about 25% fewer steps; but a step with drafts carries up to
+  nine rows per sequence instead of one, and at 7B a step's cost follows its rows. At
+  1 req/s steps are nearly empty and the extra rows are free; at 8 req/s they are not.
+- **Tuning.** n=3 is the best n-gram size at draft length 4 (n=2 accepts less: 54% vs 62%;
+  n=4 and 5 accept more of fewer drafts). Longer drafts (8) help a little at every rate.
+  Pausing made no measurable difference on this workload (never-paused: 0.84× / 0.93× /
+  1.05×): prompt lookup only drafts when it finds a match, so requests with persistently
+  bad drafts are rare here.
+- **Still off by default.** It is a latency feature for lightly loaded servers that costs
+  tail latency, and it changes nothing for sampling requests' graphs. Recommended setting
+  when on: `--speculation ngram --ngram-size 3 --num-draft-tokens 8`.

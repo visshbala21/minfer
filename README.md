@@ -646,18 +646,35 @@ greedy:
 | sharegpt | draft model | 9809 | 0.27× | 14.89 | 366.2 | 66% | 83/256 |
 <!-- END speculation -->
 
-Speculation is implemented correctly and is **a net slowdown on this engine**, so it is
-off by default. Most drafted tokens are accepted and steps emit about twice as many tokens,
-but a verification span has to run through the eager prefill pass (it needs logits for
-every drafted position, which the captured graphs do not provide), and one eager pass
-costs more than the few graph-replayed decode steps it replaces. The draft model adds its
-own passes on top. In the saturated engine-level run above, prompt lookup does lower the
-*median* time per token on the agent workload — agent outputs really do copy from their
-prompts — at the cost of total throughput; through the server at moderate load it raises
-both (ablation table). Capturing the verification pass in a graph is the missing piece; it
-was not done. "Outputs identical to off" is below 100% because bf16 argmax near-ties flip when the
-same position is evaluated by a different kernel (see Correctness); on the CPU in float32
-the outputs are exactly identical for any draft.
+That table is the Phase 7 design, in which a verification span ran through the eager
+prefill pass: most drafts are accepted, steps emit twice as many tokens, and it is still a
+net slowdown. Verification is now replayed from a CUDA graph that returns every row's
+argmax, with the sequences that have no draft riding in the same pass. Through the server
+at 7B on the agent workload ([`bench/speculation_serve.py`](bench/speculation_serve.py)):
+
+<!-- BEGIN speculation-serve -->
+| configuration | TPOT p50 at 1 req/s (ms) | TPOT p50 at 4 req/s (ms) | TPOT p50 at 8 req/s (ms) | E2E p50 at 1 req/s (ms) | E2E p50 at 4 req/s (ms) | E2E p50 at 8 req/s (ms) | drafted tokens accepted | output tokens from drafts |
+|---|---|---|---|---|---|---|---|---|
+| no speculation | 6.63 (1.00×) | 7.26 (1.00×) | 7.88 (1.00×) | 441 | 493 | 545 | — | — |
+| prompt lookup, n=3, up to 4 drafted | 5.76 (0.87×) | 6.84 (0.94×) | 8.21 (1.04×) | 391 | 472 | 596 | 62–64% | 24–28% |
+| prompt lookup, n=2, up to 4 drafted | 5.91 (0.89×) | 6.99 (0.96×) | 9.01 (1.14×) | 401 | 498 | 635 | 54–55% | 23–26% |
+| prompt lookup, n=4, up to 4 drafted | 6.03 (0.91×) | 6.81 (0.94×) | 8.52 (1.08×) | 387 | 488 | 609 | 64–67% | 21–26% |
+| prompt lookup, n=3, up to 8 drafted | 5.71 (0.86×) | 6.71 (0.92×) | 7.93 (1.01×) | 384 | 463 | 570 | 52–54% | 26–29% |
+| prompt lookup, n=5, up to 8 drafted | 5.96 (0.90×) | 6.77 (0.93×) | 8.09 (1.03×) | 386 | 457 | 587 | 55–58% | 22–25% |
+| prompt lookup, n=3, up to 4 drafted, never paused | 5.59 (0.84×) | 6.72 (0.93×) | 8.27 (1.05×) | 389 | 474 | 594 | 61–63% | 25–29% |
+| prompt lookup, n=3, up to 4 drafted, eager verification (Phase 7) | 6.34 (0.96×) | 8.36 (1.15×) | 11.17 (1.42×) | 422 | 619 | 774 | 62–63% | 24–28% |
+<!-- END speculation-serve -->
+
+With prompt lookup (n=3, up to 8 drafted tokens) the median time per output token is 14%
+lower than without speculation at 1 req/s and 8% lower at 4 req/s, and level at 8 req/s.
+The last row is the same drafts verified the old way: slower than no speculation at 4 and
+8 req/s. Two costs remain: the 99th-percentile TPOT is worse in every speculative
+configuration (a rejected draft pays for rows that produced nothing), and the gain fades
+as load rises, because a step with drafts carries several rows per sequence and at 7B a
+step costs what its rows cost. It stays off by default. "Outputs identical to off" in the
+engine-level table is below 100% because bf16 argmax near-ties flip when the same position
+is evaluated by a different kernel (see Correctness); on the CPU in float32 the outputs are
+exactly identical for any draft.
 
 **FP8** ([`bench/gsm8k.py`](bench/gsm8k.py)): GSM8K accuracy on the first 200 test
 problems (standard error ±3.3 points), KV capacity in the same memory budget, weight
