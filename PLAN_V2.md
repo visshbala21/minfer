@@ -52,3 +52,12 @@ Reuse KV for identical content (file contents, repeated tool outputs) that reapp
 
 ## Phase 17 (revised) — Composition study (HEADLINE)
 On real traces at 7B under realistic memory pressure, run the full factorial of {prefix cache, TTL retention, host-memory tier, position-independent reuse, prompt-lookup speculation} where combinations are valid. Report: prefill tokens saved, TTFT p50/p99, TPOT, throughput, quality metrics. Produce a waterfall/decomposition chart of savings and an interaction table (which techniques compound, which compete for KV memory). Compare against vLLM and SGLang with their best options, and vllm-continuum if installable. README leads with the composition findings.
+
+## Phase 18 — Close the decode gap + agent task completion time (FINAL)
+Venvs under /opt/venvs were lost with the old pod; rebuild with scripts/setup_envs.sh first.
+1. Merge wip-16b if sound (re-run its tests), else discard and document why.
+2. Close the decode gap at 7B (cap ~8h): profile vs vLLM, fix, before/after per change. Target TPOT within 5% of vLLM at 1-16 req/s.
+3. NEW METRIC — agent job completion time (JCT), as used by Continuum: replay whole real-trace sessions (all turns + real tool pauses) and measure per-session end-to-end completion time (p50/p90/p99) for minfer full-stack, vLLM and SGLang (best configs, host tiers on), at low / medium / high concurrency including under memory pressure.
+4. Re-run the pressure sweep AND the JCT benchmark THREE times per engine. Report medians and min/max. README tables use medians, never best-of-n.
+5. README headline: lead with the strongest median result that is a genuine win (JCT, prefill compute saved, engine-level TTFT, or throughput), stated with its exact workload and conditions. If none, say so.
+ACCEPTANCE: decode before/after committed; 3x JCT + pressure results for all engines committed; README from medians; CI green.
