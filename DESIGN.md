@@ -1933,3 +1933,33 @@ switched off, measured on the same real trace next to the baselines' own offload
   oracle and the tree/pool invariants after every step. On the GPU, an evicted and restored
   session continues bit-for-bit as it does in an engine with room for everything
   (`tests/test_host_tier.py`): restored KV *is* the KV that was computed.
+
+### M-023 Restoring KV from host memory vs recomputing it
+
+Script: `bench/host_tier_cost.py` → `bench/results/host_tier_cost_7b.json`. Qwen2.5-7B,
+bf16, one H100 on PCIe 5.0 x16, pinned host memory; median of 5. *Restore* is timed from
+the request to the blocks being usable (side-stream copy, completion event, scatter into
+the store); *recompute* is the engine prefilling the same number of uncached tokens to its
+first token (one request, chunked prefill off).
+
+  | tokens | KV (MB) | offload (ms) | restore (ms) | restore GB/s | recompute (ms) | recompute tok/s | recompute / restore |
+  |---|---|---|---|---|---|---|---|
+  | 1,024 | 56 | 1.3 | 1.2 | 44 | 23 | 44.6k | 18× |
+  | 4,096 | 224 | 5.1 | 4.8 | 45 | 93 | 44.0k | 19× |
+  | 8,192 | 448 | 9.3 | 9.1 | 48 | 193 | 42.4k | 21× |
+  | 16,384 | 896 | 17.7 | 17.8 | 49 | 423 | 38.8k | 24× |
+  | 30,000 | 1,641 | 31.9 | 31.8 | 50 | 928 | 32.3k | 29× |
+
+- **A copy is 18–29× cheaper than a prefill**, and the ratio grows with the history: the
+  copy scales with bytes at 44–50 GB/s, the prefill's attention is quadratic in context
+  (44k tokens/s at 1k, 32k tokens/s at 30k). A 30,000-token history comes back in 32 ms
+  instead of 928 ms.
+- **So "choose per session" has a simple answer on this hardware:** restore whenever a
+  copy exists. The crossover is not in the measured range; the only reason to recompute is
+  latency quantization — a restore is noticed at the next engine step, so for a handful of
+  blocks a prefill in that same step is as fast. That is `--min-restore-blocks` (8 blocks,
+  128 tokens, about 3 ms of prefill).
+- **Offload costs the same as restore** (it is the same bytes), 1.3 ms per 1,024 tokens,
+  and happens during the pause, off the request path.
+- At 57 KB per token a 96 GB host tier holds 1.8 M tokens, 1.9× what the GPU pool holds at
+  7B (963k tokens).
