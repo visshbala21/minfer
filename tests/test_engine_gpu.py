@@ -621,14 +621,88 @@ def test_engine_without_prefill_graphs(tokenizer):
     check_outputs(eager, eager.generate(prompts, params), params)
 
 
-def test_engine_with_unified_batches(tokenizer):
-    """Decoding sequences ride in the ragged prefill pass; graphs cover up to 256 spans."""
-    unified = Engine.from_pretrained(
-        PRIMARY_MODEL,
-        EngineConfig(num_blocks=4096, unified_batches=True, max_batched_tokens=96),
+def test_joint_pass_matches_separate_kernels(engine):
+    """A joint pass against the same batch through the prefill kernel alone.
+
+    Its prefill rows take the same kernel and are bit-identical; its decode rows take the
+    decode kernel and differ by bf16 noise (0.22 logits here; either path is 0.2–0.35 from
+    the float32-statistics reference attention).
+    """
+    from minfer.attention.flashinfer_backend import FlashInferBackend
+    from minfer.attention.paged import SequenceSpan, build_paged_batch
+    from minfer.cache.kv_store import PagedKVStore
+
+    model, size = engine.model, 16
+    config = model.config
+    store = PagedKVStore(
+        config.num_layers, 200, size, config.num_kv_heads, config.head_dim, "cuda", model.dtype
     )
-    graphs = unified.prefill_graphs
-    assert graphs.bucket(40, 100) == (64, 128) and graphs.bucket(300, 400) is None
-    prompts = chat_prompts(tokenizer, 48)
-    params = mixed_params(48)
-    check_outputs(unified, unified.generate(prompts, params), params)
+    backend = FlashInferBackend(store, config.num_heads)
+    generator = torch.Generator().manual_seed(3)
+
+    def tokens(count: int) -> list[int]:
+        return torch.randint(1000, 90_000, (count,), generator=generator).tolist()
+
+    # Four contexts, prefilled; then a pass that extends the first two by chunks and
+    # decodes one token for each of the other two.
+    tables = [list(range(1 + 40 * i, 41 + 40 * i)) for i in range(4)]
+    first = [SequenceSpan(tokens(n), 0, tables[i]) for i, n in enumerate((70, 5, 300, 1))]
+    spans = [
+        SequenceSpan(tokens(37), 70, tables[0]),
+        SequenceSpan(tokens(120), 5, tables[1]),
+        SequenceSpan(tokens(1), 300, tables[2]),
+        SequenceSpan(tokens(1), 1, tables[3]),
+    ]
+    logits = []
+    with torch.inference_mode():
+        for joint in (True, False):
+            batch = build_paged_batch(first, size, model.device)
+            model(batch.token_ids, batch.positions, backend.prefill(batch))
+            batch = build_paged_batch(spans, size, model.device)
+            context = backend.joint(batch, 2) if joint else backend.prefill(batch)
+            hidden = model(batch.token_ids, batch.positions, context)
+            logits.append(model.logits(hidden).float())
+    assert torch.equal(logits[0][:-2], logits[1][:-2])
+    assert 0.0 < (logits[0][-2:] - logits[1][-2:]).abs().max().item() < 0.6
+    assert torch.equal(logits[0][-2:].argmax(-1), logits[1][-2:].argmax(-1))
+
+
+def test_engine_with_unified_batches(tokenizer):
+    """Mixed steps run one joint pass, from a captured graph when a shape fits."""
+    outputs = {}
+    for graphs in (True, False):
+        unified = Engine.from_pretrained(
+            PRIMARY_MODEL,
+            EngineConfig(
+                num_blocks=4096, unified_batches=True, max_batched_tokens=96, cuda_graphs=graphs
+            ),
+        )
+        joint = unified.joint_graphs
+        assert (joint is not None) is graphs
+        if graphs:
+            assert joint.bucket(3, 100, 40) == (8, 128, 64)
+            assert joint.bucket(2, 64, 1) == (2, 64, 2)
+            assert joint.bucket(3, 1500, 4) is None and joint.bucket(40, 100, 4) is None
+        calls = {"graph": 0, "eager": 0}
+        if graphs:
+            run_graph = joint.run
+
+            def counted_graph(*args, calls=calls, run=run_graph):
+                calls["graph"] += 1
+                return run(*args)
+
+            joint.run = counted_graph
+        run_eager = unified.backend.joint
+
+        def counted_eager(*args, calls=calls, run=run_eager):
+            calls["eager"] += 1
+            return run(*args)
+
+        unified.backend.joint = counted_eager
+        prompts = chat_prompts(tokenizer, 48)
+        params = mixed_params(48)
+        outputs[graphs] = unified.generate(prompts, params)
+        check_outputs(unified, outputs[graphs], params)
+        assert calls["graph" if graphs else "eager"] > 0
+        del unified, joint
+        torch.cuda.empty_cache()

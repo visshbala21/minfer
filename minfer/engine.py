@@ -335,13 +335,22 @@ class Engine:
         ):
             from minfer.attention.prefill_graphs import PrefillGraphs
 
-            # A unified pass carries every decoding sequence as a span of its own.
-            limit = config.max_num_seqs if config.unified_batches else 32
             self.prefill_graphs = PrefillGraphs(
                 model,
                 self.store,
                 self.backend.workspace,
-                sequence_buckets=[s for s in (2, 4, 8, 16, 32, 64, 128, 256) if s <= max(limit, 2)],
+                max_pages_per_sequence=self.blocks.blocks_for(self.max_model_len),
+            )
+        self.joint_graphs = None
+        if self.prefill_graphs is not None and config.unified_batches:
+            from minfer.attention.joint_graphs import DEFAULT_DECODE_SIZES, JointGraphs
+
+            sizes = {min(size, config.max_num_seqs) for size in DEFAULT_DECODE_SIZES}
+            self.joint_graphs = JointGraphs(
+                model,
+                self.store,
+                self.backend.workspace,
+                decode_sizes=sorted(sizes),
                 max_pages_per_sequence=self.blocks.blocks_for(self.max_model_len),
             )
         self.retention = None
@@ -652,13 +661,10 @@ class Engine:
             decode, verify = self._run_verify_graph(decode, verify, emitted)
         verify_logits = None
         prefill = plan.prefill
-        if self.config.unified_batches and prefill and decode:
-            # One pass over the weights for the whole step: a decoding sequence is a span
-            # of one pending token, exactly like a prefill chunk that completes its prompt.
-            prefill = [*prefill, *((seq, 1) for seq in decode)]
-            self.stats.prefill_tokens -= len(decode)
-            self.stats.decode_tokens += len(decode)
-            decode = []
+        if self.config.unified_batches and prefill and decode and not verify:
+            # One pass over the weights for the whole step.
+            self._run_joint(prefill, decode, sampled, rows)
+            prefill, decode = [], []
         if prefill or verify:
             verify_logits = self._run_prefill(prefill, verify, sampled, rows)
         if decode:
@@ -774,19 +780,7 @@ class Engine:
         any): a span of the pending token plus ``k`` drafted tokens yields ``k + 1`` rows,
         row ``i`` being the model's prediction after ``i`` drafted tokens.
         """
-        spans = []
-        last_rows = []
-        offset = 0
-        for seq, count in prefill:
-            start = seq.num_cached
-            table = self.blocks.table(seq.seq_id)
-            spans.append(SequenceSpan(seq.tokens[start : start + count], start, table))
-            offset += count
-            if count == seq.num_pending:
-                sampled.append(seq)
-                last_rows.append(offset - 1)
-            seq.num_cached = start + count
-        self.stats.prefill_tokens += offset
+        spans, last_rows, offset = self._prefill_spans(prefill, sampled)
         verify_start = offset
         for seq, draft in verify:
             table = self.blocks.table(seq.seq_id)
@@ -812,12 +806,7 @@ class Engine:
         self, decode: list[Sequence], sampled: list[Sequence], rows: list[Tensor]
     ) -> None:
         """Decode pass: one token per sequence, logits for every row."""
-        spans = []
-        for seq in decode:
-            spans.append(
-                SequenceSpan(seq.tokens[-1:], seq.num_cached, self.blocks.table(seq.seq_id))
-            )
-            seq.num_cached += 1
+        spans = self._decode_spans(decode)
         graphs = self.decode_graphs
         if graphs is not None and len(spans) <= graphs.max_batch_size:
             logits = graphs.run(spans)
@@ -825,9 +814,70 @@ class Engine:
             batch = build_paged_batch(spans, self.config.block_size, self.device)
             hidden = self.model(batch.token_ids, batch.positions, self.backend.decode(batch))
             logits = self.model.logits(hidden)
-        self.stats.decode_tokens += len(spans)
         sampled.extend(decode)
         rows.append(logits)
+
+    def _prefill_spans(
+        self, prefill: list[tuple[Sequence, int]], sampled: list[Sequence]
+    ) -> tuple[list[SequenceSpan], list[int], int]:
+        """Spans of a pass's prefill chunks, advancing each sequence past its chunk.
+
+        Returns the spans, the flattened row of each span that reaches its sequence's end
+        (those sequences are appended to ``sampled``), and the number of tokens.
+        """
+        spans = []
+        last_rows = []
+        offset = 0
+        for seq, count in prefill:
+            start = seq.num_cached
+            table = self.blocks.table(seq.seq_id)
+            spans.append(SequenceSpan(seq.tokens[start : start + count], start, table))
+            offset += count
+            if count == seq.num_pending:
+                sampled.append(seq)
+                last_rows.append(offset - 1)
+            seq.num_cached = start + count
+        self.stats.prefill_tokens += offset
+        return spans, last_rows, offset
+
+    def _decode_spans(self, decode: list[Sequence]) -> list[SequenceSpan]:
+        """One-token spans of the decoding sequences, advancing each by its token."""
+        spans = []
+        for seq in decode:
+            spans.append(
+                SequenceSpan(seq.tokens[-1:], seq.num_cached, self.blocks.table(seq.seq_id))
+            )
+            seq.num_cached += 1
+        self.stats.decode_tokens += len(spans)
+        return spans
+
+    def _run_joint(
+        self,
+        prefill: list[tuple[Sequence, int]],
+        decode: list[Sequence],
+        sampled: list[Sequence],
+        rows: list[Tensor],
+    ) -> None:
+        """Prefill chunks and decoding sequences in one pass over the weights.
+
+        The decode rows follow the prefill tokens; each group has its own attention kernel
+        (:meth:`PagedAttentionBackend.joint`). Collects logits like a prefill pass followed
+        by a decode pass would.
+        """
+        spans, last_rows, tokens = self._prefill_spans(prefill, sampled)
+        decode_spans = self._decode_spans(decode)
+        sampled.extend(decode)
+        graphs = self.joint_graphs
+        key = graphs.bucket(len(spans), tokens, len(decode)) if graphs is not None else None
+        if key is not None:
+            rows.append(graphs.run(key, spans, last_rows, decode_spans))
+            return
+        batch = build_paged_batch([*spans, *decode_spans], self.config.block_size, self.device)
+        context = self.backend.joint(batch, len(spans))
+        hidden = self.model(batch.token_ids, batch.positions, context)
+        wanted = [*last_rows, *range(tokens, tokens + len(decode))]
+        index = torch.tensor(wanted, device=self.device)
+        rows.append(self.model.logits(hidden.index_select(0, index)))
 
     # ------------------------------------------------------------ speculation
 
