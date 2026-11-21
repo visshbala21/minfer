@@ -1970,6 +1970,8 @@ first token (one request, chunked prefill off).
 
 ### M-024 KV memory pressure on the real trace: three engines, with and without a host tier (Phase 15 acceptance)
 
+> **Re-measured (M-030).** The minfer rows below were measured with the Triton decode kernel. The committed results file and the README now hold the rows re-measured on the default kernel; M-030 has them. The baselines' rows are these.
+
 Script: `bench/pressure.py` → `bench/results/pressure_7b.json`, plot
 `bench/plots/pressure_7b.png`. Qwen2.5-7B, the 300-session real trace (D-039) replayed
 closed-loop at 32, 64, 96 and 128 concurrent sessions; a fresh server per run; 360 s of
@@ -2075,6 +2077,8 @@ too, and with it they are faster than minfer end to end (finding 5).
 ## Phase 16B — Close the decode gap (optional; one item attempted)
 
 ### M-025 Unified prefill+decode passes: better at low load, worse at saturation
+
+> **Re-measured (M-030).** The numbers below are with the Triton decode kernel; on the default kernel the result is the same (M-030).
 
 `--unified-batches`: in a step with both kinds of work, decoding sequences join the ragged
 prefill pass as one-token spans instead of getting a second pass over the weights; prefill
@@ -2211,6 +2215,8 @@ are compared with the exact prefill's at 4,679 positions.
 
 ### M-027 Speculation through the server at 7B (Phase 16 acceptance)
 
+> **Re-measured (M-030).** The table below is with the Triton decode kernel; the committed results file now holds the re-measurement on the default kernel, which M-030 tabulates. The conclusions are unchanged.
+
 Script: `bench/speculation_serve.py` → `bench/results/speculation_serve_7b.json`. A fresh
 `minfer serve` per configuration, the matrix's agent traces at 1, 4 and 8 req/s, greedy.
 
@@ -2253,6 +2259,8 @@ Script: `bench/speculation_serve.py` → `bench/results/speculation_serve_7b.jso
 ## Phase 17 — Composition study
 
 ### M-028 Five techniques, every valid combination, on the real trace under memory pressure
+
+> **Re-measured (M-030).** The table below is with the Triton decode kernel; the committed results file now holds the re-measurement on the default kernel, which M-030 tabulates. The conclusions are unchanged; the absolute numbers and the unexplained failures are not.
 
 Script: `bench/composition.py` → `bench/results/composition_7b.json`, chart
 `bench/plots/composition_7b.png`. Qwen2.5-7B, the real trace at 96 concurrent sessions
@@ -2405,3 +2413,125 @@ was re-checked against the final files. Not re-measured at the end, and so older
 final commit: the fairness audit (Phase 13 code, 1.5B), the Phase 12 reproduction check,
 and the Triton-kernel-era benchmarks listed above; each results file since Phase 14
 records its commit.
+
+### M-030 The Triton-era benchmarks, re-measured on the default decode kernel
+
+M-029 left four benchmarks measured with the Triton decode kernel after FlashInfer's had
+become the default: the pressure sweep's minfer rows, the composition study, the
+serve-level speculation benchmark and the unified-pass A/B. Their scripts pinned
+`--decode-kernel triton` to keep the files reproducible. That left the README's headline
+table (default kernel) and its decomposition (Triton kernel) on different engine
+configurations. The pins are removed and all four were run again on commit `560098f`,
+in one unattended chain with nothing else on the machine: 10 + 14 + 8 + 2 server launches,
+0 failed requests. The results files are replaced (the earlier ones are in git history at
+`4df53e0`); `pressure_7b.json` keeps the baselines' rows from M-024 (`pressure.py
+--resume --remeasure`), and its separate `minfer/session_host_fi` configuration is gone
+because `minfer/session_host` is now that configuration.
+
+**Pressure sweep, minfer rows** (`bench/results/pressure_7b.json`; baselines from M-024):
+
+| sessions | configuration | hit rate | prefill tokens / call | TTFT p50 / p99 (ms) | TPOT p50 (ms) | out tok/s |
+|---|---|---|---|---|---|---|
+| 32 | session-aware | 94.0% | 986 | 100 / 410 | 9.7 | 382 |
+| 64 | LRU | 88.5% | 1,899 | 126 / 1,240 | 21.4 | 625 |
+| 64 | session-aware | 91.0% | 1,491 | 121 / 1,207 | 20.2 | 655 |
+| 64 | + host tier | 94.2% | 966 | 117 / 449 | 19.5 | 687 |
+| 96 | LRU | 56.6% | 6,958 | 624 / 33,852 | 50.5 | 406 |
+| 96 | session-aware | 60.4% | 6,332 | 985 / 24,202 | 57.1 | 424 |
+| 96 | + host tier | 94.1% | 1,013 | 159 / 570 | 33.9 | 772 |
+| 128 | LRU | 34.7% | 9,638 | 13,163 / 55,075 | 73.6 | 347 |
+| 128 | session-aware | 44.8% | 8,253 | 12,516 / 41,633 | 77.2 | 393 |
+| 128 | + host tier | 89.5% | 1,696 | 2,811 / 10,983 | 47.5 | 693 |
+
+- Session-aware retention against LRU: +2.5 / +3.9 / +10.1 points of hit rate at
+  64 / 96 / 128 sessions, 21% / 9% / 14% fewer prefill tokens, TTFT p99 3% / 29% / 24%
+  lower, throughput +4–13%. Still a small gain that does not prevent the collapse.
+- The host tier: 1.82× and 1.76× the throughput of the same engine without it at 96 and
+  128 sessions.
+- Full stack against the baselines with their offloading (vLLM 717 / 809 / 765 tok/s,
+  SGLang 729 / 772 / 694): **0.96× / 0.95× / 0.91× of vLLM, 0.94× / 1.00× / 1.00× of
+  SGLang**; 34% / 31% fewer prefill tokens per call than vLLM at 96 / 128 and 41% / 32%
+  fewer than SGLang; TPOT 1.18× / 1.25× / 1.05× of vLLM's. vLLM is still the fastest
+  system. M-029's run of the same configuration gave 672 / 759 / 684 tok/s: the
+  throughput repeats to 2%.
+- **TTFT p99 does not repeat.** The full stack at 96 sessions: 570 ms in this sweep,
+  1,252 ms in the composition run below, 1,270 ms in M-029's run — the same configuration
+  three times. The README table shows 570 ms, in bold as the lowest of the three engines,
+  because the table is generated from the file; the prose under it says that this is not
+  a finding. The baselines were each measured once, so their p99s carry the same
+  uncertainty.
+
+**Composition study** (`bench/results/composition_7b.json`, 96 sessions):
+
+| techniques | calls | prefill tokens / call | hit rate | TTFT p50 / p99 (ms) | TPOT p50 (ms) | out tok/s |
+|---|---|---|---|---|---|---|
+| none | 537 | 13,428 | 0% | 20,820 / 28,444 | 70.5 | 242 |
+| spec | 423 | 12,634 | 0% | 32,670 / 46,279 | 85.2 | 171 |
+| prefix | 835 | 7,083 | 55.8% | 634 / 34,705 | 52.5 | 404 |
+| prefix + session | 849 | 6,217 | 61.2% | 878 / 22,946 | 53.4 | 427 |
+| prefix + reuse | 829 | 6,674 | 58.3% | 778 / 31,019 | 53.7 | 405 |
+| prefix + spec | 573 | 5,500 | 61.4% | 1,732 / 42,780 | 132.6 | 260 |
+| prefix + session + reuse | 838 | 6,160 | 61.5% | 875 / 23,373 | 63.1 | 414 |
+| prefix + session + spec | 599 | 4,982 | 65.2% | 2,536 / 33,321 | 133.4 | 279 |
+| prefix + reuse + spec | 567 | 5,401 | 61.9% | 1,495 / 43,232 | 134.5 | 260 |
+| prefix + session + reuse + spec | 587 | 4,877 | 66.0% | 2,066 / 33,427 | 135.8 | 284 |
+| **prefix + session + host** | **1,366** | 1,038 | 93.9% | **174 / 1,252** | **38.3** | **758** |
+| prefix + session + host + reuse | 1,343 | **975** | **94.2%** | 189 / 1,726 | 38.4 | 740 |
+| prefix + session + host + spec | 702 | 1,030 | 93.0% | 546 / 10,185 | 131.2 | 351 |
+| prefix + session + host + reuse + spec | 700 | 976 | 93.4% | 634 / 11,105 | 131.0 | 353 |
+
+- **Every conclusion of M-028 holds**: decomposition 13,428 → 7,083 (prefix) → 6,217
+  (+ retention) → 1,038 (+ host tier) → 975 (+ reuse); best valid combination the three
+  exact KV techniques; reuse saves 1–6% of prefill tokens and nothing measurable in
+  latency or throughput (740 vs 758 tok/s); speculation costs 29–54% of throughput in
+  every combination and takes the host tier's gain back (758 → 351 tok/s); no pair
+  compounds.
+- **What changed:** absolute throughput (the best combination 661 → 758 tok/s, +15%; the
+  collapsing ones +3–10%), and speculation's relative cost with the host tier (−47% →
+  −54%): speculative rows have a TPOT of 131–136 ms whatever the decode kernel, so the
+  faster non-speculative rows widen the gap.
+- **Noise**, from the three configurations also in the sweep above: throughput 404 / 427 /
+  758 here against 406 / 424 / 772 (within 2%); hit rate within a point; TTFT p50 within
+  12%; TTFT p99 as above.
+- **The two `ServerDisconnectedError` failures of M-028 did not recur**: 0 failed requests
+  in all 14 runs, including the two configurations that had one each. They remain
+  unexplained; the only evidence is that they are not deterministic.
+
+**Speculation through the server** (`bench/results/speculation_serve_7b.json`):
+
+| configuration | TPOT p50 (ms) at 1 / 4 / 8 req/s | vs off | TPOT p99 (ms) | E2E p50 (ms) | drafts accepted |
+|---|---|---|---|---|---|
+| no speculation | 6.60 / 7.21 / 7.68 | — | 7.7 / 8.7 / 10.8 | 444 / 489 / 532 | — |
+| n=3, ≤ 4 drafted | 5.68 / 6.88 / 8.01 | 0.86× / 0.95× / 1.04× | 8.7 / 13.4 / 17.2 | 391 / 475 / 587 | 62–64% |
+| n=2, ≤ 4 drafted | 5.85 / 6.96 / 8.73 | 0.89× / 0.96× / 1.14× | 9.0 / 13.7 / 16.9 | 403 / 496 / 631 | 54–56% |
+| n=4, ≤ 4 drafted | 6.03 / 6.89 / 8.27 | 0.91× / 0.95× / 1.08× | 8.6 / 12.3 / 16.4 | 386 / 478 / 602 | 64–66% |
+| **n=3, ≤ 8 drafted** | **5.60 / 6.65 / 8.02** | **0.85× / 0.92× / 1.04×** | 8.3 / 12.9 / 15.5 | 371 / 463 / 550 | 52–54% |
+| n=5, ≤ 8 drafted | 5.96 / 6.78 / 7.96 | 0.90× / 0.94× / 1.04× | 8.6 / 12.7 / 15.2 | 386 / 478 / 568 | 56–57% |
+| n=3, ≤ 4, never paused | 5.66 / 6.76 / 8.11 | 0.86× / 0.94× / 1.06× | 8.8 / 13.6 / 16.8 | 390 / 471 / 590 | 61–64% |
+| n=3, ≤ 4, eager verification | 6.34 / 8.02 / 11.14 | 0.96× / 1.11× / 1.45× | 11.9 / 16.2 / 19.9 | 420 / 608 / 755 | 61–64% |
+
+Same result as M-027: TPOT p50 15% and 8% lower at 1 and 4 req/s with n=3, ≤ 8 drafted.
+At 8 req/s it is now 4% *higher* in every graph-verified configuration (M-027: +1% for
+the best one), because the no-speculation row got faster at that rate (7.88 → 7.68 ms)
+and the speculative ones did not. The tail is worse in every speculative configuration,
+graph verification is what makes it pay, pausing makes no difference.
+
+**Unified prefill+decode passes** (`bench/results/unified_batches_7b.json`):
+
+| | 4 req/s | 16 req/s | "max" |
+|---|---|---|---|
+| split passes: TPOT p50 (ms) | 7.28 | 8.91 | 24.52 |
+| unified: TPOT p50 (ms) | 7.08 | 8.71 | 37.99 |
+| split passes: TTFT p50 (ms) | 55.0 | 56.9 | 108.5 |
+| unified: TTFT p50 (ms) | 44.7 | 49.9 | 119.7 |
+| split passes: output tok/s | 256 | 745 | 2,026 |
+| unified: output tok/s | 257 | 747 | 1,455 |
+
+Same shape as M-025: TPOT −2 to −3% and TTFT p50 −7 to −10 ms below saturation, saturated
+throughput −28% (was −23% against the slower Triton split path). Off by default.
+
+**What is still older than the final code:** the fairness audit (Phase 13 code, 1.5B),
+the Phase 12 reproduction check, the baselines' rows of the pressure sweep (measured
+2026-11-21, before this rerun; the baselines' software is unchanged), and the
+position-independent-reuse quality study and the host-tier cost measurement, which were
+not run again.
