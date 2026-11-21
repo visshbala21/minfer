@@ -9,7 +9,8 @@ replays the same two agent traces the three-engine matrix uses for minfer (16 re
 Three groups:
 
 * **default-on features, switched off one at a time** (prefix cache, cache-aware
-  admission, CUDA graphs, prefill graphs, chunked prefill, fused kernels, Triton decode);
+  admission, CUDA graphs, prefill graphs, chunked prefill, fused kernels), and the Triton
+  decode kernel in place of FlashInfer's;
 * **default-off features, switched on** (prompt-lookup and draft-model speculation, FP8 KV
   cache, FP8 weights);
 * **constrained scenarios**, where the scheduling features have something to decide:
@@ -45,7 +46,10 @@ CONFIGS: dict[str, tuple[str, list[str]]] = {
     "no_prefill_graphs": ("− prefill graphs only", ["--no-prefill-graphs"]),
     "no_chunked_prefill": ("− chunked prefill", ["--no-chunked-prefill"]),
     "no_fused_kernels": ("− fused kernels", ["--no-fused-kernels"]),
-    "flashinfer_decode": ("− Triton decode (FlashInfer decode)", ["--decode-kernel", "flashinfer"]),
+    "triton_decode": (
+        "Triton decode kernel instead of FlashInfer's",
+        ["--decode-kernel", "triton"],
+    ),
     "speculation_ngram": ("+ speculation: prompt lookup", ["--speculation", "ngram"]),
     "speculation_draft": ("+ speculation: draft model", ["--speculation", "draft"]),
     "fp8_kv": ("+ FP8 KV cache", ["--kv-cache-dtype", "fp8"]),

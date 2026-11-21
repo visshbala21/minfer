@@ -78,13 +78,15 @@ def main() -> None:
         "steps_per_point": args.steps,
         "runs": {},
     }
-    # Each run adds one optimization to the previous one; the last is the default engine.
+    # Each run adds one optimization to the previous one up to the default engine
+    # (FlashInfer decode + fused kernels); the Triton decode kernel is measured next to it.
     runs = (
         (
             "cuda_graphs_off",
             {"cuda_graphs": False, "fused_kernels": False, "decode_kernel": "flashinfer"},
         ),
         ("cuda_graphs_on", {"fused_kernels": False, "decode_kernel": "flashinfer"}),
+        ("cuda_graphs_on_fused", {"fused_kernels": True, "decode_kernel": "flashinfer"}),
         ("cuda_graphs_on_triton_decode", {"fused_kernels": False, "decode_kernel": "triton"}),
         ("cuda_graphs_on_triton_decode_fused", {"fused_kernels": True, "decode_kernel": "triton"}),
     )
@@ -128,7 +130,10 @@ def main() -> None:
         "fused_ms",
     )
     results["default_vs_phase3_p50"] = compare(
-        "cuda_graphs_on", "cuda_graphs_on_triton_decode_fused", "phase3_ms", "default_ms"
+        "cuda_graphs_on", "cuda_graphs_on_fused", "phase3_ms", "default_ms"
+    )
+    results["triton_vs_default_p50"] = compare(
+        "cuda_graphs_on_fused", "cuda_graphs_on_triton_decode_fused", "default_ms", "triton_ms"
     )
     args.out.write_text(json.dumps(results, indent=1) + "\n")
 

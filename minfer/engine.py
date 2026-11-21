@@ -83,9 +83,11 @@ class EngineConfig:
             Triton kernels (:meth:`Qwen2Model.fuse`): about 4× fewer kernel launches per
             step. CUDA only; ignored for tensor-parallel shards and FP8 weights.
         decode_kernel: Decode attention kernel of the FlashInfer backend: FlashInfer's own
-            or the Triton kernel in :mod:`minfer.attention.triton_decode`. ``"auto"`` picks
-            the Triton kernel (faster in the engine, M-011) unless the KV cache is FP8,
-            which only FlashInfer's kernels read.
+            (its tensor-core path) or the Triton kernel in
+            :mod:`minfer.attention.triton_decode`. ``"auto"`` is FlashInfer's: inside the
+            engine it is the faster of the two at both model sizes measured (DESIGN.md
+            M-029), although the Triton kernel matches or beats it in isolation at most
+            shapes. The Triton kernel does not read an FP8 KV cache.
         cuda_graphs: Replay captured CUDA graphs for decode passes (FlashInfer backend
             only). Batches larger than the largest captured size run eagerly.
         prefill_graphs: Also replay captured graphs for prefill passes whose shape fits a
@@ -259,7 +261,7 @@ class Engine:
             raise ValueError("the Triton decode kernel does not read an FP8 KV cache")
         self.decode_kernel = config.decode_kernel
         if self.decode_kernel == "auto":
-            self.decode_kernel = "flashinfer" if fp8_kv else "triton"
+            self.decode_kernel = "flashinfer"
         if config.weight_dtype == "fp8":
             quantize_linears(model)
         elif config.fused_kernels and self.device.type == "cuda" and model.shard is None:

@@ -65,8 +65,12 @@ def name_of(combination: frozenset[str]) -> str:
 
 
 def flags_of(combination: frozenset[str]) -> list[str]:
-    """``minfer serve`` flags for a combination (the defaults are: prefix + session)."""
-    flags = []
+    """``minfer serve`` flags for a combination (the defaults are: prefix + session).
+
+    The Triton decode kernel is set explicitly: it was the default when the study was
+    measured, and the default has since become FlashInfer's.
+    """
+    flags = ["--decode-kernel", "triton"]
     if "prefix" not in combination:
         flags += ["--no-prefix-cache", "--eviction-policy", "lru"]
     elif "session" not in combination:

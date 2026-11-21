@@ -29,8 +29,14 @@ from bench.servers import code_version, launch
 RATES = {"4": 2, "16": 4, "max": 5}  # rate -> trace seed (the matrix's seeds for these rates)
 EXPERIMENTS = {
     "unified_batches": {
-        "split": ("separate prefill and decode passes (before)", ["--no-unified-batches"]),
-        "unified": ("one ragged pass per step (after)", ["--unified-batches"]),
+        "split": (
+            "separate prefill and decode passes (before)",
+            ["--no-unified-batches", "--decode-kernel", "triton"],
+        ),
+        "unified": (
+            "one ragged pass per step (after)",
+            ["--unified-batches", "--decode-kernel", "triton"],
+        ),
     },
     "decode_kernel": {
         "triton": ("Triton paged-decode kernel", ["--decode-kernel", "triton"]),

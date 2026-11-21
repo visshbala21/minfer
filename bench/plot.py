@@ -185,8 +185,8 @@ def plot_decode_latency() -> None:
     stages = [
         ("cuda_graphs_off", "eager", MUTED),
         ("cuda_graphs_on", "+ CUDA graphs", SERIES["sglang"]),
-        ("cuda_graphs_on_triton_decode", "+ Triton decode", SERIES["vllm"]),
-        ("cuda_graphs_on_triton_decode_fused", "+ fused kernels (default)", SERIES["minfer"]),
+        ("cuda_graphs_on_fused", "+ fused kernels (default)", SERIES["minfer"]),
+        ("cuda_graphs_on_triton_decode_fused", "Triton decode kernel instead", SERIES["vllm"]),
     ]
     stages = [stage for stage in stages if stage[0] in runs]
     contexts = sorted({r["context_tokens"] for r in runs[stages[0][0]]})
@@ -273,6 +273,7 @@ PRESSURE_STYLE = {
     "minfer/lru": ("#9ec5f0", "minfer, LRU"),
     "minfer/session": ("#2a78d6", "minfer, session-aware"),
     "minfer/session_host": ("#0b3d7a", "minfer, session-aware + host tier"),
+    "minfer/session_host_fi": ("#7b3fb5", "minfer, + host tier, FlashInfer decode"),
     "vllm/default": ("#eb6834", "vLLM"),
     "vllm/offload": ("#8f3410", "vLLM + KV offloading"),
     "sglang/default": ("#1baf7a", "SGLang"),

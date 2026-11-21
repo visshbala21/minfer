@@ -42,11 +42,20 @@ HOST_GB = 96
 CONCURRENCY = (16, 32, 48, 64, 96)
 
 # "<engine>/<name>": (label, server flags, send session hints)
+# The sweep was measured when the Triton decode kernel was minfer's default; those
+# configurations keep it explicitly. ``session_host_fi`` is the same full stack on the
+# current default (FlashInfer's decode kernel), measured after the default changed.
+_TRITON = ["--decode-kernel", "triton"]
 CONFIGS: dict[str, tuple[str, list[str], bool]] = {
-    "minfer/lru": ("minfer, LRU eviction", ["--eviction-policy", "lru"], False),
-    "minfer/session": ("minfer, session-aware retention", [], True),
+    "minfer/lru": ("minfer, LRU eviction", ["--eviction-policy", "lru", *_TRITON], False),
+    "minfer/session": ("minfer, session-aware retention", _TRITON, True),
     "minfer/session_host": (
         f"minfer, session-aware retention + {HOST_GB} GB host tier",
+        ["--host-kv-gb", str(HOST_GB), *_TRITON],
+        True,
+    ),
+    "minfer/session_host_fi": (
+        f"minfer, session-aware retention + {HOST_GB} GB host tier, FlashInfer decode (default)",
         ["--host-kv-gb", str(HOST_GB)],
         True,
     ),

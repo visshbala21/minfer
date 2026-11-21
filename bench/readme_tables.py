@@ -124,14 +124,16 @@ def decode_latency_table() -> str:
     stages = [
         ("cuda_graphs_off", "eager"),
         ("cuda_graphs_on", "+ CUDA graphs"),
-        ("cuda_graphs_on_triton_decode", "+ Triton decode"),
-        ("cuda_graphs_on_triton_decode_fused", "+ fused kernels (default)"),
+        ("cuda_graphs_on_fused", "+ fused kernels (default)"),
+        ("cuda_graphs_on_triton_decode_fused", "with the Triton decode kernel instead"),
     ]
+    if any(key not in runs for key, _ in stages):
+        return MISSING
     rows = []
     for index, first in enumerate(runs[stages[0][0]]):
         cells = [str(first["batch_size"]), str(first["context_tokens"])]
         cells += [f"{runs[key][index]['step_ms_p50']:.2f}" for key, _ in stages]
-        total = first["step_ms_p50"] / runs[stages[-1][0]][index]["step_ms_p50"]
+        total = first["step_ms_p50"] / runs["cuda_graphs_on_fused"][index]["step_ms_p50"]
         rows.append([*cells, f"{total:.1f}×"])
     header = ["batch", "context (tokens)", *[f"{label} (ms)" for _, label in stages]]
     return _table([*header, "eager → default"], rows)
@@ -616,12 +618,13 @@ def full_stack_table() -> str:
     data = _load("pressure_7b.json")
     if not data:
         return MISSING
+    configs = data["configs"]
+    newest = "minfer/session_host_fi"
     best = {
-        "minfer": "minfer/session_host",
+        "minfer": newest if newest in configs else "minfer/session_host",
         "vLLM": "vllm/offload",
         "SGLang": "sglang/hicache",
     }
-    configs = data["configs"]
     if any(name not in configs for name in best.values()):
         return MISSING
     levels = [c for c in ("64", "96", "128") if all(c in configs[n]["runs"] for n in best.values())]

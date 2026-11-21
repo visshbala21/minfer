@@ -34,12 +34,15 @@ RATES = {"1": 0, "4": 2, "8": 3}  # rate -> trace seed (the matrix's seeds for t
 
 
 def ngram(size: int, draft: int, *extra: str) -> list[str]:
+    """Prompt-lookup flags (with the decode kernel the benchmark was measured with)."""
     flags = ["--speculation", "ngram", "--ngram-size", str(size)]
-    return [*flags, "--num-draft-tokens", str(draft), *extra]
+    return [*flags, "--num-draft-tokens", str(draft), "--decode-kernel", "triton", *extra]
 
 
+# Measured when the Triton decode kernel was the default; kept explicit for every row.
+_TRITON = ["--decode-kernel", "triton"]
 CONFIGS: dict[str, tuple[str, list[str]]] = {
-    "off": ("no speculation", []),
+    "off": ("no speculation", _TRITON),
     "ngram_n3_k4": ("prompt lookup, n=3, up to 4 drafted", ngram(3, 4)),
     "ngram_n2_k4": ("prompt lookup, n=2, up to 4 drafted", ngram(2, 4)),
     "ngram_n4_k4": ("prompt lookup, n=4, up to 4 drafted", ngram(4, 4)),
