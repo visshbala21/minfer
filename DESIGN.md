@@ -2243,3 +2243,95 @@ Script: `bench/speculation_serve.py` → `bench/results/speculation_serve_7b.jso
 - **Still off by default.** It is a latency feature for lightly loaded servers that costs
   tail latency, and it changes nothing for sampling requests' graphs. Recommended setting
   when on: `--speculation ngram --ngram-size 3 --num-draft-tokens 8`.
+
+---
+
+## Phase 17 — Composition study
+
+### M-028 Five techniques, every valid combination, on the real trace under memory pressure
+
+Script: `bench/composition.py` → `bench/results/composition_7b.json`, chart
+`bench/plots/composition_7b.png`. Qwen2.5-7B, the real trace at 96 concurrent sessions
+(1.5–1.7× what the GPU's KV pool holds, M-024), a fresh `minfer serve` per combination,
+360 s of load with the first 120 s not counted. Techniques: `prefix` (radix-tree prefix
+cache), `session` (session-aware retention; needs prefix), `host` (96 GB host tier; needs
+session), `reuse` (position-independent reuse at 15% recomputation; needs prefix), `spec`
+(prompt lookup, n=3, ≤ 8 drafted, graph verification). 14 valid combinations.
+
+| techniques | calls | prefill tokens / call | hit rate | TTFT p50 / p99 (ms) | TPOT p50 (ms) | out tok/s |
+|---|---|---|---|---|---|---|
+| none | 513 | 13,281 | 0% | 23,088 / 30,311 | 74.8 | 228 |
+| spec | 428 | 12,614 | 0% | 32,370 / 43,931 | 84.6 | 166 |
+| prefix | 787 | 6,850 | 55.7% | 866 / 34,093 | 63.0 | 391 |
+| prefix + session | 795 | 6,260 | 59.5% | 1,258 / 28,920 | 71.0 | 388 |
+| prefix + reuse | 789 | 6,414 | 58.5% | 811 / 32,312 | 63.8 | 387 |
+| prefix + spec | 572 | 5,723 | 59.9% | 2,047 / 46,053 | 132.0 | 272 |
+| prefix + session + reuse | 792 | 5,967 | 61.4% | 978 / 28,246 | 69.1 | 397 |
+| prefix + session + spec | 595 | 5,120 | 64.4% | 2,018 / 32,444 | 134.3 | 278 |
+| prefix + reuse + spec | 575 | 5,262 | 63.3% | 1,521 / 41,748 | 134.9 | 264 |
+| prefix + session + reuse + spec | 589 | 4,877 | 66.2% | 2,569 / 34,261 | 133.9 | 280 |
+| **prefix + session + host** | **1,228** | 1,002 | 93.9% | **257 / 2,906** | **45.5** | **661** |
+| prefix + session + host + reuse | 1,169 | **942** | **94.3%** | 289 / 4,563 | 48.1 | 630 |
+| prefix + session + host + spec | 699 | 1,027 | 93.0% | 538 / 11,194 | 131.3 | 350 |
+| prefix + session + host + reuse + spec | 694 | 997 | 93.2% | 635 / 11,104 | 133.7 | 352 |
+
+- **Noise.** Three of these configurations were also measured in the pressure sweep
+  (M-024): throughput differs by 1–3% and hit rate by under half a point between the two
+  runs, TTFT p50 by up to 24% (prefix-only: 866 vs 1,142 ms) and TTFT p99 by up to 26%
+  (with the host tier: 2,906 vs 3,913 ms). Latency differences of that size between rows
+  mean nothing.
+- **Decomposition** (the chart's path): no cache 13,281 prefill tokens per call → prefix
+  cache 6,850 → + retention 6,260 → + host tier 1,002 → + reuse 942. The prefix cache
+  halves the work and still thrashes; the host tier removes 84% of what is left;
+  retention and reuse are 9% and 6% effects.
+- **What the best valid combination is.** prefix + session + host: highest throughput,
+  lowest TTFT at the median and the tail, lowest TPOT. Adding reuse saves another 6% of
+  prefill tokens and gains nothing measurable in latency or throughput (630 vs 661 tok/s
+  is at the edge of the noise, in the wrong direction), for an approximation that changes
+  ~3% of next-token predictions (M-026). Adding speculation halves the throughput.
+- **Interactions** (`bench/readme_tables.py`, "interactions"; relative to what both
+  techniques need):
+  - *retention × reuse*: −590 and −435 prefill tokens per call alone, −883 together
+    (143 short of additive, 2% of the base: inside the noise).
+  - *host tier × reuse*: −5,258 and −292 alone, −5,318 together: reuse adds almost nothing
+    once the host tier has restored the hit rate, because what reuse can find (a system
+    prompt behind a different preamble) is a few hundred tokens once per session.
+  - *host tier × speculation*: the tier lowers TPOT by 25 ms, speculation raises it by 63;
+    together +60, i.e. speculation erases the tier's latency gain and most of its
+    throughput gain (661 → 350 tok/s). They compete for the same thing: the tier frees
+    compute by avoiding prefill, speculation spends compute on verification rows.
+  - *anything × speculation at this load*: TPOT 132–135 ms against 45–71 without, in every
+    combination; throughput −27% to −47%.
+  - The lower "prefill tokens per call" in speculative rows of the collapsing
+    configurations (e.g. 5,723 vs 6,850) is not a saving: those servers complete fewer and
+    different calls, and the figure depends on which.
+- **Failures.** One request in each of two overloaded speculative runs (`spec`,
+  `prefix + spec`) ended with a client-side `ServerDisconnectedError`, with nothing in the
+  server's log; a third speculative run of the same kind had none. Not explained. Two
+  combinations with host tier and reuse first crashed the engine (B-009) and were
+  re-measured after the fix; the table has the re-measured rows.
+- **Against the baselines** the comparison is M-024's: at 96 sessions vLLM with its native
+  offloading delivers 809 tok/s and a TTFT of 206 / 1,091 ms, SGLang with its hierarchical
+  cache 772 tok/s and 153 / 1,409 ms, full-stack minfer 641–661 tok/s and 257–266 /
+  2,906–3,913 ms while computing 985–1,002 prefill tokens per call against their 1,545 and
+  1,702. `vllm-continuum` was not installed: its repository describes itself as a preview
+  that omits the paper's TTL estimator, and it is based on a vLLM release far older than
+  the pinned 0.34.0, so it would have been neither Continuum as published nor a fair
+  second vLLM.
+
+### B-009 A reuse copy ran for a sequence that had just been preempted (fixed)
+
+- **Symptom.** `prefix+session+host+reuse` at 96 sessions: the engine process died with
+  `IndexError: index 640 is out of bounds for axis 0 with size 0` in `_run_copies`, and
+  251 requests failed.
+- **Root cause.** The scheduler queues a sequence's KV copy and then allocates blocks for
+  its next prefill chunk in the same pass. If that allocation fails with nothing left to
+  evict, the victim of preemption is the youngest running sequence — possibly this one.
+  Its block table is then gone while its copy is still in the step's plan. The existing
+  invariant "a victim is never a sequence already selected for this step" (D-015) did not
+  cover work queued *before* the failing allocation of the same sequence.
+- **Fix.** After planning, copies of sequences that are no longer running are dropped and
+  their pinned sources released; and reuse is not planned again for a sequence that has
+  been preempted, since the pinned sources may be exactly the memory it lacked.
+  Regression test `test_a_sequence_preempted_after_its_copy_was_queued` (fails before,
+  passes after). Only configurations with `--position-independent-reuse` were exposed.

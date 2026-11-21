@@ -332,12 +332,12 @@ def plot_pressure(name: str = "pressure_7b") -> None:
 
 
 COMPOSITION_PATH = [
-    ("base", "no cache"),
+    ("base", "none"),
     ("prefix", "+ prefix\ncache"),
-    ("prefix+session", "+ session-aware\nretention"),
-    ("prefix+session+host", "+ host-memory\ntier"),
-    ("prefix+session+host+reuse", "+ position-\nindependent reuse"),
-    ("prefix+session+host+reuse+spec", "+ prompt-lookup\nspeculation"),
+    ("prefix+session", "+ session\nretention"),
+    ("prefix+session+host", "+ host\ntier"),
+    ("prefix+session+host+reuse", "+ shifted\nreuse"),
+    ("prefix+session+host+reuse+spec", "+ specu-\nlation"),
 ]
 
 
@@ -369,13 +369,15 @@ def plot_composition(name: str = "composition_7b") -> None:
         for index, value in enumerate(values):
             text = f"{value:,.0f}" if value >= 100 else f"{value:.1f}"
             ax.annotate(text, (index, value), ha="center", va="bottom", fontsize=8.5, color=INK)
-        ax.set_xticks(range(len(values)), labels, fontsize=7.5)
+        ax.set_xticks(range(len(values)), labels, fontsize=8.5)
+        ax.set_axisbelow(True)
         ax.set_title(title)
         ax.set_ylim(bottom=0)
     budget = data.get("kv_budget_gb")
     note = (
         f"Real coding-agent trace, {data['model'].rsplit('/', 1)[-1]}, {data['concurrency']} "
-        "concurrent sessions, techniques added left to right; "
+        "concurrent sessions; techniques added left to right (prefix cache, session-aware "
+        "retention, host-memory tier, position-independent reuse, prompt-lookup speculation); "
         + (f"KV cache limited to {budget:g} GB." if budget else "whole GPU.")
     )
     _finish(fig, list(axes), "What each technique adds", note, f"{name}.png")

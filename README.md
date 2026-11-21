@@ -23,7 +23,7 @@ a wrapper around another serving engine.
 **On real coding-agent traces at 7B, once concurrent sessions exceed GPU memory, one
 technique decides the outcome — a host-memory tier for the KV cache — and vLLM with its own
 offloading is the fastest system measured. minfer with every exact technique enabled
-recomputes the least and is still about 20% behind vLLM in throughput.**
+recomputes the least and is still 16–21% behind vLLM in throughput.**
 
 Each engine in its best measured configuration, 64–128 concurrent sessions (one H100 holds
 the KV of about 55–65):
@@ -94,17 +94,20 @@ What the composition shows:
 - **Session-aware retention is a small gain** (9% fewer prefill tokens than LRU, a lower
   TTFT tail) that does not prevent the collapse by itself; the host tier needs its
   eviction order, so the two are measured together.
-- **Position-independent reuse is nearly irrelevant on this trace** (6% fewer prefill
-  tokens, no change in latency or throughput) because only 0.8% of the trace's tokens are
-  shifted duplicates, and it costs output fidelity (about 3% of next-token predictions
-  change).
-- **Prompt-lookup speculation hurts at this load**: it doubles per-token latency and costs
-  30–47% of throughput in every combination. It lowers per-token latency by 8–14% on a
+- **Position-independent reuse is nearly irrelevant on this trace**: 6% fewer prefill
+  tokens with or without the host tier and no gain in latency or throughput beyond
+  run-to-run noise, because only 0.8% of the trace's tokens are shifted
+  duplicates — and it costs output fidelity (about 3% of next-token predictions change).
+- **Prompt-lookup speculation hurts at this load**: it doubles or triples per-token
+  latency and costs 27–47% of throughput in every combination. It lowers per-token latency by 8–14% on a
   lightly loaded server ([below](#component-measurements)); a saturated one has no spare
   rows to verify drafts with.
-- **Interactions.** Techniques that save prefill work do not add up — retention and reuse
-  together save less than the sum of each, since both recover some of the same evicted
-  history — and speculation competes with all of them for the compute their savings free.
+- **Interactions.** Nothing compounds. The prefill savings of retention, the host tier and
+  reuse overlap (each recovers part of the same evicted history, and once the host tier
+  has brought the hit rate to its ceiling there is little left for the others), and
+  speculation competes with all of them for compute: with the host tier it takes back
+  most of the throughput the tier gained (661 → 350 tok/s). The best valid combination for
+  this workload is therefore the three exact KV techniques and nothing else.
 
 <!-- BEGIN interactions -->
 | pair (on top of what both need) | metric | without either | first alone | second alone | both | both − sum of each |
@@ -126,11 +129,11 @@ What the composition shows:
 | host-memory tier × prompt-lookup speculation | TPOT p50 (ms) | 70.98 | -25.51 | +63.31 | +60.34 | +22.54 |
 <!-- END interactions -->
 
-Single runs; repeating a configuration moved its throughput and hit rate by about 1%
-(the prefix-only and the retention + host-tier configurations were each measured twice,
-in this table and in the [pressure sweep](#real-coding-agent-traces-under-memory-pressure)).
-Per-call figures in collapsing configurations also depend on which calls complete, so
-differences of a few percent between them are not findings.
+Single runs. Three configurations were measured twice (in this table and in the
+[pressure sweep](#real-coding-agent-traces-under-memory-pressure)): throughput repeated to
+1–3% and hit rate to half a point, but latency percentiles in overloaded configurations
+moved by up to 25% between runs, and per-call figures in collapsing configurations depend
+on which calls complete. Differences of that size in this table are not findings.
 
 **Why minfer is behind vLLM with everything on.** Not KV management — it recomputes
 33–42% fewer prefill tokens than either baseline at 96 and 128 sessions — but its decode
@@ -913,7 +916,10 @@ one model on one GPU.
 - **Reproduction on a second machine was not performed.** A fresh clone on the *same*
   machine, with empty caches and re-downloaded weights, was: see
   [Reproduction check](#reproduction-check).
-- **Speculative decoding** is correct but slower than not speculating (above).
+- **The decode gap to vLLM and SGLang at 7B is open** (6% per token at 1 req/s, 23% at
+  16 req/s, 0.82× saturated throughput). Unified prefill+decode passes were implemented
+  and measured; they lose at saturation and are off by default (DESIGN.md M-025).
+- **Speculative decoding** helps only on a lightly loaded server and hurts a saturated one.
 - **One model family** (Qwen2/2.5), text only, no tool-call parsing on the response side,
   no `n > 1`, no penalties, no logprobs.
 
