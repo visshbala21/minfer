@@ -6,10 +6,11 @@ The repetitions must have the same structure (one script, same arguments). The o
 that structure with every number replaced by its median over the repetitions; under
 ``"repeats"`` it lists the input files and holds two more trees of the same shape with the
 minimum and the maximum. Strings and other non-numeric values are taken from the first
-file; per-item lists (per-session records, error strings) are dropped from the combined
-trees — they are in the input files. A number missing from some repetition (a run that
-failed) is the median of the repetitions that have it, and ``"repeats"["counts"]`` says
-how many that was wherever it was not all of them.
+file; a list is kept if every repetition has the same one (flags, a command line) and
+dropped otherwise (per-session records, error strings) — those are in the input files. A
+number missing from some repetition (a run that failed) is the median of the repetitions
+that have it, and ``"repeats"["counts"]`` says how many that was wherever it was not all
+of them.
 
 The README's tables are generated from these median files: never from a best-of-n.
 """
@@ -52,7 +53,9 @@ def combine(trees: list[Any], path: str = "") -> tuple[Any, Any, Any, dict[str, 
         counts = {} if len(present) == len(trees) else {path: len(present)}
         return float(np.median(array)), float(array.min()), float(array.max()), counts
     if isinstance(first, list):
-        return None, None, None, {}
+        # Kept when every repetition has the same list (flags, a command line), else dropped.
+        same = len(present) == len(trees) and all(tree == first for tree in present)
+        return (first, None, None, {}) if same else (None, None, None, {})
     return first, None, None, {}
 
 
