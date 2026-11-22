@@ -129,6 +129,29 @@ class JointContext:
         return out
 
 
+class SharedIntWorkspace:
+    """One FlashInfer integer workspace (device buffer and its pinned staging copy).
+
+    Every FlashInfer wrapper allocates an 8 MB device buffer and an 8 MB pinned buffer for
+    its plan's metadata. A set of graph-mode wrappers that are never planned for passes in
+    flight at the same time can share one: each pass's plan rewrites it just before that
+    pass's graph is replayed. The joint graphs alone hold 336 wrappers — 2.7 GB of device
+    memory outside the KV pool, which left a host-tier restore without room (B-012).
+    """
+
+    SIZE = 8 * 1024 * 1024  # FlashInfer's own default
+
+    def __init__(self, device: torch.device) -> None:
+        self.device_buffer = torch.empty(self.SIZE, dtype=torch.uint8, device=device)
+        self.pinned_buffer = torch.empty(self.SIZE, dtype=torch.uint8, pin_memory=True)
+
+    def adopt(self, wrapper: Wrapper) -> Wrapper:
+        """Point ``wrapper`` (not yet planned) at this workspace; return it."""
+        wrapper._int_workspace_buffer = self.device_buffer
+        wrapper._pin_memory_int_workspace_buffer = self.pinned_buffer
+        return wrapper
+
+
 def needs_tensor_cores(num_heads: int, num_kv_heads: int) -> bool:
     """Whether FlashInfer's decode should take its tensor-core path for this head layout.
 

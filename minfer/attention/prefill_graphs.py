@@ -26,7 +26,7 @@ import torch
 from torch import Tensor
 
 from minfer.attention.base import garbage_collection_paused
-from minfer.attention.flashinfer_backend import KernelContext, flashinfer
+from minfer.attention.flashinfer_backend import KernelContext, SharedIntWorkspace, flashinfer
 from minfer.attention.paged import PagedBatch, SequenceSpan, build_paged_batch
 from minfer.cache.kv_store import PagedKVStore
 from minfer.model.qwen2 import Qwen2Model
@@ -121,6 +121,7 @@ class PrefillGraphs:
         self._kv_dtype = next(iter(store.tensors))
         device = model.device
         self._buckets: dict[tuple[int, int], _Bucket] = {}
+        space = SharedIntWorkspace(device)  # one pass at a time: one plan's metadata
         for seqs, tokens in sorted(shapes):
             wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
                 workspace,
@@ -134,6 +135,7 @@ class PrefillGraphs:
                 paged_kv_last_page_len_buf=torch.zeros(seqs, dtype=torch.int32, device=device),
                 max_total_num_rows=tokens,
             )
+            space.adopt(wrapper)
             self._buckets[seqs, tokens] = _Bucket(
                 token_ids=torch.zeros(tokens, dtype=torch.int64, device=device),
                 positions=torch.zeros(tokens, dtype=torch.int64, device=device),

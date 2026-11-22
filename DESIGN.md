@@ -2812,3 +2812,22 @@ and 11.9k (was 12.2k against 14.7k / 14.0k on the old defaults).
 **Phase 18 item 2, acceptance: TPOT p50 within 5% of vLLM at 1–16 req/s — met, 0.97–1.00×
 in the matrix and 0.97–0.99× in the A/B of M-034 against these vLLM rows.** Saturated,
 minfer is level on throughput and 12% behind on TPOT (M-034's last point).
+
+### B-012 Joint graphs took 2.7 GB outside the KV pool; a host-tier restore ran out of memory (fixed)
+
+The first repetition of the pressure sweep on the Phase 18 defaults failed 277 of 1,001
+requests in one run (full stack, 128 sessions): the engine process died on
+`torch.OutOfMemoryError` with 22 MB free, allocating the 58 MB device staging tensor of a
+host-tier restore. The KV pool is sized at start-up to 90% of the memory free after the
+weights; everything else — CUDA graphs and their buffers, activations of eager passes,
+restore staging — lives in the rest. Measured right after start-up with a 96 GB host tier:
+**3.75 GB free**. The joint graphs (M-034) were the new consumer: 168 buckets with a
+FlashInfer prefill and a decode wrapper each, and every FlashInfer wrapper allocates its
+own 8 MB device integer workspace (plus 8 MB pinned): 336 × 8 MB = 2.7 GB. Fix: wrappers
+that are never planned for passes in flight at the same time share one workspace
+(`SharedIntWorkspace`): all joint buckets share one for their prefill kernels and one for
+their decode kernels, all prefill-graph buckets one. Each pass's plan rewrites the
+workspace just before its own graph is replayed, which is the only order they are used
+in. After the fix: **7.64 GB free** at start-up, the same 60,209 KV blocks. GPU tests of
+the engine, host tier and speculation pass (48). The failed run and the other minfer runs
+of that repetition were discarded and measured again on the fixed code.

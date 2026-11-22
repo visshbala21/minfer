@@ -24,7 +24,12 @@ import torch
 from torch import Tensor
 
 from minfer.attention.base import garbage_collection_paused
-from minfer.attention.flashinfer_backend import JointContext, flashinfer, needs_tensor_cores
+from minfer.attention.flashinfer_backend import (
+    JointContext,
+    SharedIntWorkspace,
+    flashinfer,
+    needs_tensor_cores,
+)
 from minfer.attention.paged import PagedBatch, SequenceSpan, build_paged_batch, split_batch
 from minfer.attention.prefill_graphs import fit_shape, padding_spans
 from minfer.cache.kv_store import PagedKVStore
@@ -93,6 +98,10 @@ class JointGraphs:
         def int_buffer(length: int) -> Tensor:
             return torch.zeros(length, dtype=torch.int32, device=device)
 
+        # Joint passes run one at a time, so all buckets share two integer workspaces:
+        # one for the prefill kernels' plans and one for the decode kernels' (both are
+        # planned for the same pass).
+        prefill_space, decode_space = SharedIntWorkspace(device), SharedIntWorkspace(device)
         self._buckets: dict[tuple[int, int, int], _Bucket] = {}
         for seqs, tokens in sorted(self._prefill_shapes):
             for size in self.decode_sizes:
@@ -102,24 +111,28 @@ class JointGraphs:
                     positions=torch.zeros(total, dtype=torch.int64, device=device),
                     slots=torch.zeros(total, dtype=torch.int64, device=device),
                     rows=torch.zeros(seqs + size, dtype=torch.int64, device=device),
-                    prefill=flashinfer.BatchPrefillWithPagedKVCacheWrapper(
-                        workspace,
-                        "NHD",
-                        use_cuda_graph=True,
-                        qo_indptr_buf=int_buffer(seqs + 1),
-                        paged_kv_indptr_buf=int_buffer(seqs + 1),
-                        paged_kv_indices_buf=int_buffer(seqs * max_pages_per_sequence),
-                        paged_kv_last_page_len_buf=int_buffer(seqs),
-                        max_total_num_rows=tokens,
+                    prefill=prefill_space.adopt(
+                        flashinfer.BatchPrefillWithPagedKVCacheWrapper(
+                            workspace,
+                            "NHD",
+                            use_cuda_graph=True,
+                            qo_indptr_buf=int_buffer(seqs + 1),
+                            paged_kv_indptr_buf=int_buffer(seqs + 1),
+                            paged_kv_indices_buf=int_buffer(seqs * max_pages_per_sequence),
+                            paged_kv_last_page_len_buf=int_buffer(seqs),
+                            max_total_num_rows=tokens,
+                        )
                     ),
-                    decode=flashinfer.BatchDecodeWithPagedKVCacheWrapper(
-                        workspace,
-                        "NHD",
-                        use_cuda_graph=True,
-                        use_tensor_cores=tensor_cores,
-                        paged_kv_indptr_buffer=int_buffer(size + 1),
-                        paged_kv_indices_buffer=int_buffer(size * max_pages_per_sequence),
-                        paged_kv_last_page_len_buffer=int_buffer(size),
+                    decode=decode_space.adopt(
+                        flashinfer.BatchDecodeWithPagedKVCacheWrapper(
+                            workspace,
+                            "NHD",
+                            use_cuda_graph=True,
+                            use_tensor_cores=tensor_cores,
+                            paged_kv_indptr_buffer=int_buffer(size + 1),
+                            paged_kv_indices_buffer=int_buffer(size * max_pages_per_sequence),
+                            paged_kv_last_page_len_buffer=int_buffer(size),
+                        )
                     ),
                 )
         with garbage_collection_paused():
