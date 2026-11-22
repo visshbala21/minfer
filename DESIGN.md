@@ -2788,3 +2788,27 @@ and never hit it; the fix is for any process that builds more than one.
 Also from making joint passes the default: the tensor-parallel driver's attention
 backend had no `joint` method (4 tests failed); it now broadcasts joint passes with their
 prefill/decode split to the workers like any other pass.
+
+### M-035 The 7B matrix on the Phase 18 defaults, all three engines measured again
+
+`bench/run_matrix.py --model 7b` on this pod's H100 (the previous matrix was measured on
+the lost pod's), minfer at `16e5af3`, baselines with the audit-selected flags, 0 failed
+requests anywhere (`bench/results/matrix_7b/`). The baselines reproduce their earlier
+rows (vLLM TPOT p50 6.28–7.78 ms against 6.26–7.88; saturated 2,255 against 2,258 tok/s),
+so the two machines are interchangeable for this workload.
+
+| agent workload, 7B | minfer | vLLM | SGLang |
+|---|---|---|---|
+| TPOT p50 at 1 / 2 / 4 / 8 / 16 req/s (ms) | 6.14 / 6.23 / 6.55 / 6.87 / 7.59 | 6.28 / 6.40 / 6.59 / 6.92 / 7.78 | 6.27 / 6.41 / 6.83 / 7.21 / 8.25 |
+| TPOT p50 relative to vLLM | 0.97–1.00× | 1.00× | 1.00–1.06× |
+| TTFT p50 at 1–16 req/s (ms) | 48–57 | 76–83 | 57–67 |
+| TTFT p99 at 1–16 req/s (ms) | 88–112 | 122–143 | 101–132 |
+| saturated: tok/s, TPOT p50 (ms) | 2,224, 22.3 | 2,255, 20.0 | 2,230, 21.3 |
+
+ShareGPT (`vllm bench serve`): TPOT p50 lowest of the three at every rate (5.97–6.63 ms
+against 6.08–6.86 and 6.18–7.74); with 1,000 requests at once 14.0k tok/s against 15.5k
+and 11.9k (was 12.2k against 14.7k / 14.0k on the old defaults).
+
+**Phase 18 item 2, acceptance: TPOT p50 within 5% of vLLM at 1–16 req/s — met, 0.97–1.00×
+in the matrix and 0.97–0.99× in the A/B of M-034 against these vLLM rows.** Saturated,
+minfer is level on throughput and 12% behind on TPOT (M-034's last point).
