@@ -2669,3 +2669,45 @@ comparable:
 Pauses dominate a job: the measured sessions wait a median of about four minutes for
 tools against tens of seconds of model time, so JCT differences between engines are
 small in relative terms, and `model_time` is reported next to it.
+
+### M-033 A decode step of minfer and of vLLM, measured the same way
+
+To find where the decode gap is, `bench/decode_compare.py` times one decode step of both
+engines through their offline APIs, identically: random-token prompts, greedy,
+`ignore_eos`, two generations per point that differ only in output length, step time =
+difference of wall times / 256. Both engines' own scheduling, sampling and token
+read-back are inside the number; prefill and start-up cancel. A first version used a
+fixed 32-token short run, which is wrong whenever prefilling the batch takes longer than
+32 decode steps (both engines interleave prefill chunks with the decoding of sequences
+admitted earlier, so in the short run some sequences finish before the last prompt is
+in): vLLM's 16 × 8k point came out at 16.7–27.9 ms across three runs. The short run is
+now 32 tokens plus the number of 2,048-token chunks the prompts take, and the three runs
+of every point agree to within 1–4%.
+
+`bench/results/decode_compare_7b.json`, Qwen2.5-7B, median of 3 (minfer at `78c3d9b`; the
+working tree differed only in documentation and README-table code):
+
+| batch × context | minfer, synchronous (ms) | minfer, async decode (ms) | vLLM 0.34 (ms) | sync / vLLM | async / vLLM |
+|---|---|---|---|---|---|
+| 1 × 1k | 6.20 | 5.91 | 6.18 | 1.004 | 0.956 |
+| 8 × 1k | 6.52 | 6.20 | 6.43 | 1.013 | 0.964 |
+| 32 × 1k | 7.27 | 6.79 | 6.96 | 1.045 | 0.975 |
+| 64 × 1k | 8.43 | 7.75 | 7.95 | 1.060 | 0.975 |
+| 128 × 1k | 10.82 | 9.72 | 9.97 | 1.086 | 0.975 |
+| 1 × 8k | 6.36 | 6.08 | 6.19 | 1.029 | 0.983 |
+| 16 × 8k | 9.28 | 8.58 | 8.68 | 1.069 | 0.988 |
+| 32 × 8k | 12.29 | 11.31 | 11.32 | 1.086 | 0.999 |
+| 64 × 8k | 18.56 | 16.51 | 16.85 | 1.102 | 0.980 |
+
+- **The synchronous decode step was level with vLLM's at batch 1 and fell behind as the
+  batch grew** (1.00× → 1.09–1.10×): what grows with the batch is the host work between
+  two GPU passes (M-031's breakdown: 0.06 ms of bookkeeping at batch 1, 0.6–0.7 ms at
+  batch 128 or 64 × 8k, plus building and uploading the batch), which vLLM's asynchronous
+  scheduling hides. The GPU work itself — the same cuBLAS GEMMs and the same FlashInfer
+  decode kernel in both — is not the gap.
+- **With async decode (D-044) minfer's step is 0.96–1.00× of vLLM's at every point.** It
+  removes 0.28 ms at batch 1 and 1.1 ms at batch 128 and at 64 × 8k.
+
+This is the pure decode loop. On a server the agent workload interleaves arrivals and
+prefill chunks with decoding; those steps stay synchronous, and the step that holds a
+prefill chunk still makes two passes over the weights unless joint passes are on (M-034).

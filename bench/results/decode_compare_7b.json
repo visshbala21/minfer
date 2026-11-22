@@ -1,0 +1,326 @@
+{
+ "model": "Qwen/Qwen2.5-7B-Instruct",
+ "method": "For each (batch size, context length), ``batch`` random-token prompts of ``context`` tokens are generated greedily with ``ignore_eos`` twice through the engine's offline API: once for ``short`` and once for ``short + EXTRA`` output tokens. The prompts differ between the two calls and between points (no prefix-cache hits). The time per decode step is the difference of the two wall-clock times divided by ``EXTRA``: prefill, start-up and the final read-back cancel, and what remains is the steady-state cost of one step of ``batch`` sequences, including each engine's own scheduling and sampling. This holds only if every sequence is still decoding when the last prompt has been prefilled \u2014 both engines interleave prefill chunks with the decoding of sequences admitted earlier \u2014 so ``short`` is ``32`` plus the number of 2,048-token chunks the prompts take (an upper bound on the steps prefill spans in either engine). Each point is measured ``REPEATS`` times; the median is reported.",
+ "engines": {
+  "minfer": {
+   "engine": "minfer",
+   "version": "78c3d9b2448eab168592432a34d0be8c3710a7c2 (dirty tree)",
+   "overrides": {},
+   "rows": [
+    {
+     "batch_size": 1,
+     "context_tokens": 1024,
+     "short_tokens": 33,
+     "step_ms": 6.202646093697695,
+     "step_ms_runs": [
+      6.157881035051105,
+      6.202646093697695,
+      6.2077098714325984
+     ]
+    },
+    {
+     "batch_size": 8,
+     "context_tokens": 1024,
+     "short_tokens": 36,
+     "step_ms": 6.518129550613594,
+     "step_ms_runs": [
+      6.518129550613594,
+      6.517132335829956,
+      6.540810496289851
+     ]
+    },
+    {
+     "batch_size": 32,
+     "context_tokens": 1024,
+     "short_tokens": 48,
+     "step_ms": 7.273408964920236,
+     "step_ms_runs": [
+      7.281228593683409,
+      7.269683171898578,
+      7.273408964920236
+     ]
+    },
+    {
+     "batch_size": 64,
+     "context_tokens": 1024,
+     "short_tokens": 64,
+     "step_ms": 8.42799181623377,
+     "step_ms_runs": [
+      8.381509933542475,
+      8.477831160234928,
+      8.42799181623377
+     ]
+    },
+    {
+     "batch_size": 128,
+     "context_tokens": 1024,
+     "short_tokens": 96,
+     "step_ms": 10.824633495985836,
+     "step_ms_runs": [
+      10.864489300729474,
+      10.824633495985836,
+      10.776572503800708
+     ]
+    },
+    {
+     "batch_size": 1,
+     "context_tokens": 8192,
+     "short_tokens": 36,
+     "step_ms": 6.364768730236392,
+     "step_ms_runs": [
+      6.37786755464731,
+      6.339755902217803,
+      6.364768730236392
+     ]
+    },
+    {
+     "batch_size": 16,
+     "context_tokens": 8192,
+     "short_tokens": 96,
+     "step_ms": 9.280011406417543,
+     "step_ms_runs": [
+      9.293751581935794,
+      9.245821499916929,
+      9.280011406417543
+     ]
+    },
+    {
+     "batch_size": 32,
+     "context_tokens": 8192,
+     "short_tokens": 160,
+     "step_ms": 12.29188608590448,
+     "step_ms_runs": [
+      12.29188608590448,
+      12.20977560569736,
+      12.350123035048455
+     ]
+    },
+    {
+     "batch_size": 64,
+     "context_tokens": 8192,
+     "short_tokens": 288,
+     "step_ms": 18.559363210897573,
+     "step_ms_runs": [
+      18.541639601835413,
+      18.808318425953985,
+      18.559363210897573
+     ]
+    }
+   ]
+  },
+  "minfer_async": {
+   "engine": "minfer",
+   "version": "78c3d9b2448eab168592432a34d0be8c3710a7c2 (dirty tree)",
+   "overrides": {
+    "async_decode": true
+   },
+   "rows": [
+    {
+     "batch_size": 1,
+     "context_tokens": 1024,
+     "short_tokens": 33,
+     "step_ms": 5.911510289251964,
+     "step_ms_runs": [
+      5.911510289251964,
+      5.913529738336365,
+      5.91065404296387
+     ]
+    },
+    {
+     "batch_size": 8,
+     "context_tokens": 1024,
+     "short_tokens": 36,
+     "step_ms": 6.20045604682673,
+     "step_ms_runs": [
+      6.190217093717365,
+      6.220584031325416,
+      6.20045604682673
+     ]
+    },
+    {
+     "batch_size": 32,
+     "context_tokens": 1024,
+     "short_tokens": 48,
+     "step_ms": 6.788106945350592,
+     "step_ms_runs": [
+      6.7608824022045155,
+      6.788106945350592,
+      6.796546160330763
+     ]
+    },
+    {
+     "batch_size": 64,
+     "context_tokens": 1024,
+     "short_tokens": 64,
+     "step_ms": 7.752147363362383,
+     "step_ms_runs": [
+      7.7921891015648725,
+      7.752147363362383,
+      7.7305762811192835
+     ]
+    },
+    {
+     "batch_size": 128,
+     "context_tokens": 1024,
+     "short_tokens": 96,
+     "step_ms": 9.72295644123733,
+     "step_ms_runs": [
+      9.750783738354585,
+      9.669957566529774,
+      9.72295644123733
+     ]
+    },
+    {
+     "batch_size": 1,
+     "context_tokens": 8192,
+     "short_tokens": 36,
+     "step_ms": 6.0826121991794935,
+     "step_ms_runs": [
+      6.097186300848989,
+      6.080766875129484,
+      6.0826121991794935
+     ]
+    },
+    {
+     "batch_size": 16,
+     "context_tokens": 8192,
+     "short_tokens": 96,
+     "step_ms": 8.577628226476008,
+     "step_ms_runs": [
+      8.609494374923088,
+      8.577628226476008,
+      8.465232203207051
+     ]
+    },
+    {
+     "batch_size": 32,
+     "context_tokens": 8192,
+     "short_tokens": 160,
+     "step_ms": 11.305268515570788,
+     "step_ms_runs": [
+      11.340752500018425,
+      11.305268515570788,
+      11.188021437419593
+     ]
+    },
+    {
+     "batch_size": 64,
+     "context_tokens": 8192,
+     "short_tokens": 288,
+     "step_ms": 16.507126976421205,
+     "step_ms_runs": [
+      16.43152436327,
+      16.84607158563267,
+      16.507126976421205
+     ]
+    }
+   ]
+  },
+  "vllm": {
+   "engine": "vllm",
+   "version": "0.34.0",
+   "overrides": {},
+   "rows": [
+    {
+     "batch_size": 1,
+     "context_tokens": 1024,
+     "short_tokens": 33,
+     "step_ms": 6.180757484571586,
+     "step_ms_runs": [
+      6.179736367130317,
+      6.180757484571586,
+      6.186130519608923
+     ]
+    },
+    {
+     "batch_size": 8,
+     "context_tokens": 1024,
+     "short_tokens": 36,
+     "step_ms": 6.433212808587996,
+     "step_ms_runs": [
+      6.465352199256813,
+      6.422917511599735,
+      6.433212808587996
+     ]
+    },
+    {
+     "batch_size": 32,
+     "context_tokens": 1024,
+     "short_tokens": 48,
+     "step_ms": 6.962521355262652,
+     "step_ms_runs": [
+      7.068111644457531,
+      6.926866261892428,
+      6.962521355262652
+     ]
+    },
+    {
+     "batch_size": 64,
+     "context_tokens": 1024,
+     "short_tokens": 64,
+     "step_ms": 7.950100582093,
+     "step_ms_runs": [
+      7.852239624980939,
+      7.952050742233041,
+      7.950100582093
+     ]
+    },
+    {
+     "batch_size": 128,
+     "context_tokens": 1024,
+     "short_tokens": 96,
+     "step_ms": 9.968369617126882,
+     "step_ms_runs": [
+      9.816928617055964,
+      10.045045359447613,
+      9.968369617126882
+     ]
+    },
+    {
+     "batch_size": 1,
+     "context_tokens": 8192,
+     "short_tokens": 36,
+     "step_ms": 6.187405379023403,
+     "step_ms_runs": [
+      6.187405379023403,
+      6.1801212773389125,
+      6.192715336055699
+     ]
+    },
+    {
+     "batch_size": 16,
+     "context_tokens": 8192,
+     "short_tokens": 96,
+     "step_ms": 8.681715679585977,
+     "step_ms_runs": [
+      8.733724874900872,
+      8.681715679585977,
+      8.589740363277087
+     ]
+    },
+    {
+     "batch_size": 32,
+     "context_tokens": 8192,
+     "short_tokens": 160,
+     "step_ms": 11.3192545622951,
+     "step_ms_runs": [
+      11.402782015693447,
+      11.272435433511419,
+      11.3192545622951
+     ]
+    },
+    {
+     "batch_size": 64,
+     "context_tokens": 8192,
+     "short_tokens": 288,
+     "step_ms": 16.84571763303211,
+     "step_ms_runs": [
+      16.867627644614913,
+      16.755222741949183,
+      16.84571763303211
+     ]
+    }
+   ]
+  }
+ }
+}
