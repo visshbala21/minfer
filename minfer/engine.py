@@ -1,7 +1,8 @@
 """The inference engine: model + paged KV cache + scheduler, advanced one step at a time.
 
 :class:`Engine` is synchronous and single-threaded by design. ``add_request`` queues work,
-``step`` runs one scheduling iteration (at most one prefill pass and one decode pass) and
+``step`` runs one scheduling iteration (one pass over the weights by default: a joint
+prefill+decode pass or a decode pass, the latter possibly launched one step ahead) and
 returns the tokens it produced. The server drives ``step`` from a dedicated thread; tests
 and benchmarks call :meth:`Engine.generate`.
 """

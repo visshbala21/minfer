@@ -935,6 +935,41 @@ def _with_spread(data: dict, config: str) -> dict:
     return entry
 
 
+def decode_path_table() -> str:
+    """The Phase 18 decode-path changes through the server, against vLLM's matrix rows."""
+    data = _load("decode_path_7b.json")
+    vllm = (_matrix(models.PRIMARY).get("vllm") or {}).get("agent")
+    if not data or not vllm:
+        return MISSING
+    rates = data["rates"]
+    rows = []
+    for config in data["configs"].values():
+        cells = []
+        for rate in rates:
+            tpot = config[rate]["tpot_ms"]["p50"]
+            cells.append(f"{tpot:.2f} ({tpot / vllm[rate]['tpot_ms']['p50']:.2f}×)")
+        tok = config["max"]["output_tokens_per_second"] if "max" in rates else None
+        ttft = [config[r]["ttft_ms"]["p50"] for r in rates if r != "max"]
+        rows.append(
+            [config["label"], *cells, _span(ttft, ".0f"), "—" if tok is None else f"{tok:,.0f}"]
+        )
+    rows.append(
+        [
+            "vLLM (matrix)",
+            *(f"{vllm[r]['tpot_ms']['p50']:.2f}" for r in rates),
+            _span([vllm[r]["ttft_ms"]["p50"] for r in rates if r != "max"], ".0f"),
+            f"{vllm['max']['output_tokens_per_second']:,.0f}" if "max" in rates else "—",
+        ]
+    )
+    header = ["configuration", *(f"TPOT p50 at {r} (ms, vs vLLM)" for r in rates)]
+    header += ["TTFT p50 below max (ms)", "saturated tok/s"]
+    footer = (
+        "\n\nAgent workload at 7B, the matrix's traces, a fresh `minfer serve` per row "
+        "(`bench/unified_batches.py --experiment decode_path`); vLLM from the 7B matrix."
+    )
+    return _table(header, rows) + footer
+
+
 def jct_table() -> str:
     """Agent job completion time: each engine's best configuration, three concurrencies."""
     data = _load("jct_7b.json")
@@ -1003,6 +1038,7 @@ SECTIONS: dict[str, Callable[[], str]] = {
     "fairness-audit": fairness_audit_table,
     "full-stack": full_stack_table,
     "decode-compare": decode_compare_table,
+    "decode-path": decode_path_table,
     "jct": jct_table,
     "real-trace": real_trace_table,
     "pressure": pressure_table,
