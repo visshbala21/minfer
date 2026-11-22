@@ -404,6 +404,18 @@ What the sweep shows:
   has prefill work, which is where minfer's two passes per step cost most (per-token
   latency 1.18× vLLM's at 64 sessions, where both are at the hit-rate ceiling).
 
+**Agent job completion time** ([`bench/jct.py`](bench/jct.py), DESIGN.md D-045). What an
+agent waits for is its whole job: every model call of a session plus the tool calls in
+between. The same trace and replay, each engine in its best configuration under pressure;
+at concurrency `C` the `C` sessions that start the load are not measured, the next 32 / 64
+/ 96 are, and the load continues until every measured session has finished.
+
+<!-- BEGIN jct -->
+_Not measured yet._
+<!-- END jct -->
+
+![Agent job completion time](bench/plots/jct_7b.png)
+
 ## Results
 
 All numbers below are generated from the JSON files in [`bench/results/`](bench/results) by
