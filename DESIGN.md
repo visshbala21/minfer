@@ -2576,3 +2576,96 @@ of the same file shows where a step's time goes: host-side attention planning 0.
 ms, the rest of the host work (scheduling, sampling, reading tokens back, bookkeeping)
 0.06 ms at batch 1 growing to 0.56–0.73 ms at batch 128 and 64 × 8k — time in which the
 GPU has nothing to do, because every step ends by reading its tokens back.
+
+### D-044 Async decode: the next decode step is launched before the current one is read
+
+Every engine step used to end the same way: sample on the GPU, copy the tokens to the
+host (`.tolist()`, a device synchronization), append them, publish filled blocks to the
+prefix cache, then schedule and plan the next step. All of that host work runs while the
+GPU has nothing queued. At 7B it is 0.15 ms per step at batch 1 and 0.7 ms at batch 128
+(M-031's breakdown), plus building the batch and uploading it — and vLLM 0.34, with
+asynchronous scheduling on by default, hides it.
+
+`async_decode` overlaps it for the common case, consecutive decode steps of the same
+sequences:
+
+- A pure decode step whose requests are all greedy is launched with
+  `DecodeGraphs.run_async` and its argmax is enqueued with an asynchronous copy of the
+  tokens into a pinned buffer; nothing waits.
+- Before reading those tokens, the engine checks whether the next step is predictable: no
+  request waiting or being restored (an admission would change the step), every running
+  sequence is in the step in flight (none is prefilling), and every next position has a
+  block without evicting anything. If so, it allocates those blocks and launches the next
+  step, its input tokens taken *on the device* from the step in flight. Sequences that
+  end by length in the step in flight are left out of it; one that ends on a stop token
+  can only be known when its token is read, so its row in the next step is computed and
+  discarded (its KV write lands in a slot of the sequence's own last block, with the
+  correct key and value for that token, before any reader in stream order).
+- Then it reads the step in flight's tokens — the GPU is meanwhile executing the next
+  step — and appends, commits and emits exactly as before.
+
+So the GPU always has the next decode step queued behind the current one, and a step's
+host work costs nothing while the predictions hold. Anything else (an arrival, a prefill
+chunk, a stochastic request, speculation) makes the next step synchronous; the first
+step after it starts the pipeline again.
+
+What makes a launch non-blocking: per-token inputs and page tables are written into
+pinned staging buffers and copied with `non_blocking=True` (PyTorch's ordinary
+host-to-device copy synchronizes the stream); FlashInfer's `plan()` gets the page indices
+as a *device* tensor (it copies host-side indices with a blocking copy) and the
+`indptr`/`last_page_len` arrays in pinned memory. FlashInfer's planner also stages its own
+metadata in a pinned buffer it copies asynchronously, so two plans of the same wrapper
+must not be closer than that copy: the graphs record an event after each pass's inputs are
+enqueued and wait on it before the next plan (it has always fired by then, since the
+previous pass's inputs were copied before its graph began).
+
+Outputs are unchanged: the GPU test runs the same greedy requests with and without
+`async_decode` and gets the same tokens, then exercises arrivals, an abort and stochastic
+requests mid-flight and checks the block pool.
+
+### B-010 Pinned memory allocated per step stalled the host for 65–80 ms (fixed)
+
+The first version of `run_async` pinned its staging tensors per step
+(`Tensor.pin_memory()`, `torch.empty(..., pin_memory=True)`). In the decode comparison
+(M-033) it was 4–10% faster than synchronous steps at every point except one: 64
+sequences × 8k context, where it took **31.7 ms per step against 18.4 ms**. Reproduced
+with the engine alone after the KV pool had filled (`/tmp`-style diagnostic, not
+committed): of 286 launched-ahead steps, most took 2–18 ms and every fourth or so 65–83
+ms, with a mean of 29.9 ms. The step-time pattern — very short steps between very long
+ones — said the host, not the GPU, was stalling. Root cause: the caching host allocator
+serves a pinned request from its cache only if the block's last use has completed; with
+steps in flight it often had none free, and a new `cudaHostAlloc` of the 136 KB page
+index buffer (64 × 530 pages) blocks for tens of milliseconds. Fix: two sets of pinned
+staging buffers per graph set, allocated once at start-up and used alternately (each
+guarded by an event recorded after its copies are enqueued), and two pinned token
+buffers in the engine. Same diagnostic after the fix: mean 16.46 ms, no spikes.
+
+### D-045 Agent job completion time: what is measured, and why this way
+
+Continuum (arXiv 2511.02230) optimizes the time an agent takes to finish its whole job —
+every model call of a session plus the tool calls between them — and so is evaluated on
+job completion time (JCT), not on per-request latency. `bench/jct.py` measures it on the
+real trace with the same closed-loop replay as the pressure sweep, so the two are
+comparable:
+
+- At concurrency `C` the workers take sessions in trace order. The first `C` sessions
+  start the load (over a 30 s ramp, on an empty cache) and are not measured. The next `K`
+  are (`K` = 32 / 64 / 96 at `C` = 16 / 64 / 128).
+- The load does not stop when the measured sessions have started: workers keep taking
+  later sessions until every measured session has finished, so each runs start to end at
+  full concurrency, and no measured session is cut off (measuring only the sessions that
+  finish within a fixed window would select the short ones). Then the replay stops and
+  requests still in flight are abandoned.
+- Every engine runs the same `K` sessions with the same pauses (they are part of the
+  compiled trace). A session's JCT runs from its first call being sent to its last call
+  completing; `model_time` is JCT minus the pauses the replay waited, the part an engine
+  can change. A session with a failed call is reported as failed and left out of the
+  percentiles.
+- `C` = 16 is well within GPU KV capacity (55–65 median sessions, M-024), 64 is at it,
+  128 is twice it. Each engine runs its best configuration under pressure: minfer's full
+  stack (prefix cache, session-aware retention, host tier), vLLM with its native KV
+  offloading, SGLang with its hierarchical cache, 96 GB of host memory each.
+
+Pauses dominate a job: the measured sessions wait a median of about four minutes for
+tools against tens of seconds of model time, so JCT differences between engines are
+small in relative terms, and `model_time` is reported next to it.

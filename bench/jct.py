@@ -114,6 +114,9 @@ def main() -> None:
     )
     parser.add_argument("--concurrency", nargs="+", type=int, default=list(MEASURED))
     parser.add_argument("--ramp", type=float, default=30.0, help="seconds to start the load over")
+    parser.add_argument(
+        "--measured", type=int, default=None, help="measured sessions (default: MEASURED)"
+    )
     parser.add_argument("--port", type=int, default=8062)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--resume", action="store_true", help="keep results already on disk")
@@ -121,6 +124,9 @@ def main() -> None:
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
 
     from transformers import AutoTokenizer
+
+    def count(concurrency: int) -> int:
+        return args.measured or MEASURED.get(concurrency, concurrency)
 
     model = models.resolve(args.model)
     tag = models.tag(model)
@@ -130,7 +136,7 @@ def main() -> None:
         "model": model,
         "trace": {**trace.header, "sha256": trace.sha256, "sessions": len(trace.sessions)},
         "ramp_s": args.ramp,
-        "measured": {str(c): [c, c + MEASURED.get(c, c)] for c in args.concurrency},
+        "measured": {str(c): [c, c + count(c)] for c in args.concurrency},
         "configs": {},
     }
     if args.resume and args.out.exists():
@@ -145,7 +151,7 @@ def main() -> None:
         for concurrency in args.concurrency:
             if str(concurrency) in runs:
                 continue
-            measured = range(concurrency, concurrency + MEASURED.get(concurrency, concurrency))
+            measured = range(concurrency, concurrency + count(concurrency))
             if measured.stop > len(trace.sessions):
                 raise SystemExit(f"the trace has too few sessions for c={concurrency}")
             log = Path("bench/logs") / f"jct_{tag}_{engine}_{variant}_c{concurrency}.log"

@@ -601,13 +601,13 @@ def pressure_table(name: str = "pressure_7b.json") -> str:
             rows.append(
                 [
                     *head,
-                    f"{run['completed']}",
+                    f"{run['completed']:.0f}",
                     "—" if hit is None else f"{hit:.1%}",
                     f"{run['prefill_tokens_computed'] / max(1, run['completed']):,.0f}",
                     f"{run['ttft_ms']['p50']:.0f} / {run['ttft_ms']['p99']:.0f}",
                     f"{run['tpot_ms']['p50']:.1f}",
                     f"{run['output_tokens_per_second']:.0f}",
-                    str(run["failed"]),
+                    f"{run['failed']:.0f}",
                 ]
             )
     header = ["concurrent sessions", "configuration", "calls completed", "cache hit rate"]
@@ -640,9 +640,14 @@ def full_stack_table() -> str:
         ),
         ("TPOT p50 (ms)", lambda r: r["tpot_ms"]["p50"], ".1f", True),
         ("output tok/s", lambda r: r["output_tokens_per_second"], ",.0f", False),
-        ("calls completed in 240 s", lambda r: r["completed"], ",d", False),
-        ("failed requests", lambda r: r["failed"], "d", True),
+        ("calls completed in 240 s", lambda r: r["completed"], ",.0f", False),
+        ("failed requests", lambda r: r["failed"], ".0f", True),
     ]
+    repeats = data.get("repeats", {})
+
+    def spread(kind: str, name: str, level: str) -> dict | None:
+        return repeats.get(kind, {}).get("configs", {}).get(name, {}).get("runs", {}).get(level)
+
     rows = []
     for level in levels:
         for index, (label, get, fmt, lower) in enumerate(metrics):
@@ -651,6 +656,16 @@ def full_stack_table() -> str:
             winner = _best(values, lower)
             if winner is not None and texts.count(texts[winner]) == 1:
                 texts[winner] = f"**{texts[winner]}**"
+            for column, name in enumerate(best.values()):
+                low, high = spread("min", name, level), spread("max", name, level)
+                if low is None or high is None:
+                    continue
+                try:
+                    lo, hi = format(get(low), fmt), format(get(high), fmt)
+                except (KeyError, TypeError):
+                    continue
+                if lo != hi:
+                    texts[column] += f" ({lo}–{hi})"
             rows.append([level if index == 0 else "", label, *texts])
     header = ["concurrent sessions", "metric"]
     header += [
@@ -663,6 +678,11 @@ def full_stack_table() -> str:
         "each engine's KV tier. No approximate technique is in any of these configurations, so "
         "output quality is that of exact bf16 inference in all three."
     )
+    if repeats.get("files"):
+        footer += (
+            f" Median of {len(repeats['files'])} runs, each a fresh server; min–max in "
+            "parentheses; the best median in bold."
+        )
     return _table(header, rows) + footer
 
 
@@ -856,6 +876,116 @@ def interaction_table() -> str:
     return _table([*header, "second alone", "both", "both − sum of each"], rows)
 
 
+def decode_compare_table() -> str:
+    """One decode step of minfer (synchronous and async) and of vLLM, measured alike."""
+    data = _load("decode_compare_7b.json")
+    if not data or not all(k in data["engines"] for k in ("minfer", "minfer_async", "vllm")):
+        return MISSING
+    engines = data["engines"]
+    rows = []
+    for sync, overlapped, vllm in zip(
+        engines["minfer"]["rows"],
+        engines["minfer_async"]["rows"],
+        engines["vllm"]["rows"],
+        strict=True,
+    ):
+        a, b, c = sync["step_ms"], overlapped["step_ms"], vllm["step_ms"]
+        rows.append(
+            [
+                f"{sync['batch_size']} × {sync['context_tokens'] // 1024}k",
+                f"{a:.2f}",
+                f"{b:.2f}",
+                f"{c:.2f}",
+                f"{a / c:.3f}×",
+                f"**{b / c:.3f}×**" if b < c else f"{b / c:.3f}×",
+            ]
+        )
+    header = ["batch × context", "minfer, synchronous (ms)", "minfer, async decode (ms)"]
+    header += ["vLLM 0.34 (ms)", "synchronous / vLLM", "async / vLLM"]
+    footer = (
+        "\n\nQwen2.5-7B-Instruct, one H100; time per decode step from the difference of two "
+        "greedy generations of different lengths through each engine's offline API "
+        "(`bench/decode_compare.py`), median of 3."
+    )
+    return _table(header, rows) + footer
+
+
+def _range(entry: dict, path: tuple[str, ...], fmt: str) -> str:
+    """``median (min–max)`` of a number in a median file, or just the median."""
+
+    def get(tree: Any) -> Any:
+        for key in path:
+            tree = tree.get(key) if isinstance(tree, dict) else None
+        return tree
+
+    median = get(entry)
+    low, high = get(entry.get("_min", {})), get(entry.get("_max", {}))
+    text = format(median, fmt)
+    if low is None or high is None or format(low, fmt) == format(high, fmt):
+        return text
+    return f"{text} ({format(low, fmt)}–{format(high, fmt)})"
+
+
+def _with_spread(data: dict, config: str) -> dict:
+    """A configuration of a median file, with its min and max trees attached."""
+    repeats = data.get("repeats", {})
+    entry = dict(data["configs"][config])
+    entry["_min"] = repeats.get("min", {}).get("configs", {}).get(config, {})
+    entry["_max"] = repeats.get("max", {}).get("configs", {}).get(config, {})
+    return entry
+
+
+def jct_table() -> str:
+    """Agent job completion time: each engine's best configuration, three concurrencies."""
+    data = _load("jct_7b.json")
+    if not data:
+        return MISSING
+    names = {
+        "minfer/session_host": "minfer full stack",
+        "vllm/offload": "vLLM + native KV offloading",
+        "sglang/hicache": "SGLang + hierarchical cache",
+    }
+    configs = {name: _with_spread(data, name) for name in names if name in data["configs"]}
+    levels = sorted({int(c) for e in configs.values() for c in e["runs"]})
+    metrics = [
+        ("JCT p50 (s)", ("jct_s", "p50"), ".1f"),
+        ("JCT p90 (s)", ("jct_s", "p90"), ".1f"),
+        ("JCT p99 (s)", ("jct_s", "p99"), ".1f"),
+        ("model time per session p50 (s)", ("model_time_s", "p50"), ".1f"),
+        ("model time per session p90 (s)", ("model_time_s", "p90"), ".1f"),
+        ("prefill tokens computed (M)", ("prefill_tokens_computed",), ".2f"),
+        ("sessions completed", ("completed_sessions",), ".0f"),
+    ]
+    rows = []
+    for level in levels:
+        for index, (label, path, fmt) in enumerate(metrics):
+            cells = []
+            for entry in configs.values():
+                run = entry["runs"].get(str(level))
+                if run is None or "error" in run:
+                    cells.append("—")
+                    continue
+                spread = {
+                    "_min": entry["_min"].get("runs", {}).get(str(level), {}),
+                    "_max": entry["_max"].get("runs", {}).get(str(level), {}),
+                }
+                if path == ("prefill_tokens_computed",):
+                    scaled = {k: {path[0]: v.get(path[0], 0) / 1e6} for k, v in spread.items()}
+                    cells.append(_range({path[0]: run[path[0]] / 1e6, **scaled}, path, fmt))
+                else:
+                    cells.append(_range({**run, **spread}, path, fmt))
+            rows.append([str(level) if index == 0 else "", label, *cells])
+    header = ["concurrent sessions", "metric", *(names[n] for n in configs)]
+    repeats = len(data.get("repeats", {}).get("files", [])) or 1
+    footer = (
+        f"\n\nMedian of {repeats} runs (min–max in parentheses); every run a fresh server. "
+        "Real coding-agent trace, Qwen2.5-7B-Instruct, one H100, 96 GB host tier per engine. "
+        "JCT: first call of a session sent → its last call completed, tool-call pauses "
+        "included; model time: JCT minus the pauses (the part an engine can change)."
+    )
+    return _table(header, rows) + footer
+
+
 SECTIONS: dict[str, Callable[[], str]] = {
     "headline": headline,
     "agent-results": agent_table,
@@ -872,6 +1002,8 @@ SECTIONS: dict[str, Callable[[], str]] = {
     "triton": triton_table,
     "fairness-audit": fairness_audit_table,
     "full-stack": full_stack_table,
+    "decode-compare": decode_compare_table,
+    "jct": jct_table,
     "real-trace": real_trace_table,
     "pressure": pressure_table,
     "host-tier-cost": host_tier_cost_table,

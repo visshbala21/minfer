@@ -304,6 +304,18 @@ def plot_pressure(name: str = "pressure_7b") -> None:
             ys = [_agent_value(runs[x], metric) for x in xs]
             color, text = PRESSURE_STYLE.get(config, (MUTED, entry["label"]))
             ax.plot([position[x] for x in xs], ys, color=color, marker="o", label=text, **ring)
+            spread = data.get("repeats", {})
+            low = spread.get("min", {}).get("configs", {}).get(config, {}).get("runs", {})
+            high = spread.get("max", {}).get("configs", {}).get(config, {}).get("runs", {})
+            if all(str(x) in low and str(x) in high for x in xs):
+                ax.fill_between(
+                    [position[x] for x in xs],
+                    [_agent_value(low[str(x)], metric) for x in xs],
+                    [_agent_value(high[str(x)], metric) for x in xs],
+                    color=color,
+                    alpha=0.12,
+                    linewidth=0,
+                )
         ax.set_title(label)
         ax.set_xlabel("concurrent sessions")
         ax.set_xticks(range(len(levels)), [str(level) for level in levels])
@@ -330,6 +342,51 @@ def plot_pressure(name: str = "pressure_7b") -> None:
     fig.savefig(PLOTS / f"{name}.png", dpi=160)
     plt.close(fig)
     print(f"wrote {PLOTS / f'{name}.png'}")
+
+
+JCT_CONFIGS = {"minfer/session_host": "minfer", "vllm/offload": "vllm", "sglang/hicache": "sglang"}
+
+
+def plot_jct(stem: str = "jct_7b") -> None:
+    """Distribution of agent job completion time per engine, at each concurrency.
+
+    Pools the sessions of every repetition (``<stem>_r*.json``): each repetition runs the
+    same sessions, so the pooled curve is the distribution over sessions and runs.
+    """
+    files = sorted(RESULTS.glob(f"{stem}_r*.json"))
+    if not files:
+        return
+    runs = [json.loads(path.read_text()) for path in files]
+    levels = sorted({int(c) for data in runs for e in data["configs"].values() for c in e["runs"]})
+    fig, axes = plt.subplots(2, len(levels), figsize=(5.2 * len(levels), 8.4), squeeze=False)
+    for column, level in enumerate(levels):
+        for row, (metric, label) in enumerate(
+            (("jct_s", "job completion time (s)"), ("model_s", "model time per session (s)"))
+        ):
+            ax = axes[row][column]
+            for config, engine in JCT_CONFIGS.items():
+                values = []
+                for data in runs:
+                    run = data["configs"].get(config, {}).get("runs", {}).get(str(level))
+                    for session in (run or {}).get("per_session", []):
+                        jct = session["jct_s"]
+                        values.append(jct if metric == "jct_s" else jct - session["pause_s"])
+                if not values:
+                    continue
+                values.sort()
+                fractions = [(i + 1) / len(values) for i in range(len(values))]
+                ax.step(values, fractions, where="post", color=SERIES[engine], label=LABELS[engine])
+            ax.set_title(f"{level} sessions: {label}")
+            ax.set_xlabel("seconds")
+            ax.set_ylabel("share of sessions")
+            ax.set_ylim(0, 1.02)
+            ax.grid(axis="x")
+    note = (
+        f"Real coding-agent trace, {runs[0]['model'].rsplit('/', 1)[-1]}, each engine's best "
+        f"configuration under pressure (host tiers on); {len(files)} runs pooled; model time "
+        "is JCT minus the tool-call pauses."
+    )
+    _finish(fig, list(axes[0]), "Agent job completion time", note, f"{stem}.png")
 
 
 COMPOSITION_PATH = [
@@ -407,6 +464,7 @@ def main() -> None:
     plot_chunked_prefill()
     plot_triton_kernel()
     plot_pressure()
+    plot_jct()
     plot_composition()
 
 
