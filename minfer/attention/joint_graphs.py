@@ -23,6 +23,7 @@ from dataclasses import dataclass
 import torch
 from torch import Tensor
 
+from minfer.attention.base import garbage_collection_paused
 from minfer.attention.flashinfer_backend import JointContext, flashinfer, needs_tensor_cores
 from minfer.attention.paged import PagedBatch, SequenceSpan, build_paged_batch, split_batch
 from minfer.attention.prefill_graphs import fit_shape, padding_spans
@@ -121,7 +122,8 @@ class JointGraphs:
                         paged_kv_last_page_len_buffer=int_buffer(size),
                     ),
                 )
-        self._capture_all()
+        with garbage_collection_paused():
+            self._capture_all()
 
     def bucket(
         self, num_prefill_spans: int, num_prefill_tokens: int, num_decode: int

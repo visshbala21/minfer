@@ -48,9 +48,12 @@ EXPERIMENTS = {
         "flashinfer": ("FlashInfer decode kernel", ["--decode-kernel", "flashinfer"]),
     },
     "decode_path": {
-        "before": ("synchronous steps, separate prefill and decode passes", []),
-        "async": ("+ decode steps launched ahead", ["--async-decode"]),
-        "joint": ("+ joint prefill+decode passes", ["--unified-batches"]),
+        "before": (
+            "synchronous steps, separate prefill and decode passes",
+            ["--no-async-decode", "--no-unified-batches"],
+        ),
+        "async": ("+ decode steps launched ahead", ["--async-decode", "--no-unified-batches"]),
+        "joint": ("+ joint prefill+decode passes", ["--no-async-decode", "--unified-batches"]),
         "async_joint": (
             "+ both",
             ["--async-decode", "--unified-batches"],

@@ -25,6 +25,7 @@ from dataclasses import dataclass
 import torch
 from torch import Tensor
 
+from minfer.attention.base import garbage_collection_paused
 from minfer.attention.flashinfer_backend import KernelContext, flashinfer
 from minfer.attention.paged import PagedBatch, SequenceSpan, build_paged_batch
 from minfer.cache.kv_store import PagedKVStore
@@ -140,7 +141,8 @@ class PrefillGraphs:
                 rows=torch.zeros(seqs, dtype=torch.int64, device=device),
                 wrapper=wrapper,
             )
-        self._capture_all()
+        with garbage_collection_paused():
+            self._capture_all()
 
     def bucket(self, num_spans: int, num_tokens: int) -> tuple[int, int] | None:
         """The smallest captured shape that can hold a batch, or ``None``."""

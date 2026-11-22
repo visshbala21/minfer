@@ -80,7 +80,7 @@ def add_engine_arguments(parser: argparse.ArgumentParser) -> None:
         "--unified-batches",
         action=argparse.BooleanOptionalAction,
         default=defaults.unified_batches,
-        help="run a step's prefill and decode work as one ragged pass",
+        help="run a step's prefill and decode work as one joint pass over the weights",
     )
     group.add_argument(
         "--prefill-chunk-tokens",

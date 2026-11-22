@@ -21,7 +21,7 @@ from dataclasses import dataclass
 import torch
 from torch import Tensor
 
-from minfer.attention.base import AttentionContext
+from minfer.attention.base import AttentionContext, garbage_collection_paused
 from minfer.attention.flashinfer_backend import (
     KernelContext,
     TritonDecodeContext,
@@ -139,7 +139,8 @@ class DecodeGraphs:
                 slots=torch.zeros(size, dtype=torch.int64, device=device),
                 wrappers=wrappers,
             )
-        self._capture_all()
+        with garbage_collection_paused():
+            self._capture_all()
         # Recorded after each pass's inputs and plan are enqueued. FlashInfer's plan()
         # stages its metadata in a pinned host buffer and copies it to the device
         # asynchronously, so a pass may not be planned before the previous pass's copies

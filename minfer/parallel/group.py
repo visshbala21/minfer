@@ -102,7 +102,10 @@ def worker_main(
                 kv_last_page_len=fields["kv_last_page_len"],
                 block_size=fields["block_size"],
             )
-            context = backend.prefill(batch) if kind == "prefill" else backend.decode(batch)
+            if kind == "joint":
+                context = backend.joint(batch, fields["num_prefill_spans"])
+            else:
+                context = backend.prefill(batch) if kind == "prefill" else backend.decode(batch)
             model(batch.token_ids, batch.positions, context)
     dist.destroy_process_group()
 
@@ -123,6 +126,11 @@ class _BroadcastingBackend:
         """See :meth:`PagedAttentionBackend.decode`."""
         self.group.broadcast("decode", batch)
         return self.inner.decode(batch)
+
+    def joint(self, batch: PagedBatch, num_prefill_spans: int) -> AttentionContext:
+        """See :meth:`PagedAttentionBackend.joint`."""
+        self.group.broadcast("joint", batch, num_prefill_spans)
+        return self.inner.joint(batch, num_prefill_spans)
 
 
 class TensorParallelGroup:
@@ -195,9 +203,10 @@ class TensorParallelGroup:
         engine.backend = _BroadcastingBackend(engine.backend, self)
         return engine
 
-    def broadcast(self, kind: str, batch: PagedBatch) -> None:
-        """Send one pass's batch layout to every worker."""
+    def broadcast(self, kind: str, batch: PagedBatch, num_prefill_spans: int = 0) -> None:
+        """Send one pass's batch layout to every worker (and, for a joint pass, its split)."""
         fields = {
+            "num_prefill_spans": num_prefill_spans,
             "token_ids": batch.token_ids.cpu(),
             "positions": batch.positions.cpu(),
             "slots": batch.slots.cpu(),

@@ -2711,3 +2711,80 @@ working tree differed only in documentation and README-table code):
 This is the pure decode loop. On a server the agent workload interleaves arrivals and
 prefill chunks with decoding; those steps stay synchronous, and the step that holds a
 prefill chunk still makes two passes over the weights unless joint passes are on (M-034).
+
+### M-034 Async decode and joint passes through the server, against vLLM (Phase 18 item 2)
+
+`bench/unified_batches.py --experiment decode_path --rates 1 2 4 8 16 max` →
+`bench/results/decode_path_7b.json`: the matrix's agent traces at 7B (same seeds as
+`matrix_7b/`), a fresh `minfer serve` per configuration, 0 failed requests in all 24
+runs. The four configurations were run when both features were still off by default, so
+the file records `before` with no flags and the others with the flags that turn features
+*on*; `bench/unified_batches.py` now names every flag explicitly. vLLM and SGLang rows
+are the committed matrix (`matrix_7b/`, M-022/M-029, measured on the previous pod's H100
+with the same software).
+
+TPOT p50 (ms) at 1 / 2 / 4 / 8 / 16 req/s and "max":
+
+| configuration | 1 | 2 | 4 | 8 | 16 | max |
+|---|---|---|---|---|---|---|
+| before: synchronous, separate prefill and decode passes | 6.54 | 6.67 | 7.15 | 7.58 | 8.91 | 24.97 |
+| + async decode | 6.15 | 6.28 | 6.66 | 7.14 | 8.16 | 23.64 |
+| + joint passes | 6.52 | 6.61 | 6.94 | 7.32 | 8.18 | 23.15 |
+| **+ both** | **6.14** | **6.24** | **6.53** | **6.87** | **7.58** | **22.46** |
+| vLLM | 6.26 | 6.38 | 6.72 | 7.01 | 7.88 | 19.89 |
+| SGLang | 6.27 | 6.41 | 6.78 | 7.19 | 8.20 | 20.75 |
+
+| relative to vLLM | 1 | 2 | 4 | 8 | 16 | saturated tok/s |
+|---|---|---|---|---|---|---|
+| before | 1.045 | 1.046 | 1.064 | 1.081 | 1.130 | 2,000 (0.886×) |
+| + async decode | 0.982 | 0.986 | 0.992 | 1.018 | 1.036 | 2,103 (0.931×) |
+| + joint passes | 1.041 | 1.036 | 1.033 | 1.044 | 1.037 | 2,127 (0.942×) |
+| **+ both** | **0.981** | **0.978** | **0.972** | **0.980** | **0.962** | **2,218 (0.982×)** |
+
+TTFT p50 (ms): before 48–58 (106 at max); + async 51–63 (123); + joint 46–52 (102);
++ both 49–58 (111); vLLM 78–81 (161); SGLang 57–67 (146). TPOT p99 with both: 6.9 /
+7.1 / 7.8 / 8.6 / 10.5 ms against vLLM's 7.1 / 7.0 / 7.7 / 8.8 / 10.2.
+
+- **Target met: TPOT p50 is within 5% of vLLM's at every rate from 1 to 16 req/s — 2–4%
+  below it with both changes.** The two are complementary. Async decode removes the host
+  gap of pure decode steps (−6% TPOT at low load) and nothing else. Joint passes remove
+  the second pass over the weights in steps that also prefill, which are a growing share
+  of steps as the rate rises (−8% TPOT at 16 req/s) and nearly all of them at saturation.
+- **Joint passes reverse M-025.** The first unified pass routed decoding sequences
+  through the batch-prefill kernel and lost 28% of saturated throughput; with each group
+  on its own kernel and CUDA graphs for joint shapes it gains 6% (2,000 → 2,127 tok/s) and
+  lowers TTFT at every rate (a prefill chunk no longer waits behind a separate decode
+  pass).
+- **What async decode costs: TTFT.** +2.2 to +5.6 ms at the median below saturation (+16
+  ms at "max") with async alone, because a request that arrives while a step is in flight
+  waits for that step to be read before it can be scheduled. Joint passes win most of it
+  back; with both, TTFT p50 is +0.3 to +3.6 ms over "before" — still 23–29 ms below
+  vLLM's at every rate.
+- **Still behind at saturation**: 22.5 vs 19.9 ms TPOT p50 and 0.98× of vLLM's
+  throughput. Under saturation every step has prefill work, which async decode does not
+  cover (its steps are synchronous), and prefill chunks above 1,024 tokens run the joint
+  pass eagerly.
+- **Decision**: both on by default (`async_decode=True`, `unified_batches=True`). Every
+  later benchmark — the matrix rerun, the pressure sweep and JCT repeats — runs on them.
+
+### B-011 A garbage collection during CUDA-graph capture broke the capture (fixed)
+
+With joint passes on by default, the full test suite failed once in
+`test_engine_on_the_gpu_restores_an_evicted_session_bit_for_bit`: capturing a joint graph
+raised `CUDA error: operation failed due to a previous error during capture`
+(`cudaErrorStreamCaptureInvalidated`), and the same test passed alone and with the four
+modules before it. Root cause: engines of earlier tests are kept alive by reference
+cycles (tests wrap engine methods in counting closures, which point back at the engine),
+so they are freed by the cyclic garbage collector whenever it runs next — which can be
+in the middle of a capture, triggered by an allocation of Python objects. Freeing an
+engine frees its CUDA graphs and pinned buffers, and neither is allowed while a stream
+is capturing in global mode. PyTorch 2.x no longer runs `gc.collect()` on entering a
+capture (only with `torch.compiler.config.force_cudagraph_gc`). It was there before
+this phase too; more graphs per engine (the joint set) and pinned staging buffers made it
+likely. Fix: every graph set captures inside `garbage_collection_paused()` — a full
+collection first, then the collector off until capture ends. A server holds one engine
+and never hit it; the fix is for any process that builds more than one.
+
+Also from making joint passes the default: the tensor-parallel driver's attention
+backend had no `joint` method (4 tests failed); it now broadcasts joint passes with their
+prefill/decode split to the workers like any other pass.

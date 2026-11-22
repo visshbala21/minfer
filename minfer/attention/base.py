@@ -9,9 +9,30 @@ reference used in tests, FlashInfer paged attention, and the custom Triton kerne
 
 from __future__ import annotations
 
+import gc
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Protocol
 
 from torch import Tensor
+
+
+@contextmanager
+def garbage_collection_paused() -> Iterator[None]:
+    """Collect garbage now, then keep the cyclic garbage collector off until the block ends.
+
+    For CUDA-graph capture: a collection during capture can free a dead object that owns
+    CUDA resources — another engine's graphs or pinned buffers — and freeing them is not
+    allowed while a stream is being captured, so the capture fails (DESIGN.md B-011).
+    """
+    gc.collect()
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        yield
+    finally:
+        if enabled:
+            gc.enable()
 
 
 class AttentionContext(Protocol):

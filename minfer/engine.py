@@ -102,14 +102,15 @@ class EngineConfig:
             sequences (nothing waiting, nothing prefilling), it is launched before the
             step's tokens are read back, fed by them on the device. Needs
             ``cuda_graphs``, FlashInfer's decode kernel and greedy requests; any other
-            step runs synchronously as before. Outputs are unchanged.
+            step runs synchronously as before. Outputs are unchanged. On by default: at
+            7B a decode step is 4–11% faster (DESIGN.md M-033, M-034).
         unified_batches: In a step that has both prefill and decode work, run them as one
-            ragged pass — decoding sequences as one-token spans next to the prefill chunks
-            — instead of a prefill pass and a decode pass, each over all the weights. Off
-            by default: measured at 7B it is 2–3% faster per token at low and medium load
-            and 23% slower at saturation, where FlashInfer's prefill kernel serves many
-            one-token spans over long contexts worse than the decode kernel does
-            (DESIGN.md M-025).
+            joint pass over the weights — the prefill chunks through the prefill kernel,
+            the decoding sequences through the decode kernel, from a captured CUDA graph
+            when the shape fits — instead of a prefill pass and a decode pass. On by
+            default: at 7B it lowers TPOT and TTFT at every load and raises saturated
+            throughput 6% (DESIGN.md M-034; the earlier version, which sent decode rows
+            through the prefill kernel, lost 28% at saturation: M-025).
         prefill_chunk_tokens: Chunked prefill: while any sequence is decoding, at most this
             many prefill tokens per step, so a long prompt is interleaved with decode steps
             instead of stalling them. ``None`` disables chunking (prefill is bounded by
@@ -173,8 +174,8 @@ class EngineConfig:
     cuda_graphs: bool = True
     prefill_graphs: bool = True
     cuda_graph_batch_sizes: tuple[int, ...] = (1, 2, 4, 8, 16, 32, 64, 128, 256)
-    async_decode: bool = False
-    unified_batches: bool = False
+    async_decode: bool = True
+    unified_batches: bool = True
     prefill_chunk_tokens: int | None = 2048
     prefix_cache: bool = True
     cache_aware_scheduling: bool = True
