@@ -61,3 +61,11 @@ Venvs under /opt/venvs were lost with the old pod; rebuild with scripts/setup_en
 4. Re-run the pressure sweep AND the JCT benchmark THREE times per engine. Report medians and min/max. README tables use medians, never best-of-n.
 5. README headline: lead with the strongest median result that is a genuine win (JCT, prefill compute saved, engine-level TTFT, or throughput), stated with its exact workload and conditions. If none, say so.
 ACCEPTANCE: decode before/after committed; 3x JCT + pressure results for all engines committed; README from medians; CI green.
+
+## Phase 19 — Overload behavior (FINAL, cap ~6h)
+Context: with the host tier, minfer beats vLLM on TTFT p50 at 32-96 sessions but loses past capacity (128 sessions: TTFT p50 ~3.3x vLLM, throughput 0.91x) despite computing ~31% fewer prefill tokens. Hypothesis: session-aware retention pins KV for paused sessions and starves arriving requests (the failure mode Continuum describes).
+1. Diagnose with measurements first (queueing time vs prefill time vs decode time per request at 128 sessions); record in DESIGN.md.
+2. Fix (e.g. load-adaptive retention/TTL that releases or demotes pinned KV when the waiting queue grows, admission ordering that favors returning sessions without starving new ones). Measure each change.
+3. Re-run ONLY the host-tier pressure sweep at 96 and 128 sessions, 3 repetitions, minfer only (baselines unchanged), and confirm no regression at 64 and 96.
+4. Update README tables (medians) and headline honestly.
+ACCEPTANCE: diagnosis + before/after committed; 3x results at 96/128; README updated; CI green.
