@@ -135,6 +135,11 @@ class JointGraphs:
                         )
                     ),
                 )
+        # Every bucket writes its logits into this one buffer (passes run one at a time).
+        # A logits tensor per bucket would stay alive in the shared pool after capture,
+        # where nothing else can reuse it: 168 buckets of up to 288 rows × the vocabulary
+        # came to 3.7 GiB taken from the KV cache (DESIGN.md, Phase 19).
+        self._logits: Tensor | None = None  # allocated at the first capture, in its dtype
         with garbage_collection_paused():
             self._capture_all()
 
@@ -201,11 +206,18 @@ class JointGraphs:
             spans = [*padding_spans(seqs, tokens, block_size), *([_PAD] * size)]
             batch = build_paged_batch(spans, block_size, self.model.device)
             self._plan(bucket, batch, seqs)
-            self._forward(bucket, tokens)  # lazy initialization must not be recorded
+            warm = self._forward(bucket, tokens)  # lazy initialization must not be recorded
+            if self._logits is None:
+                rows = max(self.sequence_buckets) + max(self.decode_sizes)
+                self._logits = warm.new_empty(rows, warm.shape[1])
+            del warm
             torch.cuda.synchronize()
             graph = torch.cuda.CUDAGraph()
             with torch.cuda.graph(graph, pool=pool):
-                bucket.logits = self._forward(bucket, tokens)
+                logits = self._forward(bucket, tokens)
+                bucket.logits = self._logits[: logits.shape[0]]
+                bucket.logits.copy_(logits)
+            del logits  # its memory goes back to the pool for the next capture
             bucket.graph = graph
 
     def run(

@@ -312,6 +312,10 @@ class Engine:
         if num_blocks is None:
             if self.device.type != "cuda":
                 raise ValueError("num_blocks must be given explicitly off-GPU")
+            # Loading and fusing the weights leave ~7 GiB at 7B cached in PyTorch's allocator
+            # but unused; the driver counts it as taken. Give it back before measuring, or
+            # the KV cache is sized without it and it sits idle (DESIGN.md, Phase 19).
+            torch.cuda.empty_cache()
             free_bytes, _ = torch.cuda.mem_get_info(self.device)
             shape = (model.num_kv_heads, mc.head_dim, config.block_size)
             per_block = kv_bytes_per_block(num_fp8_layers, *shape, 1) + kv_bytes_per_block(

@@ -201,7 +201,9 @@ def main() -> None:
     )
     parser.add_argument("--port", type=int, default=8063)
     parser.add_argument("--out", type=Path, default=None)
-    parser.add_argument("--resume", action="store_true", help="keep results already on disk")
+    parser.add_argument(
+        "--resume", action="store_true", help="skip runs whose results are already on disk"
+    )
     args = parser.parse_args()
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
 
@@ -225,14 +227,14 @@ def main() -> None:
         "ramp_s": args.ramp,
         "variants": {},
     }
-    if args.resume and out.exists():
+    if out.exists():  # other variants' results are kept; --resume also keeps this one's
         results = json.loads(out.read_text())
     for variant in args.variants:
         name = args.name or variant
         entry = results["variants"].setdefault(name, {"flags": VARIANTS[variant], "runs": {}})
         for concurrency in args.concurrency:
             key = f"{concurrency}/r{args.repeat}"
-            if key in entry["runs"]:
+            if args.resume and key in entry["runs"]:
                 continue
             stem = f"{tag}_{name}_c{concurrency}_r{args.repeat}"
             request_log = raw / f"requests_{stem}.jsonl"
