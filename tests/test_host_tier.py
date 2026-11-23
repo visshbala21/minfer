@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import random
 
 import pytest
@@ -301,6 +302,36 @@ def test_evicted_session_is_restored_from_host_memory(model, host_blocks):
     assert_all_released(engine)
 
 
+def test_request_log_records_each_requests_timeline(model, tmp_path):
+    """The request log splits a request's time into queue, restore, prefill and decode."""
+    rng = random.Random(5)
+    log = tmp_path / "requests.jsonl"
+    config = EngineConfig(
+        attention_backend="reference",
+        num_blocks=41,
+        block_size=SIZE,
+        host_kv_gb=host_gb_for(model, 64),
+        min_restore_blocks=2,
+        request_log=str(log),
+    )
+    engine = Engine(model, config, eos_token_ids=())
+    agent = [rng.randrange(4, 199) for _ in range(60)]
+    hint = SessionHint("agent", ("Bash",), False)
+    first, _ = run(engine, agent, hint)
+    for index in range(2):  # evict the agent's history to host memory
+        other = [rng.randrange(4, 199) for _ in range(60)]
+        run(engine, other, SessionHint(f"o{index}", ("Bash",), False))
+    run(engine, [*agent, *first, 7, 8, 9], hint)
+    records = [json.loads(line) for line in log.read_text().splitlines()]
+    assert [r["session"] for r in records] == ["agent", "o0", "o1", "agent"]
+    for r in records:
+        assert 0 <= r["admitted_s"] <= r["first_token_s"] <= r["finished_s"]
+        assert r["restore_s"] <= r["admitted_s"] and r["generated"] == 8
+        assert r["prefill_computed"] == r["prompt_tokens"] - r["cached_tokens"]
+    assert records[0]["restore_s"] == 0 and records[-1]["restore_s"] > 0
+    assert records[-1]["cached_tokens"] >= 64
+
+
 def test_random_sessions_under_gpu_and_host_pressure_match_the_oracle(model):
     """Many paused sessions, a GPU pool and a host pool both too small for them."""
     rng = random.Random(99)
@@ -369,6 +400,36 @@ def test_round_trip_through_pinned_memory_on_the_gpu(max_staging):
     kept = [b for b in range(80) if b not in source and b not in target]
     assert torch.equal(tensor[:, target], original[:, source])
     assert torch.equal(tensor[:, kept], original[:, kept])
+
+
+@pytest.mark.gpu
+def test_restore_staging_is_not_reused_before_its_scatter_has_run():
+    """B-014: a restore's staging memory must outlive the scatter queued on the engine stream.
+
+    The scatter is held back on the engine's stream; a second restore of the same size is
+    started meanwhile. If the first one's staging memory went back to the allocator at once,
+    the second copy lands in it before it is read, and the first target gets the wrong KV.
+    """
+    store = PagedKVStore(4, 64, 16, 2, 128, "cuda", torch.bfloat16)
+    tensor = store.tensors[torch.bfloat16]
+    tensor.copy_(torch.randn(tensor.shape, device="cuda"))
+    original = tensor.clone()
+    tier = HostTier(store, 32, chunk_blocks=8)
+    first, second = list(range(0, 8)), list(range(8, 16))
+    slots_first, _ = tier.offload(first)
+    slots_second, _ = tier.offload(second)
+    tier.wait()
+    targets_first, targets_second = list(range(32, 40)), list(range(40, 48))
+    restore = tier.restore(slots_first, targets_first)
+    torch.cuda.synchronize()  # the copy into staging is complete; the scatter is not queued
+    torch.cuda._sleep(200_000_000)  # hold the engine stream (~0.1 s)
+    tier.poll()  # queues the scatter behind the sleep
+    assert restore.done
+    tier.restore(slots_second, targets_second)  # same size: its staging could reuse the first's
+    tier.wait()
+    torch.cuda.synchronize()
+    assert torch.equal(tensor[:, targets_first], original[:, first])
+    assert torch.equal(tensor[:, targets_second], original[:, second])
 
 
 @pytest.mark.gpu

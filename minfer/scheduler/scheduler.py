@@ -210,7 +210,9 @@ class Scheduler:
         ready = [seq for seq in self.restoring if seq.restore.transfer.done]
         if ready:
             self.restoring = [seq for seq in self.restoring if not seq.restore.transfer.done]
+            now = self.clock()
             for seq in reversed(ready):
+                seq.restore_seconds += now - seq.restore_began
                 self.cache.finish_restore(seq.restore)
                 self.waiting.appendleft(seq)
         for ticket in [t for t in self._abandoned if t.transfer.done]:
@@ -238,6 +240,7 @@ class Scheduler:
         if blocks.num_free < count:
             return False
         seq.restore = cache.begin_restore(plan, blocks.allocate(count))
+        seq.restore_began = self.clock()
         self.num_restores += 1
         return True
 
@@ -320,6 +323,8 @@ class Scheduler:
             self.waiting.remove(seq)
             seq.status = SequenceStatus.RUNNING
             self.running.append(seq)
+            if seq.admitted_at is None:
+                seq.admitted_at = self.clock()
             promised += needed
             if seq.restore is not None:
                 cache.release_restore(seq.restore)  # the sequence's table holds them now

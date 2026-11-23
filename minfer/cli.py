@@ -128,6 +128,11 @@ def add_engine_arguments(parser: argparse.ArgumentParser) -> None:
     )
     group.add_argument("--min-restore-blocks", type=int, default=defaults.min_restore_blocks)
     group.add_argument(
+        "--request-log",
+        default=defaults.request_log,
+        help="append each finished request's timeline (queue, restore, prefill) as JSON lines",
+    )
+    group.add_argument(
         "--position-independent-reuse",
         action=argparse.BooleanOptionalAction,
         default=defaults.position_independent_reuse,
@@ -183,6 +188,7 @@ def engine_config_from_args(args: argparse.Namespace) -> EngineConfig:
         eviction_policy=args.eviction_policy,
         host_kv_gb=args.host_kv_gb,
         host_staging_mb=args.host_staging_mb,
+        request_log=args.request_log,
         min_restore_blocks=args.min_restore_blocks,
         position_independent_reuse=args.position_independent_reuse,
         reuse_min_tokens=args.reuse_min_tokens,

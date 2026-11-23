@@ -28,6 +28,7 @@ On a CPU store (tests) the same interface copies synchronously.
 
 from __future__ import annotations
 
+import time
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -128,6 +129,7 @@ class HostTierStats:
     dropped_blocks: int = 0
     staging_waits: int = 0  # copies waited for because staging memory hit its cap
     peak_staging_bytes: int = 0
+    staging_wait_seconds: float = 0.0  # host time spent in those waits
 
 
 class HostTier:
@@ -269,7 +271,9 @@ class HostTier:
             if copy.finalized:
                 continue
             if copy.event is not None:
+                began = time.perf_counter()
                 copy.event.synchronize()
+                self.stats.staging_wait_seconds += time.perf_counter() - began
             self.stats.staging_waits += 1
             self._finalize(copy)
 

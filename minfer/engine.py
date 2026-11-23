@@ -133,6 +133,10 @@ class EngineConfig:
             the next request has it copied back instead of recomputing it.
         host_staging_mb: Cap on the GPU memory held by host-tier copies in flight, in MiB
             (DESIGN.md B-013); 0 means no cap.
+        request_log: Append one JSON line per finished request to this file: when it
+            arrived, was first admitted, got its first token and finished, time spent
+            waiting for host-tier copies, tokens prefilled and preemptions (diagnosis of
+            where a request's latency goes; ``None`` disables it).
         min_restore_blocks: Shortest run of host-only blocks copied back rather than
             recomputed.
         position_independent_reuse: Reuse KV of prompt tokens that are cached at a different
@@ -186,6 +190,7 @@ class EngineConfig:
     eviction_policy: Literal["lru", "session"] = "session"
     host_kv_gb: float = 0.0
     host_staging_mb: int = 1024
+    request_log: str | None = None
     min_restore_blocks: int = 8
     position_independent_reuse: bool = False
     reuse_min_tokens: int = 64
@@ -461,6 +466,7 @@ class Engine:
                 config.draft_model, self, config.draft_num_blocks
             )
         self._sequences: dict[int, Sequence] = {}
+        self._request_log = open(config.request_log, "a") if config.request_log else None  # noqa: SIM115
         self._next_id = 0
         self._rng = random.Random(config.seed)
         self._in_flight: _InFlight | None = None
@@ -673,6 +679,8 @@ class Engine:
                 host_restores_total=scheduler.num_restores,
                 host_staging_waits_total=host.stats.staging_waits,
                 host_peak_staging_bytes=host.stats.peak_staging_bytes,
+                host_staging_wait_seconds_total=host.stats.staging_wait_seconds,
+                requests_restoring=len(scheduler.restoring),
             )
         return snapshot
 
@@ -876,6 +884,7 @@ class Engine:
             table = self.blocks.table(seq.seq_id)
             spans.append(SequenceSpan(seq.tokens[start : start + count], start, table))
             offset += count
+            seq.prefill_computed += count
             if count == seq.num_pending:
                 sampled.append(seq)
                 last_rows.append(offset - 1)
@@ -1230,8 +1239,12 @@ class Engine:
             reason = "stop"
         elif seq.num_generated >= seq.max_new_tokens:
             reason = "length"
+        if seq.first_token_at is None:
+            seq.first_token_at = self.scheduler.clock()
         if reason is not None:
             self.scheduler.finish(seq, reason)
+            if self._request_log is not None:
+                self._log_request(seq)
             self._end_session(seq)
             del self._sequences[seq.seq_id]
             self.stats.requests_finished += 1
@@ -1239,6 +1252,28 @@ class Engine:
                 self.drafter.release(seq.seq_id)
             return StepOutput(seq.seq_id, token, reason, seq.cache_hit_tokens)
         return StepOutput(seq.seq_id, token, None)
+
+    def _log_request(self, seq: Sequence) -> None:
+        """Append ``seq``'s timeline to the request log (times relative to its arrival)."""
+        now, arrival = self.scheduler.clock(), seq.arrival_time
+        record = {
+            "seq_id": seq.seq_id,
+            "session": seq.session.session_id if seq.session is not None else None,
+            "arrival": arrival,
+            "admitted_s": None if seq.admitted_at is None else seq.admitted_at - arrival,
+            "restore_s": seq.restore_seconds,
+            "first_token_s": seq.first_token_at - arrival,
+            "finished_s": now - arrival,
+            "prompt_tokens": seq.prompt_len,
+            "cached_tokens": seq.cache_hit_tokens,
+            "prefill_computed": seq.prefill_computed,
+            "generated": seq.num_generated,
+            "preemptions": seq.num_preemptions,
+            "waiting": len(self.scheduler.waiting),
+            "running": len(self.scheduler.running),
+        }
+        self._request_log.write(json.dumps(record) + "\n")
+        self._request_log.flush()
 
     # ----------------------------------------------------------- convenience
 
