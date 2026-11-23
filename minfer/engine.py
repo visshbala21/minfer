@@ -65,7 +65,10 @@ class EngineConfig:
         num_blocks: Size of the block pool, including the reserved block. ``None`` sizes it
             from the device memory that is free after the weights are loaded.
         kv_memory_fraction: Share of free device memory given to the KV cache when
-            ``num_blocks`` is ``None``.
+            ``num_blocks`` is ``None``. The rest holds CUDA graphs, workspaces,
+            activations and host-tier staging; at 7B their measured peak under overload
+            is ~5.5 GiB plus ~1.7 GiB outside PyTorch, and 0.875 leaves ~2 GiB beyond
+            that (0.9 left 0.37 GiB; DESIGN.md, Phase 19).
         kv_gb: KV cache size in GiB, instead of ``kv_memory_fraction`` (for experiments
             that give every engine the same KV budget).
         max_num_seqs: Maximum concurrently running sequences.
@@ -166,7 +169,7 @@ class EngineConfig:
 
     block_size: int = 16
     num_blocks: int | None = None
-    kv_memory_fraction: float = 0.9
+    kv_memory_fraction: float = 0.875
     kv_gb: float | None = None
     max_num_seqs: int = 256
     max_batched_tokens: int = 8192
