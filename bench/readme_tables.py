@@ -1093,6 +1093,13 @@ def main() -> None:
     parser.add_argument("--check", action="store_true", help="exit 1 if README.md would change")
     args = parser.parse_args()
     current = README.read_text()
+    missing = [
+        name
+        for name in SECTIONS
+        if f"<!-- BEGIN {name} -->" not in current or f"<!-- END {name} -->" not in current
+    ]
+    if missing:  # a generated section lost from the README is not "up to date" (B-016)
+        sys.exit(f"README.md has no generated section for: {', '.join(missing)}")
     updated = render(current)
     if args.check:
         sys.exit(0 if updated == current else "README.md is out of date: run bench.readme_tables")

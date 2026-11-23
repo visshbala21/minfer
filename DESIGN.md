@@ -2929,3 +2929,171 @@ pool already (GPU memory was at 73 GB before the test started) and the replay be
 the test ended, so the 64-session row of r1 was kept (its KV pool and results match r2 and
 r3), but it broke the rule that nothing else uses the GPU during a benchmark; GPU tests now
 run only between benchmarks, and the selection is by marker (`-m "not gpu"`).
+
+## Phase 19 — Overload behavior
+
+The plan's starting point: with the host tier, minfer led vLLM up to 96 sessions but past
+capacity (128 sessions) its TTFT p50 was ~3.2× vLLM's at 0.93× the throughput, although it
+computed ~31% fewer prefill tokens. Its hypothesis: session-aware retention pins KV for
+paused sessions and starves arriving requests.
+
+### M-037 Diagnosis: queueing for KV memory that running requests hold — not retention
+
+Tooling (`bench/overload.py`, D-046 below): the pressure sweep's full-stack configuration
+on the same trace, with the server's per-request timeline (`--request-log`: arrival, first
+admission, host-restore wait, first token, finish) and `/metrics` sampled every 5 s
+(queue, running, KV free / evictable / promised, admission-stop counters, GPU memory). Raw
+logs in `bench/results/overload/`, summaries in `bench/results/overload_7b.json`.
+
+**Where the server-side TTFT goes** (128 sessions, requests sent after the 120 s warm-up;
+the B-014 fix below changes nothing here):
+
+| part of TTFT | mean (s) | p50 | p99 |
+|---|---|---|---|
+| queue (waiting for admission, host copy excluded) | 3.71 | 3.36 | 13.06 |
+| restore (host copy of the history) | 0.06 | 0.06 | 0.18 |
+| prefill (admission to first token) | 0.22 | 0.10 | 1.37 |
+
+At 96 sessions the queue is 0.04 s. Past capacity, 93% of TTFT is waiting to be admitted,
+and the wait grows through the run (0.01 s for requests arriving at 120–180 s, 10.6 s by
+330 s): a backlog, not a steady state. Requests whose history comes back from host memory
+wait longer in the queue (4.9 s vs 1.1 s mean) — they are the ones that need a full
+context's worth of GPU blocks.
+
+**Why admission stops** (the `diag` run, counters over the load window 120–360 s): 6.8
+stops/s because free + evictable − promised − watermark ≤ 0, 4.8/s because the head
+candidate needs more (877 blocks short on average), never for lack of a running slot.
+Gauges over the same window: 48.6 running requests and 20.0 waiting on average; free KV
+321 blocks and evictable 5,751 (9.6%) of 60,209 on average — and once the backlog has
+built up (from ~185 s) free + evictable stay around 1,000 blocks (1.5%). The pool is full
+of the *running* requests' contexts (~50 × ~18.7k tokens).
+
+**Hypotheses refuted by these numbers:**
+
+1. *Retention pins paused sessions' KV* (the plan's). Retention ranks, it does not pin
+   (D-040); once the backlog has built up, evictable KV is ~1.5% of the pool, so there is
+   no paused-session KV left to release.
+2. *Admission over-reserves for unfinished prefills* (mine: it sets aside a request's whole
+   remaining prefill). The promised blocks average 157 (max 2,130), far too few to matter.
+   A "reserve one chunk at a time" mode was written and dropped without being measured.
+3. *The engine idles 30% of the time with work queued.* An artifact: the first gauge
+   summaries included the idle tail after the load (every block evictable, no steps). Over
+   the load window the engine is inside `step()` 98% of wall time.
+
+**What differs from vLLM is KV capacity.** vLLM's server log: `GPU KV cache size:
+1,105,920 tokens` (62.08 GiB available, 59 GiB used). minfer's pool: 60,209 blocks =
+963,344 tokens (51.45 GiB) — 13% less. In a regime where every admission waits for a
+running request to finish, capacity sets how many run at once. SGLang, which also left
+~10 GB outside its pool, queued like minfer (TTFT p50 3.2 s at 128).
+
+**Where minfer's memory went** (GPU memory gauges under the 128-session load; a probe of
+each start-up stage):
+
+- At KV sizing time PyTorch's allocator held 7.25 GiB it was not using (reserved 21.49,
+  allocated 14.24 GiB — what loading and fusing the weights left behind).
+  `torch.cuda.mem_get_info` counts it as taken, so the 90% rule was applied to 57.2 GiB
+  instead of 64.3; the cache was released later (by the decode-graph capture) and never
+  used: 3.47 GiB stayed free for the whole run.
+- Joint (prefill+decode) CUDA graphs held **3.87 GiB**: all 168 buckets share one memory
+  pool, but each kept its own logits output alive in it — (prefill spans + decode rows) ×
+  152,064 × 2 bytes, 3.70 GiB in total. vLLM's graphs take 0.6 GiB.
+
+### B-014 Every host-tier copy made the engine wait for the GPU (fixed)
+
+`torch.tensor(list, device="cuda")` copies synchronously from pageable memory: the host
+blocks until everything queued on the current stream has run (measured: 502 ms behind a
+500 ms kernel). The host tier built its block indices this way for every offload chunk
+(every session pause) and every restore scatter, so each one drained the engine stream and
+cancelled async decode's overlap for that step. Fix: a non-blocking copy from pageable
+memory (`HostTier._index`), which the driver stages before returning. Test: an offload and
+a restore scatter with the engine stream busy for 0.5 s must not block the host (failed
+before: 0.502 s). Effect at 128 sessions: within noise (TTFT p50 3.65 vs 3.87 s, one run
+each) — not the overload's cause.
+
+A probe pitfall worth recording: the first launch of a kernel can synchronize too (CUDA
+lazy module loading). Measured cold, `index_copy_` and `index_select` looked like they
+blocked as well; warmed up, they do not. The tests warm every kernel up first.
+
+### B-015 A restore's staging memory could be reused before its scatter read it (fixed)
+
+A restore copies host blocks into staging tensors allocated on the transfer stream; the
+engine then scatters them into the KV store on its own stream and drops them. Without
+`record_stream`, the caching allocator may hand that memory to the next restore's copy on
+the transfer stream before the scatter has run — the restored session would read another
+session's KV. B-014's accidental synchronization hid it (the host waited for the engine
+stream before every scatter's index existed). Fixing B-014 alone exposes it: the test
+(scatter held back behind a 0.1 s kernel, a same-sized restore started meanwhile) fails
+with the B-014 fix and without `record_stream`, and passes with both.
+
+### D-046 The KV cache gets the memory that sat idle; 0.875 of the true free memory
+
+1. **Joint graphs write into one shared logits buffer** (288 rows × vocabulary): each
+   capture copies its result there and drops its own output, so the pool memory is reused
+   by the next capture. Joint-graph memory 3.87 → 0.22 GiB; one extra copy of ≤ 88 MB per
+   joint pass. The joint-graph GPU tests and the engine equivalence tests pass (68).
+2. **The allocator cache is released before the KV cache is sized** (`empty_cache()`
+   before `mem_get_info`): free memory at sizing 57.2 → 64.3 GiB.
+3. **Default `kv_memory_fraction` 0.9 → 0.875.** With 0.9 the pool would be 57.9 GiB, and
+   at 128 sessions free device memory fell to 0.37 GiB (PyTorch reserved 77.6 GiB at
+   peak): one allocation missing the allocator's cache from an OOM like B-013. 0.875 gives
+   56.3 GiB (1,054k tokens, +9.4% over 51.45 GiB; vLLM 1,106k) and 1.33 GiB free at the
+   worst point of the 128-session run, plus the allocator's own unused cache.
+
+Single-run A/B, full stack (`overload_7b.json`):
+
+| variant | sessions | KV (GiB) | out tok/s | TTFT p50 / p99 (ms) | queue mean (s) | running / waiting | GPU free min (GiB) |
+|---|---|---|---|---|---|---|---|
+| before (4 runs: base, B-014, diag, mem) | 128 | 51.45 | 626–679 | 3,471–4,370 / 13,281–16,597 | 3.47–4.27 | 47–49 / 18–20 | 3.47 |
+| fraction 0.9 | 128 | 57.88 | 676 | 2,043 / 10,854 | 2.59 | 51.9 / 13.5 | 0.37 |
+| **fraction 0.875 (default)** | 128 | 56.27 | 692 | 2,131 / 11,570 | 2.60 | 51.2 / 14.1 | 1.33 |
+| before | 96 | 51.45 | 797 | 165 / 1,281 | 0.04 | 35.8 / 0.1 | — |
+| fraction 0.875 | 96 | 56.27 | 831 | 158 / 456 | 0.01 | 34.4 / 0.1 | 2.05 |
+
+The change is not specific to agent traffic: every configuration on this GPU now has
+~9% more KV. It does not touch retention or admission policy — the measurements gave no
+reason to.
+
+### M-038 Phase 19 acceptance: the host-tier pressure sweep, three repetitions
+
+minfer's full-stack rows of `pressure_7b_r{1,2,3}.json` measured again on the D-046 KV
+sizing (every other row unchanged), 0 failed requests; medians (`pressure_7b.json`):
+
+| sessions | metric | Phase 18 (KV 51.45 GiB) | Phase 19 (KV 56.27 GiB) | vLLM + offloading |
+|---|---|---|---|---|
+| 64 | out tok/s | 727 | 726 | 721 |
+| 64 | TTFT p50 / p99 (ms) | 123 / 419 | 122 / 413 | 174 / 453 |
+| 64 | TPOT p50 (ms) | 15.3 | 15.4 | 16.3 |
+| 96 | out tok/s | 836 | 837 | 821 |
+| 96 | TTFT p50 / p99 (ms) | 157 / 489 | 155 / 479 | 211 / 1,233 |
+| 96 | TPOT p50 (ms) | 27.9 | 27.9 | 26.8 |
+| 128 | out tok/s | 709 | 700 | 763 |
+| 128 | TTFT p50 / p99 (ms) | 2,757 / 10,289 | **2,038** / 10,229 | 874 / 7,963 |
+| 128 | TPOT p50 (ms) | 46.8 | 51.4 | 47.5 |
+
+No regression at 64 or 96 sessions (every difference within the runs' min–max). At 128:
+TTFT p50 −26% (2.3× vLLM's instead of 3.2×; ranges 1,764–2,252 vs 2,623–3,395 ms, disjoint),
+throughput and TTFT p99 unchanged within noise, TPOT p50 +10%: about four more requests
+run at once (51 vs 48 in the A/B), so each decode step is longer. The JCT benchmark was not
+repeated on the new sizing (the plan asks for the pressure sweep only); its README table is
+labelled as earlier.
+
+What is left of the gap to vLLM at 128 sessions: vLLM's KV holds 5% more tokens, its TPOT
+at this load is lower, and it delivers 9% more throughput. Closing more of the capacity
+gap means shrinking the memory minfer keeps outside the pool (graph pools, workspaces,
+2–3 GiB of allocator cache under load) — e.g. `expandable_segments` or a vLLM-style
+profiling pass that sizes the KV cache after graph capture. Not attempted: the Phase 19
+cap was reached with the measured fix in.
+
+### B-016 A README edit deleted 520 lines; the check did not notice (fixed)
+
+The Phase 18 write-up replaced a README paragraph by slicing from one anchor string to
+the next heading, and the "next" heading it found was 540 lines further down: the
+synthetic-workload comparison, Architecture, the whole real-trace section, Results,
+ShareGPT, the fairness audit and the decode-gap section were deleted in `a4e6596` and
+pushed. `readme_tables --check` passed, because it compares only the marker sections that
+exist. Found while updating the README for Phase 19; restored from `683322b` with every
+intended prose change re-applied by exact, unique-match replacements and the full diff
+against the pre-truncation file reviewed. The check now also fails if a marker section
+the generator knows is missing from the README: on the truncated file it names 14. On
+the restored one it named one more, `pic-quality`, a generated table that had never been
+placed in the README; it now sits next to the composition study's reuse findings.
