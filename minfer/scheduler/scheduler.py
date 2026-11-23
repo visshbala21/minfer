@@ -153,6 +153,7 @@ class Scheduler:
         # Why admission last stopped with sequences still waiting (diagnosis, Phase 19).
         self.admission_stops = {"slots": 0, "memory": 0, "does_not_fit": 0}
         self.admission_shortfall_blocks = 0
+        self.last_promised_blocks = 0  # blocks running prefills still have to allocate
 
     # ---------------------------------------------------------------- queues
 
@@ -298,6 +299,7 @@ class Scheduler:
             for s in self.running
             if s.num_pending > 1
         )
+        self.last_promised_blocks = promised
         while self.waiting and len(self.running) < self.config.max_num_seqs:
             available = blocks.num_free + blocks.num_evictable - promised - reserve
             if available <= 0 and self.running:

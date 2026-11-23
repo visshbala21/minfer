@@ -645,6 +645,8 @@ class Engine:
             "admission_stops_does_not_fit_total": scheduler.admission_stops["does_not_fit"],
             "admission_stops_slots_total": scheduler.admission_stops["slots"],
             "admission_shortfall_blocks_total": scheduler.admission_shortfall_blocks,
+            "admission_promised_blocks": scheduler.last_promised_blocks,
+            "kv_blocks_free": blocks.num_free,
             "kv_blocks": blocks.num_usable,
             "kv_blocks_used": blocks.num_used,
             "kv_blocks_evictable": blocks.num_evictable,

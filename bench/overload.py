@@ -66,6 +66,8 @@ SAMPLED = (
     "minfer_admission_stops_does_not_fit_total",
     "minfer_admission_stops_slots_total",
     "minfer_admission_shortfall_blocks_total",
+    "minfer_admission_promised_blocks",
+    "minfer_kv_blocks_free",
 )
 
 
@@ -141,6 +143,9 @@ def summarize_samples(samples: list[dict[str, float]], warmup: float) -> dict[st
     evictable = [s.get("minfer_kv_blocks_evictable", 0.0) for s in rows]
     out["kv_used_fraction_mean"] = float(np.mean(used)) / blocks
     out["kv_held_by_requests_fraction_mean"] = float(np.mean(np.subtract(used, evictable))) / blocks
+    for key in ("admission_promised_blocks", "kv_blocks_free", "kv_blocks_evictable"):
+        values = [s.get(f"minfer_{key}", 0.0) for s in rows]
+        out[f"{key}_mean"], out[f"{key}_max"] = float(np.mean(values)), float(np.max(values))
     span = rows[-1]["t"] - rows[0]["t"]
     for key in (
         "minfer_host_staging_waits_total",
