@@ -62,6 +62,10 @@ SAMPLED = (
     "minfer_engine_step_seconds_total",
     "minfer_prefill_tokens_total",
     "minfer_decode_tokens_total",
+    "minfer_admission_stops_memory_total",
+    "minfer_admission_stops_does_not_fit_total",
+    "minfer_admission_stops_slots_total",
+    "minfer_admission_shortfall_blocks_total",
 )
 
 
@@ -145,6 +149,10 @@ def summarize_samples(samples: list[dict[str, float]], warmup: float) -> dict[st
         "minfer_preemptions_total",
         "minfer_prefill_tokens_total",
         "minfer_decode_tokens_total",
+        "minfer_admission_stops_memory_total",
+        "minfer_admission_stops_does_not_fit_total",
+        "minfer_admission_stops_slots_total",
+        "minfer_admission_shortfall_blocks_total",
     ):
         if key in rows[-1]:
             name = key.removeprefix("minfer_").removesuffix("_total")
@@ -162,6 +170,9 @@ def main() -> None:
     parser.add_argument("--warmup", type=float, default=120.0)
     parser.add_argument("--ramp", type=float, default=30.0)
     parser.add_argument("--repeat", type=int, default=1, help="repetition index (file names)")
+    parser.add_argument(
+        "--name", default=None, help="key of the results (default: the variant's name)"
+    )
     parser.add_argument("--port", type=int, default=8063)
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--resume", action="store_true", help="keep results already on disk")
@@ -191,12 +202,13 @@ def main() -> None:
     if args.resume and out.exists():
         results = json.loads(out.read_text())
     for variant in args.variants:
-        entry = results["variants"].setdefault(variant, {"flags": VARIANTS[variant], "runs": {}})
+        name = args.name or variant
+        entry = results["variants"].setdefault(name, {"flags": VARIANTS[variant], "runs": {}})
         for concurrency in args.concurrency:
             key = f"{concurrency}/r{args.repeat}"
             if key in entry["runs"]:
                 continue
-            stem = f"{tag}_{variant}_c{concurrency}_r{args.repeat}"
+            stem = f"{tag}_{name}_c{concurrency}_r{args.repeat}"
             request_log = raw / f"requests_{stem}.jsonl"
             request_log.unlink(missing_ok=True)
             flags = [*base_flags, *VARIANTS[variant], "--request-log", str(request_log)]
@@ -207,7 +219,7 @@ def main() -> None:
             try:
                 with launch("minfer", model, args.port, log, flags) as (url, argv):
                     entry["command"] = argv
-                    entry["code"] = code_version()
+                    code = code_version()
                     poller = MetricsPoller(url)
                     poller.start()
                     records, elapsed = asyncio.run(rt.replay(trace, tokenizer, url, model, options))
@@ -217,13 +229,14 @@ def main() -> None:
             except RuntimeError as error:
                 entry["runs"][key] = {"error": str(error)}
                 out.write_text(json.dumps(results, indent=1) + "\n")
-                print(f"[{variant}] c={concurrency} failed: {error}", flush=True)
+                print(f"[{name}] c={concurrency} failed: {error}", flush=True)
                 continue
             (raw / f"metrics_{stem}.jsonl").write_text(
                 "".join(json.dumps(s) + "\n" for s in poller.samples)
             )
             lines = request_log.read_text().splitlines() if request_log.exists() else []
             row = rt.summarize(records, elapsed, args.warmup)
+            row["code"] = code
             row["breakdown"] = breakdown([json.loads(x) for x in lines], args.warmup)
             row["gauges"] = summarize_samples(poller.samples, args.warmup)
             row["server_metrics"] = {k: v for k, v in metrics.items() if k.startswith("minfer_")}
@@ -231,7 +244,7 @@ def main() -> None:
             out.write_text(json.dumps(results, indent=1) + "\n")
             parts = row["breakdown"]
             print(
-                f"[{variant}] c={concurrency} r{args.repeat}: "
+                f"[{name}] c={concurrency} r{args.repeat}: "
                 f"{row['output_tokens_per_second']:.0f} tok/s, TTFT p50/p99 "
                 f"{row['ttft_ms']['p50']:.0f}/{row['ttft_ms']['p99']:.0f} ms; server-side mean "
                 + ", ".join(

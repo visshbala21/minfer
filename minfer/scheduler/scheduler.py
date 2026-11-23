@@ -150,6 +150,9 @@ class Scheduler:
         self._abandoned: list[RestoreTicket] = []
         self.num_preemptions = 0
         self.num_restores = 0
+        # Why admission last stopped with sequences still waiting (diagnosis, Phase 19).
+        self.admission_stops = {"slots": 0, "memory": 0, "does_not_fit": 0}
+        self.admission_shortfall_blocks = 0
 
     # ---------------------------------------------------------------- queues
 
@@ -298,6 +301,7 @@ class Scheduler:
         while self.waiting and len(self.running) < self.config.max_num_seqs:
             available = blocks.num_free + blocks.num_evictable - promised - reserve
             if available <= 0 and self.running:
+                self.admission_stops["memory"] += 1
                 break
             seq = self._next_candidate()
             adopted = self._sync(seq) if cache is not None else 0
@@ -313,6 +317,10 @@ class Scheduler:
             fits = blocks.num_free + blocks.num_evictable - promised - reserve >= needed
             # With nothing running the candidate must be admitted, or nothing ever would be.
             if not fits and self.running:
+                self.admission_stops["does_not_fit"] += 1
+                self.admission_shortfall_blocks += needed - (
+                    blocks.num_free + blocks.num_evictable - promised - reserve
+                )
                 if seq.restore is not None:
                     # Restored KV stays pinned for it; it is admitted when memory frees up.
                     seq.restore_hit_tokens += adopted
@@ -342,6 +350,8 @@ class Scheduler:
                 stats.hits += adopted > 0
                 if not seq.num_preemptions:
                     seq.cache_hit_tokens = adopted
+        if self.waiting and len(self.running) >= self.config.max_num_seqs:
+            self.admission_stops["slots"] += 1
 
     # --------------------------------------------------- position-independent
 
