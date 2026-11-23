@@ -319,7 +319,8 @@ def test_request_log_records_each_requests_timeline(model, tmp_path):
     hint = SessionHint("agent", ("Bash",), False)
     first, _ = run(engine, agent, hint)
     for index in range(2):  # evict the agent's history to host memory
-        run(engine, [rng.randrange(4, 199) for _ in range(60)], SessionHint(f"o{index}", ("Bash",), False))
+        other = [rng.randrange(4, 199) for _ in range(60)]
+        run(engine, other, SessionHint(f"o{index}", ("Bash",), False))
     run(engine, [*agent, *first, 7, 8, 9], hint)
     records = [json.loads(line) for line in log.read_text().splitlines()]
     assert [r["session"] for r in records] == ["agent", "o0", "o1", "agent"]
