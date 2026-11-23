@@ -403,6 +403,36 @@ def test_round_trip_through_pinned_memory_on_the_gpu(max_staging):
 
 
 @pytest.mark.gpu
+def test_restore_staging_is_not_reused_before_its_scatter_has_run():
+    """B-014: a restore's staging memory must outlive the scatter queued on the engine stream.
+
+    The scatter is held back on the engine's stream; a second restore of the same size is
+    started meanwhile. If the first one's staging memory went back to the allocator at once,
+    the second copy lands in it before it is read, and the first target gets the wrong KV.
+    """
+    store = PagedKVStore(4, 64, 16, 2, 128, "cuda", torch.bfloat16)
+    tensor = store.tensors[torch.bfloat16]
+    tensor.copy_(torch.randn(tensor.shape, device="cuda"))
+    original = tensor.clone()
+    tier = HostTier(store, 32, chunk_blocks=8)
+    first, second = list(range(0, 8)), list(range(8, 16))
+    slots_first, _ = tier.offload(first)
+    slots_second, _ = tier.offload(second)
+    tier.wait()
+    targets_first, targets_second = list(range(32, 40)), list(range(40, 48))
+    restore = tier.restore(slots_first, targets_first)
+    torch.cuda.synchronize()  # the copy into staging is complete; the scatter is not queued
+    torch.cuda._sleep(200_000_000)  # hold the engine stream (~0.1 s)
+    tier.poll()  # queues the scatter behind the sleep
+    assert restore.done
+    tier.restore(slots_second, targets_second)  # same size: its staging could reuse the first's
+    tier.wait()
+    torch.cuda.synchronize()
+    assert torch.equal(tensor[:, targets_first], original[:, first])
+    assert torch.equal(tensor[:, targets_second], original[:, second])
+
+
+@pytest.mark.gpu
 def test_engine_on_the_gpu_restores_an_evicted_session_bit_for_bit(tokenizer):
     """Restored KV is the KV that was computed: the continuation cannot differ."""
     from conftest import PRIMARY_MODEL
