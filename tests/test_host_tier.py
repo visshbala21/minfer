@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import random
 
 import pytest
@@ -299,6 +300,35 @@ def test_evicted_session_is_restored_from_host_memory(model, host_blocks):
     else:
         assert cached < 32  # without the tier, most of it has to be recomputed
     assert_all_released(engine)
+
+
+def test_request_log_records_each_requests_timeline(model, tmp_path):
+    """The request log splits a request's time into queue, restore, prefill and decode."""
+    rng = random.Random(5)
+    log = tmp_path / "requests.jsonl"
+    config = EngineConfig(
+        attention_backend="reference",
+        num_blocks=41,
+        block_size=SIZE,
+        host_kv_gb=host_gb_for(model, 64),
+        min_restore_blocks=2,
+        request_log=str(log),
+    )
+    engine = Engine(model, config, eos_token_ids=())
+    agent = [rng.randrange(4, 199) for _ in range(60)]
+    hint = SessionHint("agent", ("Bash",), False)
+    first, _ = run(engine, agent, hint)
+    for index in range(2):  # evict the agent's history to host memory
+        run(engine, [rng.randrange(4, 199) for _ in range(60)], SessionHint(f"o{index}", ("Bash",), False))
+    run(engine, [*agent, *first, 7, 8, 9], hint)
+    records = [json.loads(line) for line in log.read_text().splitlines()]
+    assert [r["session"] for r in records] == ["agent", "o0", "o1", "agent"]
+    for r in records:
+        assert 0 <= r["admitted_s"] <= r["first_token_s"] <= r["finished_s"]
+        assert r["restore_s"] <= r["admitted_s"] and r["generated"] == 8
+        assert r["prefill_computed"] == r["prompt_tokens"] - r["cached_tokens"]
+    assert records[0]["restore_s"] == 0 and records[-1]["restore_s"] > 0
+    assert records[-1]["cached_tokens"] >= 64
 
 
 def test_random_sessions_under_gpu_and_host_pressure_match_the_oracle(model):

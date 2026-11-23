@@ -87,6 +87,12 @@ class Sequence:
             flight or has completed and not yet been adopted.
         restore_hit_tokens: Tokens adopted from the GPU cache before that copy started.
         reuse: Position-independent reuse still to be carried out, in position order.
+        admitted_at: Scheduler-clock time of the first admission (``None`` before it).
+        restore_began: When the current host-tier copy for it started.
+        restore_seconds: Time spent waiting for host-tier copies, summed.
+        first_token_at: Scheduler-clock time its first token was emitted.
+        prefill_computed: Tokens run through prefill passes for it (recomputation after a
+            preemption included).
     """
 
     seq_id: int
@@ -110,6 +116,11 @@ class Sequence:
     restore: RestoreTicket | None = field(default=None, repr=False)
     restore_hit_tokens: int = 0
     reuse: list[ReuseSpan] = field(default_factory=list, repr=False)
+    admitted_at: float | None = None
+    restore_began: float = 0.0
+    restore_seconds: float = 0.0
+    first_token_at: float | None = None
+    prefill_computed: int = 0
 
     @property
     def num_pending(self) -> int:
