@@ -2831,3 +2831,50 @@ workspace just before its own graph is replayed, which is the only order they ar
 in. After the fix: **7.64 GB free** at start-up, the same 60,209 KV blocks. GPU tests of
 the engine, host tier and speculation pass (48). The failed run and the other minfer runs
 of that repetition were discarded and measured again on the fixed code.
+
+### B-013 Host-tier copies in flight held up to 5.2 GB of GPU staging memory; an eager pass ran out (fixed)
+
+The third repetition of the JCT benchmark (D-045) lost one of minfer's 96 measured sessions
+at 128 concurrent sessions: one call of 2,588 ended in `ServerDisconnectedError`, and the
+server log (`bench/results/b013/failed_run_server.log`) holds one line,
+`memory allocation failed with OOM ... while trying to allocate 77594624 bytes (free:
+23265280)`. 77,594,624 bytes is 2,048 × 18,944 × 2: the MLP activation of an eager
+2,048-token prefill chunk at 7B. The engine died, so the session's call failed.
+
+Hypothesis: the host tier (D-041). An offload gathers the blocks it copies into staging
+tensors on the GPU, 256 blocks (235 MB at 7B) per chunk, held until the PCIe copy to host
+completes; a restore holds its staging until it is scattered. Nothing bounded the sum: a
+30k-token session that pauses stages 1.7 GB, and at 128 sessions many pause at once. B-012
+left 7.6 GB free outside the KV pool at start-up — for graphs' private memory, eager
+activations, and this.
+
+Confirmed by a diagnostic (`bench/results/b013/diagnostic.py`, the same JCT run with no
+cap, `/metrics` sampled every 20 s into `metrics_poll.log`): the peak staging memory in
+flight reached 1.83 GB in the first 10 minutes and **5.20 GB** by the 20th. That run
+completed 96/96 sessions, so the OOM needs a peak like that to meet an eager pass's
+activations; three pressure-sweep repetitions and two JCT repetitions at 128 sessions
+had not hit it.
+
+Fix (`85dfe6c`): the staging memory of copies in flight is capped
+(`--host-staging-mb`, default 1,024 MiB). Before a new chunk would pass the cap, the
+oldest copies are waited for and finalized (an offload's staging released, a restore
+scattered into its blocks) in order. Two metrics count it:
+`host_staging_waits_total` and `host_peak_staging_bytes`. A CPU test checks the cap and
+the data with a cap of one and a half chunks; the GPU round trip runs with and without a
+cap.
+
+Cost, JCT repetition 3 of minfer's full stack measured again on the fixed code:
+
+| sessions | staging waits | peak staging | model time p50, capped | uncapped |
+|---|---|---|---|---|
+| 16 | 0 | 0.96 GB | 47.3 s | 47.5 s (before the fix) |
+| 64 | 377 | 1.07 GB | 65.7 s | 65.8 s (before the fix) |
+| 128 | 115,907 | 1.07 GB | 389.3 s, 96/96 sessions | 391.8 s (diagnostic), 401.6 s (the failed run, 95/96) |
+
+Each wait blocks the engine until a copy ahead of it on the PCIe link has finished. At
+128 sessions that happened 115,907 times, and model time was no worse than without the cap,
+so the cost is below this benchmark's noise. Since the cap changes what
+the engine does from 64 sessions up, minfer's full-stack (host-tier) rows of every
+repetition of the pressure sweep and of JCT are measured again on the fixed code (the
+other minfer configurations have no host tier and are unaffected); the earlier rows stay
+in the history (`af44a33`, `27161ab`, `aa7a503`, `d565c91`, `a3ddbfe`, `ab55d7c`).
