@@ -20,6 +20,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from bench import models
 
 RESULTS = Path("bench/results")
@@ -584,11 +586,26 @@ def pressure_table(name: str = "pressure_7b.json") -> str:
         return MISSING
     levels = sorted({int(c) for entry in data["configs"].values() for c in entry["runs"]})
     engines = ("minfer", "vllm", "sglang")
-    entries = sorted(data["configs"].values(), key=lambda e: engines.index(e["engine"]))
+    names = sorted(data["configs"], key=lambda n: engines.index(data["configs"][n]["engine"]))
+    entries = [data["configs"][n] for n in names]
+    files = [json.loads(Path(p).read_text()) for p in data.get("repeats", {}).get("files", [])]
+
+    def per_call(name: str, level: int, run: dict) -> float:
+        """Prefill tokens per completed call: the median over repetitions of the ratio."""
+        ratios = [
+            r["prefill_tokens_computed"] / max(1, r["completed"])
+            for tree in files
+            if (r := tree["configs"].get(name, {}).get("runs", {}).get(str(level)))
+            and "error" not in r
+        ]
+        if ratios:
+            return float(np.median(ratios))
+        return run["prefill_tokens_computed"] / max(1, run["completed"])
+
     rows = []
     for level in levels:
         first = True
-        for entry in entries:
+        for name, entry in zip(names, entries, strict=True):
             run = entry["runs"].get(str(level))
             if run is None:
                 continue
@@ -603,7 +620,7 @@ def pressure_table(name: str = "pressure_7b.json") -> str:
                     *head,
                     f"{run['completed']:.0f}",
                     "—" if hit is None else f"{hit:.1%}",
-                    f"{run['prefill_tokens_computed'] / max(1, run['completed']):,.0f}",
+                    f"{per_call(name, level, run):,.0f}",
                     f"{run['ttft_ms']['p50']:.0f} / {run['ttft_ms']['p99']:.0f}",
                     f"{run['tpot_ms']['p50']:.1f}",
                     f"{run['output_tokens_per_second']:.0f}",
@@ -644,26 +661,35 @@ def full_stack_table() -> str:
         ("failed requests", lambda r: r["failed"], ".0f", True),
     ]
     repeats = data.get("repeats", {})
+    # A metric derived from several numbers (per call) is computed in each repetition and
+    # then summarized: the ratio of two medians is not the median of the ratios, and the
+    # ratio of two minima is not a minimum.
+    files = [json.loads(Path(path).read_text()) for path in repeats.get("files", [])]
 
-    def spread(kind: str, name: str, level: str) -> dict | None:
-        return repeats.get(kind, {}).get("configs", {}).get(name, {}).get("runs", {}).get(level)
+    def per_repeat(name: str, level: str, get: Callable[[dict], float]) -> list[float]:
+        values = []
+        for tree in files:
+            run = tree["configs"].get(name, {}).get("runs", {}).get(level)
+            if run is not None and "error" not in run:
+                values.append(get(run))
+        return values
 
     rows = []
     for level in levels:
         for index, (label, get, fmt, lower) in enumerate(metrics):
-            values = [get(configs[name]["runs"][level]) for name in best.values()]
+            samples = [per_repeat(name, level, get) for name in best.values()]
+            values = [
+                float(np.median(sample)) if sample else get(configs[name]["runs"][level])
+                for sample, name in zip(samples, best.values(), strict=True)
+            ]
             texts = [format(value, fmt) for value in values]
             winner = _best(values, lower)
             if winner is not None and texts.count(texts[winner]) == 1:
                 texts[winner] = f"**{texts[winner]}**"
-            for column, name in enumerate(best.values()):
-                low, high = spread("min", name, level), spread("max", name, level)
-                if low is None or high is None:
+            for column, sample in enumerate(samples):
+                if len(sample) < 2:
                     continue
-                try:
-                    lo, hi = format(get(low), fmt), format(get(high), fmt)
-                except (KeyError, TypeError):
-                    continue
+                lo, hi = format(min(sample), fmt), format(max(sample), fmt)
                 if lo != hi:
                     texts[column] += f" ({lo}–{hi})"
             rows.append([level if index == 0 else "", label, *texts])

@@ -1,0 +1,1961 @@
+{
+ "model": "Qwen/Qwen2.5-7B-Instruct",
+ "trace": {
+  "version": 1.0,
+  "dataset": "nvidia/Open-SWE-Traces",
+  "shard": "claudecode_qwen38_flash_next_train-00006-of-00007.parquet",
+  "model": "Qwen/Qwen2.5-7B-Instruct",
+  "max_context": 32000.0,
+  "min_calls": 3.0,
+  "max_pause_s": 120.0,
+  "time_scale": 1.0,
+  "seed": 0.0,
+  "pauses": "TraceLab v0.0.1 per-tool latency quantiles (bench/data)",
+  "sha256": "cc5597d4766bfe7d3126de15abf0dd466729f631a5a2937eee906791c025bc8c",
+  "sessions": 300.0
+ },
+ "ramp_s": 30.0,
+ "measured": {
+  "16": [
+   16,
+   48
+  ],
+  "64": [
+   64,
+   128
+  ],
+  "128": [
+   128,
+   224
+  ]
+ },
+ "configs": {
+  "vllm/offload": {
+   "engine": "vllm",
+   "label": "vLLM + native KV offloading (96 GB)",
+   "flags": [
+    "--kv-offloading-size",
+    "96",
+    "--kv-offloading-backend",
+    "native"
+   ],
+   "session_hints": false,
+   "runs": {
+    "16": {
+     "measured_sessions": 32.0,
+     "completed_sessions": 32.0,
+     "failed_sessions": 0.0,
+     "elapsed_s": 1296.6718870179611,
+     "jct_s": {
+      "mean": 297.0747849659638,
+      "p50": 277.38284299199586,
+      "p90": 452.88848131591226,
+      "p99": 830.485232485426,
+      "max": 919.4689754199935
+     },
+     "model_time_s": {
+      "mean": 47.451721836667915,
+      "p50": 50.726266511856224,
+      "p90": 79.83471232098645,
+      "p99": 91.85573609631909,
+      "max": 95.05135289327214
+     },
+     "pause_s": {
+      "mean": 249.62306312929584,
+      "p50": 233.10575608910042,
+      "p90": 410.68825050575884,
+      "p99": 752.905211177408,
+      "max": 835.4323117715253
+     },
+     "requests": {
+      "requests": 827.0,
+      "completed": 827.0,
+      "failed": 0.0,
+      "errors": [],
+      "ttft_ms": {
+       "p50": 141.63408504100516,
+       "p90": 208.57244337676093,
+       "p99": 298.1919438007754,
+       "mean": 146.08696695019356,
+       "max": 575.6253840518184
+      },
+      "tpot_ms": {
+       "p50": 7.28755121472878,
+       "p90": 8.433107800642917,
+       "p99": 9.787806920586045,
+       "mean": 7.381522273541324,
+       "max": 12.946731945372779
+      }
+     },
+     "prefill_tokens_computed": 799436.0,
+     "cache_hit_rate": 0.9403936022265573,
+     "server_metrics": {}
+    },
+    "64": {
+     "measured_sessions": 64.0,
+     "completed_sessions": 64.0,
+     "failed_sessions": 0.0,
+     "elapsed_s": 1088.8894040259765,
+     "jct_s": {
+      "mean": 345.2151290641277,
+      "p50": 319.4161490940023,
+      "p90": 630.8055121935964,
+      "p99": 787.2003309402149,
+      "max": 789.0090170669719
+     },
+     "model_time_s": {
+      "mean": 75.42693310100421,
+      "p50": 71.79470464963481,
+      "p90": 129.37435472761075,
+      "p99": 164.85376568899127,
+      "max": 181.18020884027516
+     },
+     "pause_s": {
+      "mean": 269.78819596312354,
+      "p50": 238.05434134783496,
+      "p90": 502.2645397009798,
+      "p99": 691.3096978763907,
+      "max": 696.6838909930356
+     },
+     "requests": {
+      "requests": 1688.0,
+      "completed": 1688.0,
+      "failed": 0.0,
+      "errors": [],
+      "ttft_ms": {
+       "p50": 169.04057198553346,
+       "p90": 258.69903480634093,
+       "p99": 422.0685662521279,
+       "mean": 178.41585749422057,
+       "max": 715.0016189552844
+      },
+      "tpot_ms": {
+       "p50": 14.34375803986395,
+       "p90": 19.36078506879116,
+       "p99": 23.64281748241849,
+       "mean": 14.664840179740397,
+       "max": 28.091580178754935
+      }
+     },
+     "prefill_tokens_computed": 1716556.0,
+     "cache_hit_rate": 0.941410847660613,
+     "server_metrics": {}
+    },
+    "128": {
+     "measured_sessions": 96.0,
+     "completed_sessions": 96.0,
+     "failed_sessions": 0.0,
+     "elapsed_s": 1799.595897821011,
+     "jct_s": {
+      "mean": 629.5378997765268,
+      "p50": 616.1448509169859,
+      "p90": 974.7599597195222,
+      "p99": 1365.6437874504918,
+      "max": 1373.9480003059725
+     },
+     "model_time_s": {
+      "mean": 327.4117777544688,
+      "p50": 329.91595771146524,
+      "p90": 505.67195340327055,
+      "p99": 597.9134924824158,
+      "max": 696.0775468671296
+     },
+     "pause_s": {
+      "mean": 302.126122022058,
+      "p50": 263.2879338913548,
+      "p90": 621.416281105559,
+      "p99": 861.5890660423258,
+      "max": 1014.545427936999
+     },
+     "requests": {
+      "requests": 2588.0,
+      "completed": 2588.0,
+      "failed": 0.0,
+      "errors": [],
+      "ttft_ms": {
+       "p50": 4016.764009487815,
+       "p90": 6856.808977777839,
+       "p99": 8656.021018740725,
+       "mean": 3608.929628428887,
+       "max": 10037.305301986635
+      },
+      "tpot_ms": {
+       "p50": 52.525856037208015,
+       "p90": 70.07360768458754,
+       "p99": 89.92716188566793,
+       "mean": 50.616403944329875,
+       "max": 121.15028706893068
+      }
+     },
+     "prefill_tokens_computed": 6880502.0,
+     "cache_hit_rate": 0.8483230448161679,
+     "server_metrics": {}
+    }
+   },
+   "command": [
+    ".venv-vllm/bin/vllm",
+    "serve",
+    "Qwen/Qwen2.5-7B-Instruct",
+    "--port",
+    "8062",
+    "--dtype",
+    "bfloat16",
+    "--generation-config",
+    "vllm",
+    "--enable-prompt-tokens-details",
+    "--disable-uvicorn-access-log",
+    "--kv-offloading-size",
+    "96",
+    "--kv-offloading-backend",
+    "native"
+   ],
+   "code": {
+    "commit": "af44a3380b9f4d1f79ec5eab5b503f5ff99e00a8",
+    "dirty": false
+   }
+  },
+  "sglang/hicache": {
+   "engine": "sglang",
+   "label": "SGLang + hierarchical cache (96 GB host)",
+   "flags": [
+    "--enable-hierarchical-cache",
+    "--hicache-size",
+    "96"
+   ],
+   "session_hints": false,
+   "runs": {
+    "16": {
+     "measured_sessions": 32.0,
+     "completed_sessions": 32.0,
+     "failed_sessions": 0.0,
+     "elapsed_s": 1295.5332632219652,
+     "jct_s": {
+      "mean": 296.7016471178449,
+      "p50": 276.96117496851366,
+      "p90": 452.4156413201767,
+      "p99": 830.1646349384936,
+      "max": 918.739933667006
+     },
+     "model_time_s": {
+      "mean": 47.078583988549056,
+      "p50": 50.04366289686935,
+      "p90": 79.26201574803854,
+      "p99": 91.31371953142101,
+      "max": 94.42411118726218
+     },
+     "pause_s": {
+      "mean": 249.62306312929584,
+      "p50": 233.10575608910042,
+      "p90": 410.68825050575884,
+      "p99": 752.905211177408,
+      "max": 835.4323117715253
+     },
+     "requests": {
+      "requests": 827.0,
+      "completed": 827.0,
+      "failed": 0.0,
+      "errors": [],
+      "ttft_ms": {
+       "p50": 103.30014099599794,
+       "p90": 155.7053704163991,
+       "p99": 252.52578175044624,
+       "mean": 109.51907211820907,
+       "max": 602.9248720151372
+      },
+      "tpot_ms": {
+       "p50": 7.492694381776192,
+       "p90": 8.642035699156356,
+       "p99": 10.25334357643234,
+       "mean": 7.610605514984479,
+       "max": 14.487829546190122
+      }
+     },
+     "prefill_tokens_computed": 772317.0,
+     "cache_hit_rate": 0.9424156101186437,
+     "server_metrics": {}
+    },
+    "64": {
+     "measured_sessions": 64.0,
+     "completed_sessions": 64.0,
+     "failed_sessions": 0.0,
+     "elapsed_s": 1108.7360266610049,
+     "jct_s": {
+      "mean": 354.6542655153262,
+      "p50": 327.0805055075034,
+      "p90": 648.276110637776,
+      "p99": 792.2581910884397,
+      "max": 795.6131778639974
+     },
+     "model_time_s": {
+      "mean": 84.86606955220267,
+      "p50": 86.15697460551623,
+      "p90": 149.2153786850117,
+      "p99": 183.38540204921426,
+      "max": 209.17915650525407
+     },
+     "pause_s": {
+      "mean": 269.78819596312354,
+      "p50": 238.05434134783496,
+      "p90": 502.2645397009798,
+      "p99": 691.3096978763907,
+      "max": 696.6838909930356
+     },
+     "requests": {
+      "requests": 1688.0,
+      "completed": 1688.0,
+      "failed": 0.0,
+      "errors": [],
+      "ttft_ms": {
+       "p50": 130.81593450624496,
+       "p90": 286.4680634695105,
+       "p99": 1017.3107270884778,
+       "mean": 179.7627244931654,
+       "max": 1916.4348260383122
+      },
+      "tpot_ms": {
+       "p50": 15.850084052187954,
+       "p90": 22.653267896501347,
+       "p99": 31.11858006899971,
+       "mean": 16.670983433589974,
+       "max": 46.37384357629344
+      }
+     },
+     "prefill_tokens_computed": 2588104.0,
+     "cache_hit_rate": 0.9116633424565369,
+     "server_metrics": {}
+    },
+    "128": {
+     "measured_sessions": 96.0,
+     "completed_sessions": 96.0,
+     "failed_sessions": 0.0,
+     "elapsed_s": 2004.7737387280213,
+     "jct_s": {
+      "mean": 759.368185168727,
+      "p50": 743.3101489029941,
+      "p90": 1170.8204082179873,
+      "p99": 1524.0299749912633,
+      "max": 1608.7435243170476
+     },
+     "model_time_s": {
+      "mean": 457.24206314666895,
+      "p50": 461.2078829050681,
+      "p90": 714.8538973057587,
+      "p99": 825.601448357121,
+      "max": 939.6143475681844
+     },
+     "pause_s": {
+      "mean": 302.126122022058,
+      "p50": 263.2879338913548,
+      "p90": 621.416281105559,
+      "p99": 861.5890660423258,
+      "max": 1014.545427936999
+     },
+     "requests": {
+      "requests": 2588.0,
+      "completed": 2588.0,
+      "failed": 0.0,
+      "errors": [],
+      "ttft_ms": {
+       "p50": 8246.192315971712,
+       "p90": 13712.306410918245,
+       "p99": 17832.405033444524,
+       "mean": 7758.23349416271,
+       "max": 19446.642252034508
+      },
+      "tpot_ms": {
+       "p50": 54.62488950181074,
+       "p90": 74.30138107771721,
+       "p99": 100.10366973997169,
+       "mean": 54.083573898636,
+       "max": 159.01839342236948
+      }
+     },
+     "prefill_tokens_computed": 8722579.0,
+     "cache_hit_rate": 0.8077154509844725,
+     "server_metrics": {}
+    }
+   },
+   "command": [
+    ".venv-sglang/bin/python",
+    "-m",
+    "sglang.launch_server",
+    "--model-path",
+    "Qwen/Qwen2.5-7B-Instruct",
+    "--port",
+    "8062",
+    "--dtype",
+    "bfloat16",
+    "--log-level",
+    "warning",
+    "--enable-metrics",
+    "--enable-cache-report",
+    "--enable-dynamic-batch-tokenizer",
+    "--enable-hierarchical-cache",
+    "--hicache-size",
+    "96"
+   ],
+   "code": {
+    "commit": "af44a3380b9f4d1f79ec5eab5b503f5ff99e00a8",
+    "dirty": false
+   }
+  },
+  "minfer/session_host": {
+   "engine": "minfer",
+   "label": "minfer, session-aware retention + 96 GB host tier",
+   "flags": [
+    "--host-kv-gb",
+    "96"
+   ],
+   "session_hints": true,
+   "runs": {
+    "16": {
+     "measured_sessions": 32.0,
+     "completed_sessions": 32.0,
+     "failed_sessions": 0.0,
+     "elapsed_s": 1290.9021128930035,
+     "jct_s": {
+      "mean": 294.92215194405435,
+      "p50": 275.3389408024959,
+      "p90": 449.56988063149623,
+      "p99": 827.5929456962166,
+      "max": 915.7263792519807
+     },
+     "model_time_s": {
+      "mean": 45.29908881475849,
+      "p50": 47.37564990287704,
+      "p90": 76.52404902086828,
+      "p99": 87.82042045273928,
+      "max": 91.01039892630857
+     },
+     "pause_s": {
+      "mean": 249.62306312929584,
+      "p50": 233.10575608910042,
+      "p90": 410.68825050575884,
+      "p99": 752.905211177408,
+      "max": 835.4323117715253
+     },
+     "requests": {
+      "requests": 827.0,
+      "completed": 827.0,
+      "failed": 0.0,
+      "errors": [],
+      "ttft_ms": {
+       "p50": 96.40834294259548,
+       "p90": 149.73915081936866,
+       "p99": 259.29298606701207,
+       "mean": 102.9320292062483,
+       "max": 571.7932629631832
+      },
+      "tpot_ms": {
+       "p50": 7.234639972146532,
+       "p90": 8.257784171583259,
+       "p99": 9.952042327235793,
+       "mean": 7.358721223230681,
+       "max": 12.767926591341613
+      }
+     },
+     "prefill_tokens_computed": 778604.0,
+     "cache_hit_rate": 0.9419468478627513,
+     "server_metrics": {
+      "minfer_requests_running": 0.0,
+      "minfer_requests_waiting": 0.0,
+      "minfer_requests_total": 1969.0,
+      "minfer_requests_finished_total": 1968.0,
+      "minfer_prompt_tokens_total": 32526584.0,
+      "minfer_generation_tokens_total": 394355.0,
+      "minfer_prefill_tokens_total": 2045111.0,
+      "minfer_decode_tokens_total": 392387.0,
+      "minfer_verify_tokens_total": 0.0,
+      "minfer_spec_rounds_total": 0.0,
+      "minfer_spec_proposed_tokens_total": 0.0,
+      "minfer_spec_accepted_tokens_total": 0.0,
+      "minfer_engine_steps_total": 169046.0,
+      "minfer_engine_step_seconds_total": 1205.4691451252438,
+      "minfer_preemptions_total": 0.0,
+      "minfer_kv_blocks": 60209.0,
+      "minfer_kv_blocks_used": 60120.0,
+      "minfer_kv_blocks_evictable": 60120.0,
+      "minfer_kv_usage_ratio": 0.9985218156753973,
+      "minfer_prefix_cache_hit_rate": 0.93717891965574,
+      "minfer_prefix_cache_lookup_tokens_total": 32523207.0,
+      "minfer_prefix_cache_hit_tokens_total": 30480064.0,
+      "minfer_prefix_cache_catchup_tokens_total": 0.0,
+      "minfer_prefill_tokens_saved_total": 30480064.0,
+      "minfer_prefix_cache_requests_hit_total": 1967.0,
+      "minfer_prefix_cache_blocks": 60120.0,
+      "minfer_prefix_cache_nodes": 2891.0,
+      "minfer_prefix_cache_evicted_blocks_total": 89378.0,
+      "minfer_host_kv_blocks": 112347.0,
+      "minfer_host_kv_blocks_used": 112347.0,
+      "minfer_host_offloaded_blocks_total": 144518.0,
+      "minfer_host_demoted_blocks_total": 86029.0,
+      "minfer_host_restored_blocks_total": 0.0,
+      "minfer_host_restores_total": 0.0,
+      "minfer_host_staging_waits_total": 0.0,
+      "minfer_host_peak_staging_bytes": 999161856.0,
+      "minfer_generation_tokens_per_second": 292.42026007977734
+     }
+    },
+    "64": {
+     "measured_sessions": 64.0,
+     "completed_sessions": 64.0,
+     "failed_sessions": 0.0,
+     "elapsed_s": 1067.378494965029,
+     "jct_s": {
+      "mean": 339.58141190679635,
+      "p50": 313.9423559434945,
+      "p90": 621.0961954641041,
+      "p99": 780.527014608683,
+      "max": 783.6631431009155
+     },
+     "model_time_s": {
+      "mean": 69.79321594367283,
+      "p50": 65.07376407441332,
+      "p90": 120.41416830410674,
+      "p99": 151.7354480279911,
+      "max": 159.92062665136342
+     },
+     "pause_s": {
+      "mean": 269.78819596312354,
+      "p50": 238.05434134783496,
+      "p90": 502.2645397009798,
+      "p99": 691.3096978763907,
+      "max": 696.6838909930356
+     },
+     "requests": {
+      "requests": 1688.0,
+      "completed": 1688.0,
+      "failed": 0.0,
+      "errors": [],
+      "ttft_ms": {
+       "p50": 119.9625775043387,
+       "p90": 200.7694550906308,
+       "p99": 396.07469555921847,
+       "mean": 135.26892366409976,
+       "max": 1019.6447459748015
+      },
+      "tpot_ms": {
+       "p50": 13.431997030132447,
+       "p90": 18.60131594184897,
+       "p99": 23.357016322947818,
+       "mean": 13.92611649390564,
+       "max": 30.40618131098409
+      }
+     },
+     "prefill_tokens_computed": 1675404.0,
+     "cache_hit_rate": 0.9428154396442537,
+     "server_metrics": {
+      "minfer_requests_running": 13.0,
+      "minfer_requests_waiting": 0.0,
+      "minfer_requests_total": 5419.0,
+      "minfer_requests_finished_total": 5406.0,
+      "minfer_prompt_tokens_total": 89856713.0,
+      "minfer_generation_tokens_total": 983676.0,
+      "minfer_prefill_tokens_total": 5677098.0,
+      "minfer_decode_tokens_total": 978271.0,
+      "minfer_verify_tokens_total": 0.0,
+      "minfer_spec_rounds_total": 0.0,
+      "minfer_spec_proposed_tokens_total": 0.0,
+      "minfer_spec_accepted_tokens_total": 0.0,
+      "minfer_engine_steps_total": 83890.0,
+      "minfer_engine_step_seconds_total": 1054.9119607489556,
+      "minfer_preemptions_total": 0.0,
+      "minfer_kv_blocks": 60209.0,
+      "minfer_kv_blocks_used": 60055.0,
+      "minfer_kv_blocks_evictable": 44603.0,
+      "minfer_kv_usage_ratio": 0.9974422428540584,
+      "minfer_prefix_cache_hit_rate": 0.9368794090083596,
+      "minfer_prefix_cache_lookup_tokens_total": 89851293.0,
+      "minfer_prefix_cache_hit_tokens_total": 84178224.0,
+      "minfer_prefix_cache_catchup_tokens_total": 0.0,
+      "minfer_prefill_tokens_saved_total": 84178224.0,
+      "minfer_prefix_cache_requests_hit_total": 5418.0,
+      "minfer_prefix_cache_blocks": 60032.0,
+      "minfer_prefix_cache_nodes": 3064.0,
+      "minfer_prefix_cache_evicted_blocks_total": 542371.0,
+      "minfer_host_kv_blocks": 112347.0,
+      "minfer_host_kv_blocks_used": 110863.0,
+      "minfer_host_offloaded_blocks_total": 394835.0,
+      "minfer_host_demoted_blocks_total": 492942.0,
+      "minfer_host_restored_blocks_total": 193741.0,
+      "minfer_host_restores_total": 474.0,
+      "minfer_host_staging_waits_total": 351.0,
+      "minfer_host_peak_staging_bytes": 1073479680.0,
+      "minfer_generation_tokens_per_second": 870.8955000389843
+     }
+    },
+    "128": {
+     "measured_sessions": 96.0,
+     "completed_sessions": 96.0,
+     "failed_sessions": 0.0,
+     "elapsed_s": 1902.1028368100524,
+     "jct_s": {
+      "mean": 701.4306978534574,
+      "p50": 694.3765983955236,
+      "p90": 1086.0222628665506,
+      "p99": 1454.7803128843136,
+      "max": 1508.1580286870012
+     },
+     "model_time_s": {
+      "mean": 399.30457583139946,
+      "p50": 389.28373951469507,
+      "p90": 617.1075628255596,
+      "p99": 728.492451431126,
+      "max": 839.028851938138
+     },
+     "pause_s": {
+      "mean": 302.126122022058,
+      "p50": 263.2879338913548,
+      "p90": 621.416281105559,
+      "p99": 861.5890660423258,
+      "max": 1014.545427936999
+     },
+     "requests": {
+      "requests": 2588.0,
+      "completed": 2588.0,
+      "failed": 0.0,
+      "errors": [],
+      "ttft_ms": {
+       "p50": 6843.200723524205,
+       "p90": 10096.72340565594,
+       "p99": 12320.017266836367,
+       "mean": 6050.574312042277,
+       "max": 14186.549421050586
+      },
+      "tpot_ms": {
+       "p50": 53.709675427359926,
+       "p90": 63.80252423359582,
+       "p99": 75.42638738572933,
+       "mean": 51.49775212040181,
+       "max": 97.1618804815707
+      }
+     },
+     "prefill_tokens_computed": 5599270.0,
+     "cache_hit_rate": 0.8765671131478233,
+     "server_metrics": {
+      "minfer_requests_running": 0.0,
+      "minfer_requests_waiting": 0.0,
+      "minfer_requests_total": 8112.0,
+      "minfer_requests_finished_total": 8112.0,
+      "minfer_prompt_tokens_total": 141009685.0,
+      "minfer_generation_tokens_total": 1514360.0,
+      "minfer_prefill_tokens_total": 15284891.0,
+      "minfer_decode_tokens_total": 1506218.0,
+      "minfer_verify_tokens_total": 0.0,
+      "minfer_spec_rounds_total": 0.0,
+      "minfer_spec_proposed_tokens_total": 0.0,
+      "minfer_spec_accepted_tokens_total": 0.0,
+      "minfer_engine_steps_total": 70267.0,
+      "minfer_engine_step_seconds_total": 1764.6463831304573,
+      "minfer_preemptions_total": 432.0,
+      "minfer_kv_blocks": 60209.0,
+      "minfer_kv_blocks_used": 60027.0,
+      "minfer_kv_blocks_evictable": 60027.0,
+      "minfer_kv_usage_ratio": 0.9969771961002508,
+      "minfer_prefix_cache_hit_rate": 0.8895817486902523,
+      "minfer_prefix_cache_lookup_tokens_total": 148500301.0,
+      "minfer_prefix_cache_hit_tokens_total": 131804448.0,
+      "minfer_prefix_cache_catchup_tokens_total": 0.0,
+      "minfer_prefill_tokens_saved_total": 131804448.0,
+      "minfer_prefix_cache_requests_hit_total": 8543.0,
+      "minfer_prefix_cache_blocks": 60027.0,
+      "minfer_prefix_cache_nodes": 2148.0,
+      "minfer_prefix_cache_evicted_blocks_total": 6416471.0,
+      "minfer_host_kv_blocks": 112347.0,
+      "minfer_host_kv_blocks_used": 38265.0,
+      "minfer_host_offloaded_blocks_total": 994064.0,
+      "minfer_host_demoted_blocks_total": 6106500.0,
+      "minfer_host_restored_blocks_total": 5443078.0,
+      "minfer_host_restores_total": 5576.0,
+      "minfer_host_staging_waits_total": 117099.0,
+      "minfer_host_peak_staging_bytes": 1073479680.0,
+      "minfer_generation_tokens_per_second": 701.8691379963138
+     }
+    }
+   },
+   "command": [
+    ".venv/bin/python",
+    "-m",
+    "minfer.cli",
+    "serve",
+    "--model",
+    "Qwen/Qwen2.5-7B-Instruct",
+    "--port",
+    "8062",
+    "--log-level",
+    "warning",
+    "--host-kv-gb",
+    "96"
+   ],
+   "code": {
+    "commit": "250517b44a854e395b1f8598c00358ec3cbc79dd",
+    "dirty": true
+   }
+  }
+ },
+ "repeats": {
+  "files": [
+   "bench/results/jct_7b_r1.json",
+   "bench/results/jct_7b_r2.json",
+   "bench/results/jct_7b_r3.json"
+  ],
+  "statistic": "median over the files; min and max below",
+  "counts": {},
+  "min": {
+   "model": null,
+   "trace": {
+    "version": 1.0,
+    "dataset": null,
+    "shard": null,
+    "model": null,
+    "max_context": 32000.0,
+    "min_calls": 3.0,
+    "max_pause_s": 120.0,
+    "time_scale": 1.0,
+    "seed": 0.0,
+    "pauses": null,
+    "sha256": null,
+    "sessions": 300.0
+   },
+   "ramp_s": 30.0,
+   "measured": {
+    "16": null,
+    "64": null,
+    "128": null
+   },
+   "configs": {
+    "vllm/offload": {
+     "engine": null,
+     "label": null,
+     "flags": null,
+     "session_hints": null,
+     "runs": {
+      "16": {
+       "measured_sessions": 32.0,
+       "completed_sessions": 32.0,
+       "failed_sessions": 0.0,
+       "elapsed_s": 1296.3124364559771,
+       "jct_s": {
+        "mean": 296.9833893893174,
+        "p50": 276.5331300315156,
+        "p90": 452.499379301921,
+        "p99": 829.3326032501813,
+        "max": 918.962135719019
+       },
+       "model_time_s": {
+        "mean": 47.36032626002152,
+        "p50": 50.27050602435541,
+        "p90": 79.48734932456982,
+        "p99": 91.47968682668446,
+        "max": 94.93344958625008
+       },
+       "pause_s": {
+        "mean": 249.62306312929584,
+        "p50": 233.10575608910042,
+        "p90": 410.68825050575884,
+        "p99": 752.905211177408,
+        "max": 835.4323117715253
+       },
+       "requests": {
+        "requests": 827.0,
+        "completed": 827.0,
+        "failed": 0.0,
+        "errors": null,
+        "ttft_ms": {
+         "p50": 139.12387803429738,
+         "p90": 207.56936317775398,
+         "p99": 271.5132900548633,
+         "mean": 144.3761909657728,
+         "max": 537.6420859829523
+        },
+        "tpot_ms": {
+         "p50": 7.275075186500151,
+         "p90": 8.389495708082798,
+         "p99": 9.67688978932374,
+         "mean": 7.379075483000867,
+         "max": 12.110203054775909
+        }
+       },
+       "prefill_tokens_computed": 799436.0,
+       "cache_hit_rate": 0.9403936022265573,
+       "server_metrics": {}
+      },
+      "64": {
+       "measured_sessions": 64.0,
+       "completed_sessions": 64.0,
+       "failed_sessions": 0.0,
+       "elapsed_s": 1085.0411023880006,
+       "jct_s": {
+        "mean": 344.48345394606804,
+        "p50": 317.9341577150044,
+        "p90": 629.785034597025,
+        "p99": 786.6993431008555,
+        "max": 788.4245096060331
+       },
+       "model_time_s": {
+        "mean": 74.69525798294453,
+        "p50": 70.61177968870051,
+        "p90": 128.81027813474722,
+        "p99": 163.44085713491353,
+        "max": 180.62871770931685
+       },
+       "pause_s": {
+        "mean": 269.78819596312354,
+        "p50": 238.05434134783496,
+        "p90": 502.2645397009798,
+        "p99": 691.3096978763907,
+        "max": 696.6838909930356
+       },
+       "requests": {
+        "requests": 1688.0,
+        "completed": 1688.0,
+        "failed": 0.0,
+        "errors": null,
+        "ttft_ms": {
+         "p50": 165.33362903282978,
+         "p90": 255.0624796771444,
+         "p99": 403.0470813304413,
+         "mean": 175.47029088132257,
+         "max": 658.5919170174748
+        },
+        "tpot_ms": {
+         "p50": 14.21749790926806,
+         "p90": 19.06262591242271,
+         "p99": 22.892860208345812,
+         "mean": 14.561746524837192,
+         "max": 25.463048966291048
+        }
+       },
+       "prefill_tokens_computed": 1716492.0,
+       "cache_hit_rate": 0.941410847660613,
+       "server_metrics": {}
+      },
+      "128": {
+       "measured_sessions": 96.0,
+       "completed_sessions": 96.0,
+       "failed_sessions": 0.0,
+       "elapsed_s": 1783.7887612820487,
+       "jct_s": {
+        "mean": 624.7374149519413,
+        "p50": 610.7410094789811,
+        "p90": 969.9257262145111,
+        "p99": 1353.0509270407463,
+        "max": 1365.1854955740273
+       },
+       "model_time_s": {
+        "mean": 322.6112929298833,
+        "p50": 325.3668619250233,
+        "p90": 498.09240522539693,
+        "p99": 591.4244749458198,
+        "max": 683.2830887901315
+       },
+       "pause_s": {
+        "mean": 302.126122022058,
+        "p50": 263.2879338913548,
+        "p90": 621.416281105559,
+        "p99": 861.5890660423258,
+        "max": 1014.545427936999
+       },
+       "requests": {
+        "requests": 2588.0,
+        "completed": 2588.0,
+        "failed": 0.0,
+        "errors": null,
+        "ttft_ms": {
+         "p50": 3767.2607335262,
+         "p90": 6812.529726396315,
+         "p99": 8450.088568027713,
+         "mean": 3516.4080735113066,
+         "max": 9730.503722035792
+        },
+        "tpot_ms": {
+         "p50": 51.789800486925174,
+         "p90": 68.90262387003766,
+         "p99": 87.89596208546672,
+         "mean": 49.86691964800935,
+         "max": 112.7510012340887
+        }
+       },
+       "prefill_tokens_computed": 6873846.0,
+       "cache_hit_rate": 0.8463718455203562,
+       "server_metrics": {}
+      }
+     },
+     "command": null,
+     "code": {
+      "commit": null,
+      "dirty": null
+     }
+    },
+    "sglang/hicache": {
+     "engine": null,
+     "label": null,
+     "flags": null,
+     "session_hints": null,
+     "runs": {
+      "16": {
+       "measured_sessions": 32.0,
+       "completed_sessions": 32.0,
+       "failed_sessions": 0.0,
+       "elapsed_s": 1295.0131247990066,
+       "jct_s": {
+        "mean": 296.6638618197212,
+        "p50": 276.9397657249938,
+        "p90": 452.37343061100694,
+        "p99": 829.7786884922875,
+        "max": 918.4758232989698
+       },
+       "model_time_s": {
+        "mean": 47.04079869042535,
+        "p50": 49.98675428385671,
+        "p90": 79.19765263736772,
+        "p99": 91.23300762527849,
+        "max": 94.37155799629605
+       },
+       "pause_s": {
+        "mean": 249.62306312929584,
+        "p50": 233.10575608910042,
+        "p90": 410.68825050575884,
+        "p99": 752.905211177408,
+        "max": 835.4323117715253
+       },
+       "requests": {
+        "requests": 827.0,
+        "completed": 827.0,
+        "failed": 0.0,
+        "errors": null,
+        "ttft_ms": {
+         "p50": 102.41942602442577,
+         "p90": 154.6899841749109,
+         "p99": 252.10625758511014,
+         "mean": 109.36340159983482,
+         "max": 601.696185010951
+        },
+        "tpot_ms": {
+         "p50": 7.479057225282304,
+         "p90": 8.555432812404721,
+         "p99": 9.963361807948663,
+         "mean": 7.606185810470106,
+         "max": 14.265085255134514
+        }
+       },
+       "prefill_tokens_computed": 772278.0,
+       "cache_hit_rate": 0.9424144171496451,
+       "server_metrics": {}
+      },
+      "64": {
+       "measured_sessions": 64.0,
+       "completed_sessions": 64.0,
+       "failed_sessions": 0.0,
+       "elapsed_s": 1106.7492536840145,
+       "jct_s": {
+        "mean": 353.969304492658,
+        "p50": 325.9521706304804,
+        "p90": 647.0240462181159,
+        "p99": 791.699098200947,
+        "max": 795.2195970339817
+       },
+       "model_time_s": {
+        "mean": 84.1811085295345,
+        "p50": 85.46679838400327,
+        "p90": 147.66515696939177,
+        "p99": 181.51019423676578,
+        "max": 203.2574070693068
+       },
+       "pause_s": {
+        "mean": 269.78819596312354,
+        "p50": 238.05434134783496,
+        "p90": 502.2645397009798,
+        "p99": 691.3096978763907,
+        "max": 696.6838909930356
+       },
+       "requests": {
+        "requests": 1688.0,
+        "completed": 1688.0,
+        "failed": 0.0,
+        "errors": null,
+        "ttft_ms": {
+         "p50": 123.94012146978639,
+         "p90": 271.7388922173995,
+         "p99": 1005.8198298112211,
+         "mean": 171.40436666329768,
+         "max": 1693.654606002383
+        },
+        "tpot_ms": {
+         "p50": 15.841585695768291,
+         "p90": 22.652434786628728,
+         "p99": 30.794582023995112,
+         "mean": 16.659734643843557,
+         "max": 44.97835623832153
+        }
+       },
+       "prefill_tokens_computed": 2572518.0,
+       "cache_hit_rate": 0.9110648412796041,
+       "server_metrics": {}
+      },
+      "128": {
+       "measured_sessions": 96.0,
+       "completed_sessions": 96.0,
+       "failed_sessions": 0.0,
+       "elapsed_s": 1982.318573748984,
+       "jct_s": {
+        "mean": 742.7930707906877,
+        "p50": 723.553619459999,
+        "p90": 1129.7063589795143,
+        "p99": 1507.9672399627334,
+        "max": 1565.0087853199802
+       },
+       "model_time_s": {
+        "mean": 440.6669487686297,
+        "p50": 437.6002427083008,
+        "p90": 677.1977981062216,
+        "p99": 798.6972767156444,
+        "max": 895.879608571117
+       },
+       "pause_s": {
+        "mean": 302.126122022058,
+        "p50": 263.2879338913548,
+        "p90": 621.416281105559,
+        "p99": 861.5890660423258,
+        "max": 1014.545427936999
+       },
+       "requests": {
+        "requests": 2588.0,
+        "completed": 2588.0,
+        "failed": 0.0,
+        "errors": null,
+        "ttft_ms": {
+         "p50": 7712.36130798934,
+         "p90": 13146.444559900556,
+         "p99": 15773.782488481376,
+         "mean": 7332.878722377444,
+         "max": 17775.471049011685
+        },
+        "tpot_ms": {
+         "p50": 53.143187358531556,
+         "p90": 74.16665073640257,
+         "p99": 99.43272655144983,
+         "mean": 53.2172602918304,
+         "max": 151.1691496908215
+        }
+       },
+       "prefill_tokens_computed": 8602263.0,
+       "cache_hit_rate": 0.8058658546075237,
+       "server_metrics": {}
+      }
+     },
+     "command": null,
+     "code": {
+      "commit": null,
+      "dirty": null
+     }
+    },
+    "minfer/session_host": {
+     "engine": null,
+     "label": null,
+     "flags": null,
+     "session_hints": null,
+     "runs": {
+      "16": {
+       "measured_sessions": 32.0,
+       "completed_sessions": 32.0,
+       "failed_sessions": 0.0,
+       "elapsed_s": 1290.5361368400045,
+       "jct_s": {
+        "mean": 294.8632728710618,
+        "p50": 275.16882340749726,
+        "p90": 449.5501628523693,
+        "p99": 827.337129245168,
+        "max": 915.1819165070774
+       },
+       "model_time_s": {
+        "mean": 45.24020974176592,
+        "p50": 47.33384021283767,
+        "p90": 76.46317316838831,
+        "p99": 87.81007059554504,
+        "max": 91.00162010725094
+       },
+       "pause_s": {
+        "mean": 249.62306312929584,
+        "p50": 233.10575608910042,
+        "p90": 410.68825050575884,
+        "p99": 752.905211177408,
+        "max": 835.4323117715253
+       },
+       "requests": {
+        "requests": 827.0,
+        "completed": 827.0,
+        "failed": 0.0,
+        "errors": null,
+        "ttft_ms": {
+         "p50": 93.90245599206537,
+         "p90": 147.76183379581195,
+         "p99": 246.62387583754025,
+         "mean": 99.88994613256612,
+         "max": 540.7795089995489
+        },
+        "tpot_ms": {
+         "p50": 7.209623816223549,
+         "p90": 8.24783425703085,
+         "p99": 9.805041390096822,
+         "mean": 7.346670914850569,
+         "max": 11.604112499669471
+        }
+       },
+       "prefill_tokens_computed": 778604.0,
+       "cache_hit_rate": 0.9419468478627513,
+       "server_metrics": {
+        "minfer_requests_running": 0.0,
+        "minfer_requests_waiting": 0.0,
+        "minfer_requests_total": 1969.0,
+        "minfer_requests_finished_total": 1968.0,
+        "minfer_prompt_tokens_total": 32526584.0,
+        "minfer_generation_tokens_total": 394355.0,
+        "minfer_prefill_tokens_total": 2045111.0,
+        "minfer_decode_tokens_total": 392387.0,
+        "minfer_verify_tokens_total": 0.0,
+        "minfer_spec_rounds_total": 0.0,
+        "minfer_spec_proposed_tokens_total": 0.0,
+        "minfer_spec_accepted_tokens_total": 0.0,
+        "minfer_engine_steps_total": 168713.0,
+        "minfer_engine_step_seconds_total": 1202.3825263266917,
+        "minfer_preemptions_total": 0.0,
+        "minfer_kv_blocks": 60209.0,
+        "minfer_kv_blocks_used": 60117.0,
+        "minfer_kv_blocks_evictable": 60117.0,
+        "minfer_kv_usage_ratio": 0.9984719892374894,
+        "minfer_prefix_cache_hit_rate": 0.93717891965574,
+        "minfer_prefix_cache_lookup_tokens_total": 32523207.0,
+        "minfer_prefix_cache_hit_tokens_total": 30480064.0,
+        "minfer_prefix_cache_catchup_tokens_total": 0.0,
+        "minfer_prefill_tokens_saved_total": 30480064.0,
+        "minfer_prefix_cache_requests_hit_total": 1967.0,
+        "minfer_prefix_cache_blocks": 60117.0,
+        "minfer_prefix_cache_nodes": 2882.0,
+        "minfer_prefix_cache_evicted_blocks_total": 89374.0,
+        "minfer_host_kv_blocks": 112347.0,
+        "minfer_host_kv_blocks_used": 112347.0,
+        "minfer_host_offloaded_blocks_total": 144515.0,
+        "minfer_host_demoted_blocks_total": 86023.0,
+        "minfer_host_restored_blocks_total": 0.0,
+        "minfer_host_restores_total": 0.0,
+        "minfer_host_staging_waits_total": 0.0,
+        "minfer_host_peak_staging_bytes": 955121664.0,
+        "minfer_generation_tokens_per_second": 202.87366057977178
+       }
+      },
+      "64": {
+       "measured_sessions": 64.0,
+       "completed_sessions": 64.0,
+       "failed_sessions": 0.0,
+       "elapsed_s": 1066.1800871939631,
+       "jct_s": {
+        "mean": 339.2297224414742,
+        "p50": 313.8550183280604,
+        "p90": 620.6190341583572,
+        "p99": 779.9171983684471,
+        "max": 782.9767775749788
+       },
+       "model_time_s": {
+        "mean": 69.44152647835071,
+        "p50": 64.69640464340917,
+        "p90": 120.3367281168427,
+        "p99": 151.40937174982264,
+        "max": 159.64542503327408
+       },
+       "pause_s": {
+        "mean": 269.78819596312354,
+        "p50": 238.05434134783496,
+        "p90": 502.2645397009798,
+        "p99": 691.3096978763907,
+        "max": 696.6838909930356
+       },
+       "requests": {
+        "requests": 1688.0,
+        "completed": 1688.0,
+        "failed": 0.0,
+        "errors": null,
+        "ttft_ms": {
+         "p50": 118.02122095832601,
+         "p90": 200.65337162232026,
+         "p99": 389.73016530391726,
+         "mean": 132.533693798405,
+         "max": 829.877273994498
+        },
+        "tpot_ms": {
+         "p50": 13.429256481333775,
+         "p90": 18.462892209885908,
+         "p99": 23.089233831430377,
+         "mean": 13.844166112348054,
+         "max": 26.823215406491524
+        }
+       },
+       "prefill_tokens_computed": 1675244.0,
+       "cache_hit_rate": 0.942809432446812,
+       "server_metrics": {
+        "minfer_requests_running": 12.0,
+        "minfer_requests_waiting": 0.0,
+        "minfer_requests_total": 5419.0,
+        "minfer_requests_finished_total": 5405.0,
+        "minfer_prompt_tokens_total": 89851866.0,
+        "minfer_generation_tokens_total": 983494.0,
+        "minfer_prefill_tokens_total": 5673641.0,
+        "minfer_decode_tokens_total": 978087.0,
+        "minfer_verify_tokens_total": 0.0,
+        "minfer_spec_rounds_total": 0.0,
+        "minfer_spec_proposed_tokens_total": 0.0,
+        "minfer_spec_accepted_tokens_total": 0.0,
+        "minfer_engine_steps_total": 83681.0,
+        "minfer_engine_step_seconds_total": 1053.6627378865378,
+        "minfer_preemptions_total": 0.0,
+        "minfer_kv_blocks": 60209.0,
+        "minfer_kv_blocks_used": 60008.0,
+        "minfer_kv_blocks_evictable": 43704.0,
+        "minfer_kv_usage_ratio": 0.996661628660167,
+        "minfer_prefix_cache_hit_rate": 0.9368578368705278,
+        "minfer_prefix_cache_lookup_tokens_total": 89846447.0,
+        "minfer_prefix_cache_hit_tokens_total": 84177888.0,
+        "minfer_prefix_cache_catchup_tokens_total": 0.0,
+        "minfer_prefill_tokens_saved_total": 84177888.0,
+        "minfer_prefix_cache_requests_hit_total": 5418.0,
+        "minfer_prefix_cache_blocks": 59982.0,
+        "minfer_prefix_cache_nodes": 3063.0,
+        "minfer_prefix_cache_evicted_blocks_total": 541957.0,
+        "minfer_host_kv_blocks": 112347.0,
+        "minfer_host_kv_blocks_used": 110711.0,
+        "minfer_host_offloaded_blocks_total": 394764.0,
+        "minfer_host_demoted_blocks_total": 491595.0,
+        "minfer_host_restored_blocks_total": 193175.0,
+        "minfer_host_restores_total": 473.0,
+        "minfer_host_staging_waits_total": 296.0,
+        "minfer_host_peak_staging_bytes": 1073479680.0,
+        "minfer_generation_tokens_per_second": 860.0376607345272
+       }
+      },
+      "128": {
+       "measured_sessions": 96.0,
+       "completed_sessions": 96.0,
+       "failed_sessions": 0.0,
+       "elapsed_s": 1893.2098249149858,
+       "jct_s": {
+        "mean": 701.0633350170198,
+        "p50": 689.9589387300075,
+        "p90": 1075.9309183480218,
+        "p99": 1445.2736687293827,
+        "max": 1499.937061505043
+       },
+       "model_time_s": {
+        "mean": 398.9372129949618,
+        "p50": 387.577257694565,
+        "p90": 613.5672120321321,
+        "p99": 718.3986773407768,
+        "max": 830.8078847561798
+       },
+       "pause_s": {
+        "mean": 302.126122022058,
+        "p50": 263.2879338913548,
+        "p90": 621.416281105559,
+        "p99": 861.5890660423258,
+        "max": 1014.545427936999
+       },
+       "requests": {
+        "requests": 2588.0,
+        "completed": 2588.0,
+        "failed": 0.0,
+        "errors": null,
+        "ttft_ms": {
+         "p50": 6807.104296982288,
+         "p90": 10095.42465468403,
+         "p99": 12249.525291060565,
+         "mean": 6027.119797054695,
+         "max": 13325.588245992549
+        },
+        "tpot_ms": {
+         "p50": 53.34434159898862,
+         "p90": 63.34775450950538,
+         "p99": 75.3042646844554,
+         "mean": 51.24046732624466,
+         "max": 90.33641850068567
+        }
+       },
+       "prefill_tokens_computed": 5507030.0,
+       "cache_hit_rate": 0.8752592593898931,
+       "server_metrics": {
+        "minfer_requests_running": 0.0,
+        "minfer_requests_waiting": 0.0,
+        "minfer_requests_total": 8112.0,
+        "minfer_requests_finished_total": 8112.0,
+        "minfer_prompt_tokens_total": 141009685.0,
+        "minfer_generation_tokens_total": 1514360.0,
+        "minfer_prefill_tokens_total": 15122559.0,
+        "minfer_decode_tokens_total": 1506215.0,
+        "minfer_verify_tokens_total": 0.0,
+        "minfer_spec_rounds_total": 0.0,
+        "minfer_spec_proposed_tokens_total": 0.0,
+        "minfer_spec_accepted_tokens_total": 0.0,
+        "minfer_engine_steps_total": 66606.0,
+        "minfer_engine_step_seconds_total": 1759.4881160104414,
+        "minfer_preemptions_total": 393.0,
+        "minfer_kv_blocks": 60209.0,
+        "minfer_kv_blocks_used": 59977.0,
+        "minfer_kv_blocks_evictable": 59977.0,
+        "minfer_kv_usage_ratio": 0.9961467554684516,
+        "minfer_prefix_cache_hit_rate": 0.8858788842529011,
+        "minfer_prefix_cache_lookup_tokens_total": 147781701.0,
+        "minfer_prefix_cache_hit_tokens_total": 131463904.0,
+        "minfer_prefix_cache_catchup_tokens_total": 0.0,
+        "minfer_prefill_tokens_saved_total": 131463904.0,
+        "minfer_prefix_cache_requests_hit_total": 8504.0,
+        "minfer_prefix_cache_blocks": 59977.0,
+        "minfer_prefix_cache_nodes": 2145.0,
+        "minfer_prefix_cache_evicted_blocks_total": 6379590.0,
+        "minfer_host_kv_blocks": 112347.0,
+        "minfer_host_kv_blocks_used": 37565.0,
+        "minfer_host_offloaded_blocks_total": 986651.0,
+        "minfer_host_demoted_blocks_total": 6061175.0,
+        "minfer_host_restored_blocks_total": 5395893.0,
+        "minfer_host_restores_total": 5542.0,
+        "minfer_host_staging_waits_total": 115907.0,
+        "minfer_host_peak_staging_bytes": 1073479680.0,
+        "minfer_generation_tokens_per_second": 162.5525997682121
+       }
+      }
+     },
+     "command": null,
+     "code": {
+      "commit": null,
+      "dirty": null
+     }
+    }
+   }
+  },
+  "max": {
+   "model": null,
+   "trace": {
+    "version": 1.0,
+    "dataset": null,
+    "shard": null,
+    "model": null,
+    "max_context": 32000.0,
+    "min_calls": 3.0,
+    "max_pause_s": 120.0,
+    "time_scale": 1.0,
+    "seed": 0.0,
+    "pauses": null,
+    "sha256": null,
+    "sessions": 300.0
+   },
+   "ramp_s": 30.0,
+   "measured": {
+    "16": null,
+    "64": null,
+    "128": null
+   },
+   "configs": {
+    "vllm/offload": {
+     "engine": null,
+     "label": null,
+     "flags": null,
+     "session_hints": null,
+     "runs": {
+      "16": {
+       "measured_sessions": 32.0,
+       "completed_sessions": 32.0,
+       "failed_sessions": 0.0,
+       "elapsed_s": 1309.276129572012,
+       "jct_s": {
+        "mean": 298.75059301443616,
+        "p50": 277.6314470854704,
+        "p90": 456.60212931031134,
+        "p99": 831.3254607192174,
+        "max": 920.0858846909832
+       },
+       "model_time_s": {
+        "mean": 49.127529885140305,
+        "p50": 54.53844510135429,
+        "p90": 82.4454624761302,
+        "p99": 93.05982077725646,
+        "max": 96.83654082931085
+       },
+       "pause_s": {
+        "mean": 249.62306312929584,
+        "p50": 233.10575608910042,
+        "p90": 410.68825050575884,
+        "p99": 752.905211177408,
+        "max": 835.4323117715253
+       },
+       "requests": {
+        "requests": 827.0,
+        "completed": 827.0,
+        "failed": 0.0,
+        "errors": null,
+        "ttft_ms": {
+         "p50": 142.76573399547487,
+         "p90": 209.51565080322325,
+         "p99": 344.11506958887924,
+         "mean": 147.92710458717625,
+         "max": 803.6308349692263
+        },
+        "tpot_ms": {
+         "p50": 7.3533031747007325,
+         "p90": 8.483432950797559,
+         "p99": 22.689777491759042,
+         "mean": 7.821188570423696,
+         "max": 28.501722429479873
+        }
+       },
+       "prefill_tokens_computed": 799436.0,
+       "cache_hit_rate": 0.9403936022265573,
+       "server_metrics": {}
+      },
+      "64": {
+       "measured_sessions": 64.0,
+       "completed_sessions": 64.0,
+       "failed_sessions": 0.0,
+       "elapsed_s": 1102.7031628880068,
+       "jct_s": {
+        "mean": 349.1323556015732,
+        "p50": 325.04571186049725,
+        "p90": 633.4439285692354,
+        "p99": 793.8661353612749,
+        "max": 796.5893994249636
+       },
+       "model_time_s": {
+        "mean": 79.34415963844967,
+        "p50": 74.63777267103309,
+        "p90": 133.405921809478,
+        "p99": 171.8403350450359,
+        "max": 187.16796151226896
+       },
+       "pause_s": {
+        "mean": 269.78819596312354,
+        "p50": 238.05434134783496,
+        "p90": 502.2645397009798,
+        "p99": 691.3096978763907,
+        "max": 696.6838909930356
+       },
+       "requests": {
+        "requests": 1688.0,
+        "completed": 1688.0,
+        "failed": 0.0,
+        "errors": null,
+        "ttft_ms": {
+         "p50": 174.56868151202798,
+         "p90": 297.07275621476583,
+         "p99": 483.0050470738201,
+         "mean": 191.301226034105,
+         "max": 829.5749060343951
+        },
+        "tpot_ms": {
+         "p50": 14.875620367890303,
+         "p90": 21.136730504807357,
+         "p99": 26.559209686904868,
+         "mean": 15.503822482826484,
+         "max": 32.6520705756803
+        }
+       },
+       "prefill_tokens_computed": 1716556.0,
+       "cache_hit_rate": 0.9414130320960463,
+       "server_metrics": {}
+      },
+      "128": {
+       "measured_sessions": 96.0,
+       "completed_sessions": 96.0,
+       "failed_sessions": 0.0,
+       "elapsed_s": 1799.936672410986,
+       "jct_s": {
+        "mean": 631.7258729148416,
+        "p50": 619.4297219009895,
+        "p90": 983.5552394475089,
+        "p99": 1367.162321687248,
+        "max": 1375.031492582988
+       },
+       "model_time_s": {
+        "mean": 329.59975089278356,
+        "p50": 331.00745378135287,
+        "p90": 512.6274065806978,
+        "p99": 607.9975770218106,
+        "max": 697.6189780491355
+       },
+       "pause_s": {
+        "mean": 302.126122022058,
+        "p50": 263.2879338913548,
+        "p90": 621.416281105559,
+        "p99": 861.5890660423258,
+        "max": 1014.545427936999
+       },
+       "requests": {
+        "requests": 2588.0,
+        "completed": 2588.0,
+        "failed": 0.0,
+        "errors": null,
+        "ttft_ms": {
+         "p50": 4022.5922485115007,
+         "p90": 6992.544405307854,
+         "p99": 8875.037971705315,
+         "mean": 3635.328123187924,
+         "max": 10208.260400977451
+        },
+        "tpot_ms": {
+         "p50": 53.02810203657407,
+         "p90": 70.26097884375515,
+         "p99": 91.95140210955121,
+         "mean": 50.965389644497094,
+         "max": 122.73009274382316
+        }
+       },
+       "prefill_tokens_computed": 6969014.0,
+       "cache_hit_rate": 0.8484697727458602,
+       "server_metrics": {}
+      }
+     },
+     "command": null,
+     "code": {
+      "commit": null,
+      "dirty": null
+     }
+    },
+    "sglang/hicache": {
+     "engine": null,
+     "label": null,
+     "flags": null,
+     "session_hints": null,
+     "runs": {
+      "16": {
+       "measured_sessions": 32.0,
+       "completed_sessions": 32.0,
+       "failed_sessions": 0.0,
+       "elapsed_s": 1295.7436235999921,
+       "jct_s": {
+        "mean": 296.7740606156167,
+        "p50": 277.0381668530172,
+        "p90": 452.59074206051883,
+        "p99": 830.2388485502682,
+        "max": 918.9914185880334
+       },
+       "model_time_s": {
+        "mean": 47.15099748632083,
+        "p50": 50.11553352287795,
+        "p90": 79.37295878688164,
+        "p99": 91.32814360789308,
+        "max": 94.4891270312734
+       },
+       "pause_s": {
+        "mean": 249.62306312929584,
+        "p50": 233.10575608910042,
+        "p90": 410.68825050575884,
+        "p99": 752.905211177408,
+        "max": 835.4323117715253
+       },
+       "requests": {
+        "requests": 827.0,
+        "completed": 827.0,
+        "failed": 0.0,
+        "errors": null,
+        "ttft_ms": {
+         "p50": 104.63522700592875,
+         "p90": 157.30967739364132,
+         "p99": 259.6160734549631,
+         "mean": 109.81648120889216,
+         "max": 605.5059929494746
+        },
+        "tpot_ms": {
+         "p50": 7.498673721575407,
+         "p90": 8.656389924448577,
+         "p99": 10.306669991431846,
+         "mean": 7.633455341918382,
+         "max": 14.792330509094013
+        }
+       },
+       "prefill_tokens_computed": 772333.0,
+       "cache_hit_rate": 0.9424185179805779,
+       "server_metrics": {}
+      },
+      "64": {
+       "measured_sessions": 64.0,
+       "completed_sessions": 64.0,
+       "failed_sessions": 0.0,
+       "elapsed_s": 1109.5078786200029,
+       "jct_s": {
+        "mean": 354.77382556539305,
+        "p50": 328.220233219472,
+        "p90": 648.5515943066043,
+        "p99": 793.6057391825825,
+        "max": 797.9534934859839
+       },
+       "model_time_s": {
+        "mean": 84.98562960226954,
+        "p50": 86.80034455563286,
+        "p90": 149.8302451871174,
+        "p99": 183.64104522588818,
+        "max": 209.807148596256
+       },
+       "pause_s": {
+        "mean": 269.78819596312354,
+        "p50": 238.05434134783496,
+        "p90": 502.2645397009798,
+        "p99": 691.3096978763907,
+        "max": 696.6838909930356
+       },
+       "requests": {
+        "requests": 1688.0,
+        "completed": 1688.0,
+        "failed": 0.0,
+        "errors": null,
+        "ttft_ms": {
+         "p50": 131.10350747592747,
+         "p90": 291.0485786094794,
+         "p99": 1147.3171805148,
+         "mean": 179.93308446068406,
+         "max": 2001.6423430060968
+        },
+        "tpot_ms": {
+         "p50": 15.94806719544327,
+         "p90": 22.896246195169866,
+         "p99": 31.267486949030065,
+         "mean": 16.788329793371283,
+         "max": 46.651495669913636
+        }
+       },
+       "prefill_tokens_computed": 2605639.0,
+       "cache_hit_rate": 0.9121953207481637,
+       "server_metrics": {}
+      },
+      "128": {
+       "measured_sessions": 96.0,
+       "completed_sessions": 96.0,
+       "failed_sessions": 0.0,
+       "elapsed_s": 2021.0594164439826,
+       "jct_s": {
+        "mean": 768.6827157556321,
+        "p50": 750.1371658545104,
+        "p90": 1173.416389955033,
+        "p99": 1527.924912280042,
+        "max": 1616.4069857840077
+       },
+       "model_time_s": {
+        "mean": 466.55659373357406,
+        "p50": 469.6320062479626,
+        "p90": 715.8488983950081,
+        "p99": 838.3190282862296,
+        "max": 947.2778090351445
+       },
+       "pause_s": {
+        "mean": 302.126122022058,
+        "p50": 263.2879338913548,
+        "p90": 621.416281105559,
+        "p99": 861.5890660423258,
+        "max": 1014.545427936999
+       },
+       "requests": {
+        "requests": 2588.0,
+        "completed": 2588.0,
+        "failed": 0.0,
+        "errors": null,
+        "ttft_ms": {
+         "p50": 8683.080168964807,
+         "p90": 13829.933459172027,
+         "p99": 18640.871351361893,
+         "mean": 8018.66385837444,
+         "max": 21592.637812020257
+        },
+        "tpot_ms": {
+         "p50": 54.831908392827984,
+         "p90": 77.82915627254265,
+         "p99": 106.15248862686185,
+         "mean": 54.99437452899236,
+         "max": 167.34259214717895
+        }
+       },
+       "prefill_tokens_computed": 8806482.0,
+       "cache_hit_rate": 0.8103677523049136,
+       "server_metrics": {}
+      }
+     },
+     "command": null,
+     "code": {
+      "commit": null,
+      "dirty": null
+     }
+    },
+    "minfer/session_host": {
+     "engine": null,
+     "label": null,
+     "flags": null,
+     "session_hints": null,
+     "runs": {
+      "16": {
+       "measured_sessions": 32.0,
+       "completed_sessions": 32.0,
+       "failed_sessions": 0.0,
+       "elapsed_s": 1291.1684269490652,
+       "jct_s": {
+        "mean": 294.9973279345322,
+        "p50": 275.5312952400127,
+        "p90": 449.79040677071316,
+        "p99": 827.6213768880923,
+        "max": 915.8118826469872
+       },
+       "model_time_s": {
+        "mean": 45.374264805236365,
+        "p50": 47.41208015437063,
+        "p90": 76.76681112849155,
+        "p99": 88.04027896372595,
+        "max": 91.27094862223808
+       },
+       "pause_s": {
+        "mean": 249.62306312929584,
+        "p50": 233.10575608910042,
+        "p90": 410.68825050575884,
+        "p99": 752.905211177408,
+        "max": 835.4323117715253
+       },
+       "requests": {
+        "requests": 827.0,
+        "completed": 827.0,
+        "failed": 0.0,
+        "errors": null,
+        "ttft_ms": {
+         "p50": 97.02065598685294,
+         "p90": 149.98683813028038,
+         "p99": 259.8021516948939,
+         "mean": 103.32102788653914,
+         "max": 585.8428380452096
+        },
+        "tpot_ms": {
+         "p50": 7.23794967347783,
+         "p90": 8.285195974271314,
+         "p99": 10.111164462684682,
+         "mean": 7.3651461818081705,
+         "max": 15.313145325540804
+        }
+       },
+       "prefill_tokens_computed": 778604.0,
+       "cache_hit_rate": 0.9419468478627513,
+       "server_metrics": {
+        "minfer_requests_running": 0.0,
+        "minfer_requests_waiting": 0.0,
+        "minfer_requests_total": 1969.0,
+        "minfer_requests_finished_total": 1968.0,
+        "minfer_prompt_tokens_total": 32526584.0,
+        "minfer_generation_tokens_total": 394355.0,
+        "minfer_prefill_tokens_total": 2045111.0,
+        "minfer_decode_tokens_total": 392387.0,
+        "minfer_verify_tokens_total": 0.0,
+        "minfer_spec_rounds_total": 0.0,
+        "minfer_spec_proposed_tokens_total": 0.0,
+        "minfer_spec_accepted_tokens_total": 0.0,
+        "minfer_engine_steps_total": 169400.0,
+        "minfer_engine_step_seconds_total": 1206.562997017987,
+        "minfer_preemptions_total": 0.0,
+        "minfer_kv_blocks": 60209.0,
+        "minfer_kv_blocks_used": 60122.0,
+        "minfer_kv_blocks_evictable": 60122.0,
+        "minfer_kv_usage_ratio": 0.9985550333006693,
+        "minfer_prefix_cache_hit_rate": 0.93717891965574,
+        "minfer_prefix_cache_lookup_tokens_total": 32523207.0,
+        "minfer_prefix_cache_hit_tokens_total": 30480064.0,
+        "minfer_prefix_cache_catchup_tokens_total": 0.0,
+        "minfer_prefill_tokens_saved_total": 30480064.0,
+        "minfer_prefix_cache_requests_hit_total": 1967.0,
+        "minfer_prefix_cache_blocks": 60122.0,
+        "minfer_prefix_cache_nodes": 2906.0,
+        "minfer_prefix_cache_evicted_blocks_total": 89385.0,
+        "minfer_host_kv_blocks": 112347.0,
+        "minfer_host_kv_blocks_used": 112347.0,
+        "minfer_host_offloaded_blocks_total": 144524.0,
+        "minfer_host_demoted_blocks_total": 86226.0,
+        "minfer_host_restored_blocks_total": 0.0,
+        "minfer_host_restores_total": 0.0,
+        "minfer_host_staging_waits_total": 0.0,
+        "minfer_host_peak_staging_bytes": 1036779520.0,
+        "minfer_generation_tokens_per_second": 292.77603423382914
+       }
+      },
+      "64": {
+       "measured_sessions": 64.0,
+       "completed_sessions": 64.0,
+       "failed_sessions": 0.0,
+       "elapsed_s": 1069.7600123870652,
+       "jct_s": {
+        "mean": 339.9080091472115,
+        "p50": 314.4186675940291,
+        "p90": 622.3661489086693,
+        "p99": 781.7747851430718,
+        "max": 784.0146110019996
+       },
+       "model_time_s": {
+        "mean": 70.11981318408797,
+        "p50": 65.72915483838877,
+        "p90": 121.11266945801515,
+        "p99": 153.2016370203112,
+        "max": 161.380745873305
+       },
+       "pause_s": {
+        "mean": 269.78819596312354,
+        "p50": 238.05434134783496,
+        "p90": 502.2645397009798,
+        "p99": 691.3096978763907,
+        "max": 696.6838909930356
+       },
+       "requests": {
+        "requests": 1688.0,
+        "completed": 1688.0,
+        "failed": 0.0,
+        "errors": null,
+        "ttft_ms": {
+         "p50": 120.7562189665623,
+         "p90": 206.0650150757283,
+         "p99": 422.60535590001365,
+         "mean": 135.81796692696983,
+         "max": 1132.0588019443676
+        },
+        "tpot_ms": {
+         "p50": 13.443307485201888,
+         "p90": 18.887494495738412,
+         "p99": 23.949425056165577,
+         "mean": 13.99192028313938,
+         "max": 32.906459500996526
+        }
+       },
+       "prefill_tokens_computed": 1675580.0,
+       "cache_hit_rate": 0.9428209007328371,
+       "server_metrics": {
+        "minfer_requests_running": 14.0,
+        "minfer_requests_waiting": 0.0,
+        "minfer_requests_total": 5420.0,
+        "minfer_requests_finished_total": 5408.0,
+        "minfer_prompt_tokens_total": 89860091.0,
+        "minfer_generation_tokens_total": 983767.0,
+        "minfer_prefill_tokens_total": 5678824.0,
+        "minfer_decode_tokens_total": 978363.0,
+        "minfer_verify_tokens_total": 0.0,
+        "minfer_spec_rounds_total": 0.0,
+        "minfer_spec_proposed_tokens_total": 0.0,
+        "minfer_spec_accepted_tokens_total": 0.0,
+        "minfer_engine_steps_total": 84165.0,
+        "minfer_engine_step_seconds_total": 1055.8417763127945,
+        "minfer_preemptions_total": 0.0,
+        "minfer_kv_blocks": 60209.0,
+        "minfer_kv_blocks_used": 60143.0,
+        "minfer_kv_blocks_evictable": 45409.0,
+        "minfer_kv_usage_ratio": 0.998903818366025,
+        "minfer_prefix_cache_hit_rate": 0.936912107386951,
+        "minfer_prefix_cache_lookup_tokens_total": 89854672.0,
+        "minfer_prefix_cache_hit_tokens_total": 84182992.0,
+        "minfer_prefix_cache_catchup_tokens_total": 0.0,
+        "minfer_prefill_tokens_saved_total": 84182992.0,
+        "minfer_prefix_cache_requests_hit_total": 5419.0,
+        "minfer_prefix_cache_blocks": 60118.0,
+        "minfer_prefix_cache_nodes": 3066.0,
+        "minfer_prefix_cache_evicted_blocks_total": 542975.0,
+        "minfer_host_kv_blocks": 112347.0,
+        "minfer_host_kv_blocks_used": 111564.0,
+        "minfer_host_offloaded_blocks_total": 394947.0,
+        "minfer_host_demoted_blocks_total": 493407.0,
+        "minfer_host_restored_blocks_total": 194448.0,
+        "minfer_host_restores_total": 475.0,
+        "minfer_host_staging_waits_total": 377.0,
+        "minfer_host_peak_staging_bytes": 1073479680.0,
+        "minfer_generation_tokens_per_second": 875.5655744918993
+       }
+      },
+      "128": {
+       "measured_sessions": 96.0,
+       "completed_sessions": 96.0,
+       "failed_sessions": 0.0,
+       "elapsed_s": 2096.697237442946,
+       "jct_s": {
+        "mean": 788.8969082499183,
+        "p50": 784.1617274219752,
+        "p90": 1236.449761517928,
+        "p99": 1565.2779209815776,
+        "max": 1703.782335392083
+       },
+       "model_time_s": {
+        "mean": 486.77078622786024,
+        "p50": 490.1941708903406,
+        "p90": 738.4125288988591,
+        "p99": 861.7798326244296,
+        "max": 1034.6531586432197
+       },
+       "pause_s": {
+        "mean": 302.126122022058,
+        "p50": 263.2879338913548,
+        "p90": 621.416281105559,
+        "p99": 861.5890660423258,
+        "max": 1014.545427936999
+       },
+       "requests": {
+        "requests": 2588.0,
+        "completed": 2588.0,
+        "failed": 0.0,
+        "errors": null,
+        "ttft_ms": {
+         "p50": 8201.434464543127,
+         "p90": 12917.245386436116,
+         "p99": 16866.384463435978,
+         "mean": 8000.479787747133,
+         "max": 19343.68331800215
+        },
+        "tpot_ms": {
+         "p50": 59.681192539417694,
+         "p90": 70.72165741390849,
+         "p99": 86.33618617452652,
+         "mean": 58.42677819343696,
+         "max": 109.72389407006317
+        }
+       },
+       "prefill_tokens_computed": 5658598.0,
+       "cache_hit_rate": 0.8786004941927175,
+       "server_metrics": {
+        "minfer_requests_running": 0.0,
+        "minfer_requests_waiting": 0.0,
+        "minfer_requests_total": 8112.0,
+        "minfer_requests_finished_total": 8112.0,
+        "minfer_prompt_tokens_total": 141009685.0,
+        "minfer_generation_tokens_total": 1514360.0,
+        "minfer_prefill_tokens_total": 15853425.0,
+        "minfer_decode_tokens_total": 1506226.0,
+        "minfer_verify_tokens_total": 0.0,
+        "minfer_spec_rounds_total": 0.0,
+        "minfer_spec_proposed_tokens_total": 0.0,
+        "minfer_spec_accepted_tokens_total": 0.0,
+        "minfer_engine_steps_total": 70789.0,
+        "minfer_engine_step_seconds_total": 1937.6526217798237,
+        "minfer_preemptions_total": 465.0,
+        "minfer_kv_blocks": 60209.0,
+        "minfer_kv_blocks_used": 60116.0,
+        "minfer_kv_blocks_evictable": 60116.0,
+        "minfer_kv_usage_ratio": 0.9984553804248534,
+        "minfer_prefix_cache_hit_rate": 0.8907334942034899,
+        "minfer_prefix_cache_lookup_tokens_total": 148783824.0,
+        "minfer_prefix_cache_hit_tokens_total": 132274192.0,
+        "minfer_prefix_cache_catchup_tokens_total": 0.0,
+        "minfer_prefill_tokens_saved_total": 132274192.0,
+        "minfer_prefix_cache_requests_hit_total": 8576.0,
+        "minfer_prefix_cache_blocks": 60116.0,
+        "minfer_prefix_cache_nodes": 2159.0,
+        "minfer_prefix_cache_evicted_blocks_total": 6981726.0,
+        "minfer_host_kv_blocks": 112347.0,
+        "minfer_host_kv_blocks_used": 39780.0,
+        "minfer_host_offloaded_blocks_total": 1026853.0,
+        "minfer_host_demoted_blocks_total": 6659162.0,
+        "minfer_host_restored_blocks_total": 5962104.0,
+        "minfer_host_restores_total": 5904.0,
+        "minfer_host_staging_waits_total": 130762.0,
+        "minfer_host_peak_staging_bytes": 1073479680.0,
+        "minfer_generation_tokens_per_second": 773.4700145568612
+       }
+      }
+     },
+     "command": null,
+     "code": {
+      "commit": null,
+      "dirty": null
+     }
+    }
+   }
+  }
+ }
+}

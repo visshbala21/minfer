@@ -2878,3 +2878,54 @@ the engine does from 64 sessions up, minfer's full-stack (host-tier) rows of eve
 repetition of the pressure sweep and of JCT are measured again on the fixed code (the
 other minfer configurations have no host tier and are unaffected); the earlier rows stay
 in the history (`af44a33`, `27161ab`, `aa7a503`, `d565c91`, `a3ddbfe`, `ab55d7c`).
+
+### M-036 Pressure sweep and JCT, three repetitions each: the medians (Phase 18 items 3–5)
+
+Files: `bench/results/pressure_7b_r{1,2,3}.json` and `jct_7b_r{1,2,3}.json`, one per
+repetition, every run a fresh server; `bench/medians.py` combines them into
+`pressure_7b.json` and `jct_7b.json`, from which every README table is generated. Every
+engine was measured three times in each benchmark (baselines once per repetition on
+`af44a33`…`bbe28fe`); minfer's full-stack (host-tier) rows were all measured again on the
+B-013 fix (pressure: `250517b`; JCT r1 and r2: `683322b`; JCT r3: `ac643b6`). 0 failed requests and 0
+failed sessions in every row used.
+
+Full stack vs the baselines with their host tiers, medians (min–max in the README):
+
+| sessions | metric | minfer | vLLM + offloading | SGLang + HiCache |
+|---|---|---|---|---|
+| 64 | out tok/s | 727 | 721 | 722 |
+| 64 | TTFT p50 / p99 (ms) | 123 / 419 | 174 / 453 | 130 / 608 |
+| 96 | out tok/s | 836 | 821 | 769 |
+| 96 | TTFT p50 / p99 (ms) | 157 / 489 | 211 / 1,233 | 155 / 1,210 |
+| 96 | prefill tokens per call | 981 | 1,524 | 1,704 |
+| 128 | out tok/s | 709 | 763 | 700 |
+| 128 | TTFT p50 / p99 (ms) | 2,757 / 10,289 | 874 / 7,963 | 3,156 / 12,540 |
+| 128 | prefill tokens per call | 1,718 | 2,495 | 2,541 |
+
+JCT model time per session p50 (JCT minus tool pauses): 47.4 / 65.1 / 389.3 s for minfer at
+16 / 64 / 128 sessions, vLLM 50.7 / 71.8 / 329.9 s, SGLang 50.0 / 86.2 / 461.2 s.
+
+What changed against the single runs written up in M-030: minfer's Phase 18 decode path
+(async decode and joint passes, M-034) moved its TPOT p50 at 64 sessions from 19.5 to
+15.3 ms, and with it throughput from 0.96× to 1.01× of vLLM. The headline (README) is now
+the strongest median result that is a genuine win, with its conditions: at 64–96 sessions
+minfer's TTFT p99 is lowest (2.5× lower than either baseline at 96, ranges disjoint), it
+computes the fewest prefill tokens, and agent model time is 9% shorter than vLLM's at 64
+(ranges disjoint). At 128 sessions vLLM wins on TTFT p50 (3.2×), throughput (1.08×) and
+JCT (11% shorter): the subject of Phase 19.
+
+Repeatability: at 64 and 96 sessions minfer's runs agree within 3% on throughput and 12% on
+TTFT p99. At 128 they spread more (throughput 690–732 tok/s, TTFT p50 2.6–3.4 s, JCT model
+time p50 388–490 s), which is itself a sign of a system in overload.
+
+**A reporting bug fixed on the way.** `readme_tables` computed "prefill tokens computed per
+call" as the ratio of two medians, and its min–max as the ratio of two minima and of two
+maxima, which printed ranges such as "985 (985–983)". A derived metric is now computed in
+each repetition and the median and range taken over those values.
+
+**Process note.** While the first of these re-measurements was starting, a test selection
+(`pytest -k`) meant for CPU tests also ran one GPU test for 8 s. The server had sized its KV
+pool already (GPU memory was at 73 GB before the test started) and the replay began after
+the test ended, so the 64-session row of r1 was kept (its KV pool and results match r2 and
+r3), but it broke the rule that nothing else uses the GPU during a benchmark; GPU tests now
+run only between benchmarks, and the selection is by marker (`-m "not gpu"`).
