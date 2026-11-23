@@ -70,6 +70,25 @@ def test_offload_and_restore_round_trip():
     assert (tier.stats.offloaded_blocks, tier.stats.restored_blocks) == (7, 7)
 
 
+def test_staging_memory_in_flight_stays_under_its_cap():
+    """Past the cap the oldest copies are finalized first; the data is unaffected."""
+    store = make_store()
+    original = store.tensors[torch.float32].clone()
+    tier = HostTier(store, 16, chunk_blocks=2)
+    tier.max_staging_bytes = 3 * tier.bytes_per_block  # room for one chunk and a half
+    source = [5, 9, 2, 30, 11, 7, 8]
+    slots, transfer = tier.offload(source)
+    assert tier.stats.staging_waits > 0
+    assert tier.stats.peak_staging_bytes <= tier.max_staging_bytes
+    store.tensors[torch.float32][:, source] = 0.0
+    target = [20, 21, 3, 4, 12, 13, 14]
+    restore = tier.restore(slots, target)
+    assert tier.staging_bytes <= tier.max_staging_bytes
+    tier.poll()
+    assert transfer.done and restore.done and not tier.busy and tier.staging_bytes == 0
+    assert torch.equal(store.tensors[torch.float32][:, target], original[:, source])
+
+
 # -------------------------------------------------------------------------- the tree
 
 
@@ -332,13 +351,14 @@ def test_random_sessions_under_gpu_and_host_pressure_match_the_oracle(model):
 
 
 @pytest.mark.gpu
-def test_round_trip_through_pinned_memory_on_the_gpu():
+@pytest.mark.parametrize("max_staging", [1 << 30, 1 << 20], ids=["uncapped", "capped"])
+def test_round_trip_through_pinned_memory_on_the_gpu(max_staging):
     """The asynchronous path: side stream, pinned pool, chunked copies, polling."""
     store = PagedKVStore(4, 80, 16, 2, 128, "cuda", torch.bfloat16)
     tensor = store.tensors[torch.bfloat16]
     tensor.copy_(torch.randn(tensor.shape, device="cuda"))
     original = tensor.clone()
-    tier = HostTier(store, 48, chunk_blocks=7)
+    tier = HostTier(store, 48, chunk_blocks=7, max_staging_bytes=max_staging)
     source = [3, 70, 12, 13, 14, 15, 41, 8, 9, 60, 61, 62, 63, 64, 65, 66, 67, 2, 30, 31]
     slots, transfer = tier.offload(source)
     tensor[:, source] = 0  # overwritten right away: the offload must already hold the bytes

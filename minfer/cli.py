@@ -120,6 +120,12 @@ def add_engine_arguments(parser: argparse.ArgumentParser) -> None:
         default=defaults.host_kv_gb,
         help="host-memory KV tier in GiB: paused sessions' KV is copied there and restored",
     )
+    group.add_argument(
+        "--host-staging-mb",
+        type=int,
+        default=defaults.host_staging_mb,
+        help="cap on GPU memory held by host-tier copies in flight (0: no cap)",
+    )
     group.add_argument("--min-restore-blocks", type=int, default=defaults.min_restore_blocks)
     group.add_argument(
         "--position-independent-reuse",
@@ -176,6 +182,7 @@ def engine_config_from_args(args: argparse.Namespace) -> EngineConfig:
         starvation_seconds=args.starvation_seconds,
         eviction_policy=args.eviction_policy,
         host_kv_gb=args.host_kv_gb,
+        host_staging_mb=args.host_staging_mb,
         min_restore_blocks=args.min_restore_blocks,
         position_independent_reuse=args.position_independent_reuse,
         reuse_min_tokens=args.reuse_min_tokens,

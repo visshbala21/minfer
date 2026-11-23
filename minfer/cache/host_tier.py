@@ -17,8 +17,11 @@ staging tensor on the engine's stream (ordered after every write to them), then 
 staging tensor to the host on the transfer stream; the GPU blocks may be reused as soon as
 the gather is queued. A restore copies host blocks into a staging tensor on the transfer
 stream — queued behind any offload of the same blocks still in flight — and the engine
-scatters it into the store once the copy's event has completed. The engine never waits on a
-transfer: it polls.
+scatters it into the store once the copy's event has completed. The engine does not wait on
+a transfer — it polls — except to keep the GPU staging memory of the copies in flight under
+``max_staging_bytes``: a burst of offloads (many sessions pausing at once, each with
+gigabytes of KV) would otherwise take the memory the engine's own passes need (DESIGN.md
+B-013). Then the oldest copies are waited for and finalized first.
 
 On a CPU store (tests) the same interface copies synchronously.
 """
@@ -89,13 +92,24 @@ class ExtentAllocator:
 
 
 @dataclass
+class _Copy:
+    """One chunked device copy: its staging tensors live until it is finalized."""
+
+    event: torch.cuda.Event | None
+    staged: list[Tensor] | None
+    gpu_blocks: list[int] | None  # restore target; None for an offload
+    nbytes: int
+    finalized: bool = False
+
+
+@dataclass
 class Transfer:
     """An offload or restore in flight.
 
     Attributes:
         num_blocks: Blocks being copied.
-        pending: Copies not yet finalized: ``(event, staged tensors, host start, gpu blocks)``.
-            ``gpu blocks`` is ``None`` for an offload.
+        pending: Copies not yet popped by :meth:`HostTier.poll` (some may already have
+            been finalized early to free staging memory).
         done: Set by :meth:`HostTier.poll` once every copy has completed (and, for a
             restore, been written into the GPU store).
     """
@@ -112,6 +126,8 @@ class HostTierStats:
     offloaded_blocks: int = 0
     restored_blocks: int = 0
     dropped_blocks: int = 0
+    staging_waits: int = 0  # copies waited for because staging memory hit its cap
+    peak_staging_bytes: int = 0
 
 
 class HostTier:
@@ -122,12 +138,21 @@ class HostTier:
         num_blocks: Capacity in blocks.
         chunk_blocks: Largest number of blocks copied by one device copy; bounds the size
             of a staging tensor on the GPU.
+        max_staging_bytes: Cap on the GPU staging memory of all copies in flight. One
+            chunk may exceed it alone; past it, the oldest copies are waited for.
     """
 
-    def __init__(self, store: PagedKVStore, num_blocks: int, chunk_blocks: int = 256) -> None:
+    def __init__(
+        self,
+        store: PagedKVStore,
+        num_blocks: int,
+        chunk_blocks: int = 256,
+        max_staging_bytes: int = 1 << 30,
+    ) -> None:
         self.store = store
         self.num_blocks = num_blocks
         self.chunk_blocks = chunk_blocks
+        self.max_staging_bytes = max_staging_bytes
         self.cuda = store.device.type == "cuda"
         self.allocator = ExtentAllocator(num_blocks)
         self.stats = HostTierStats()
@@ -143,6 +168,8 @@ class HostTier:
         self.bytes_per_block = sum(t[0].numel() * t.element_size() for t in self._host)
         self._stream = torch.cuda.Stream(store.device) if self.cuda else None
         self._transfers: deque[Transfer] = deque()
+        self._copies: deque[_Copy] = deque()  # every unfinalized copy, oldest first
+        self.staging_bytes = 0
 
     @property
     def num_free(self) -> int:
@@ -175,12 +202,13 @@ class HostTier:
                 count = min(self.chunk_blocks, length - offset)
                 chunk = gpu_blocks[cursor : cursor + count]
                 cursor += count
+                self._make_room(count)
                 index = torch.tensor(chunk, device=self.store.device)
                 staged = [
                     gpu.index_select(1, index).transpose(0, 1).contiguous() for gpu in self._gpu
                 ]
                 event = self._copy(staged, start + offset, to_host=True)
-                transfer.pending.append((event, staged, start + offset, None))
+                transfer.pending.append(self._track(event, staged, None, count))
         self.stats.offloaded_blocks += len(gpu_blocks)
         self._transfers.append(transfer)
         return slots, transfer
@@ -201,12 +229,49 @@ class HostTier:
                 and host_slots[position + count] == start + count
             ):
                 count += 1
+            self._make_room(count)
             staged, event = self._copy_from_host(start, count)
-            transfer.pending.append((event, staged, start, gpu_blocks[position : position + count]))
+            targets = gpu_blocks[position : position + count]
+            transfer.pending.append(self._track(event, staged, targets, count))
             position += count
         self.stats.restored_blocks += len(host_slots)
         self._transfers.append(transfer)
         return transfer
+
+    def _track(
+        self,
+        event: torch.cuda.Event | None,
+        staged: list[Tensor],
+        gpu_blocks: list[int] | None,
+        count: int,
+    ) -> _Copy:
+        copy = _Copy(event, staged, gpu_blocks, count * self.bytes_per_block)
+        self._copies.append(copy)
+        self.staging_bytes += copy.nbytes
+        self.stats.peak_staging_bytes = max(self.stats.peak_staging_bytes, self.staging_bytes)
+        return copy
+
+    def _finalize(self, copy: _Copy) -> None:
+        """Scatter a completed restore into the store; release the staging memory."""
+        if copy.gpu_blocks is not None:
+            index = torch.tensor(copy.gpu_blocks, device=self.store.device)
+            for gpu, source in zip(self._gpu, copy.staged, strict=True):
+                gpu.index_copy_(1, index, source.transpose(0, 1))
+        copy.staged = None
+        copy.finalized = True
+        self.staging_bytes -= copy.nbytes
+
+    def _make_room(self, count: int) -> None:
+        """Wait for the oldest copies until a ``count``-block chunk fits under the cap."""
+        needed = count * self.bytes_per_block
+        while self._copies and self.staging_bytes + needed > self.max_staging_bytes:
+            copy = self._copies.popleft()
+            if copy.finalized:
+                continue
+            if copy.event is not None:
+                copy.event.synchronize()
+            self.stats.staging_waits += 1
+            self._finalize(copy)
 
     def _copy(self, staged: list[Tensor], start: int, to_host: bool) -> torch.cuda.Event | None:
         count = staged[0].shape[0]
@@ -248,16 +313,16 @@ class HostTier:
             transfer = self._transfers[0]
             pending = transfer.pending
             while pending:
-                event, staged, _, gpu_blocks = pending[0]
-                if event is not None and not event.query():
-                    return  # copies complete in order on the transfer stream
-                if gpu_blocks is not None:
-                    index = torch.tensor(gpu_blocks, device=self.store.device)
-                    for gpu, source in zip(self._gpu, staged, strict=True):
-                        gpu.index_copy_(1, index, source.transpose(0, 1))
+                copy = pending[0]
+                if not copy.finalized:
+                    if copy.event is not None and not copy.event.query():
+                        return  # copies complete in order on the transfer stream
+                    self._finalize(copy)
                 pending.popleft()
             transfer.done = True
             self._transfers.popleft()
+        while self._copies and self._copies[0].finalized:
+            self._copies.popleft()
 
     def wait(self) -> None:
         """Block until every transfer in flight has completed (tests, shutdown)."""

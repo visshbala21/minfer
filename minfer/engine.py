@@ -131,6 +131,8 @@ class EngineConfig:
             ``"session"`` eviction policy). A session's cached KV is copied to pinned host
             memory when it pauses for a tool call; if the GPU copy is evicted meanwhile,
             the next request has it copied back instead of recomputing it.
+        host_staging_mb: Cap on the GPU memory held by host-tier copies in flight, in MiB
+            (DESIGN.md B-013); 0 means no cap.
         min_restore_blocks: Shortest run of host-only blocks copied back rather than
             recomputed.
         position_independent_reuse: Reuse KV of prompt tokens that are cached at a different
@@ -183,6 +185,7 @@ class EngineConfig:
     starvation_seconds: float = 1.0
     eviction_policy: Literal["lru", "session"] = "session"
     host_kv_gb: float = 0.0
+    host_staging_mb: int = 1024
     min_restore_blocks: int = 8
     position_independent_reuse: bool = False
     reuse_min_tokens: int = 64
@@ -389,7 +392,8 @@ class Engine:
                     "the host tier needs the prefix cache with eviction_policy='session'"
                 )
             host_blocks = int(config.host_kv_gb * 2**30) // (self.store.nbytes // num_blocks)
-            self.host_tier = HostTier(self.store, host_blocks)
+            cap = config.host_staging_mb * 2**20 if config.host_staging_mb > 0 else 1 << 62
+            self.host_tier = HostTier(self.store, host_blocks, max_staging_bytes=cap)
         self.verify_graphs = None
         if (
             config.speculation is not None
@@ -667,6 +671,8 @@ class Engine:
                 host_demoted_blocks_total=cs.demoted_blocks,
                 host_restored_blocks_total=cs.restored_blocks,
                 host_restores_total=scheduler.num_restores,
+                host_staging_waits_total=host.stats.staging_waits,
+                host_peak_staging_bytes=host.stats.peak_staging_bytes,
             )
         return snapshot
 
