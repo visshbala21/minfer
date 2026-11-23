@@ -652,6 +652,16 @@ class Engine:
             "kv_blocks_evictable": blocks.num_evictable,
             "kv_usage_ratio": blocks.num_used / blocks.num_usable,
         }
+        if self.device.type == "cuda":
+            free, _ = torch.cuda.mem_get_info(self.device)
+            snapshot.update(
+                gpu_free_bytes=free,
+                gpu_allocated_bytes=torch.cuda.memory_allocated(self.device),
+                gpu_reserved_bytes=torch.cuda.memory_reserved(self.device),
+                gpu_peak_reserved_bytes=torch.cuda.max_memory_reserved(self.device),
+                gpu_peak_allocated_bytes=torch.cuda.max_memory_allocated(self.device),
+                kv_cache_bytes=self.store.nbytes,
+            )
         cache = self.prefix_cache
         if cache is not None:
             cs = cache.stats

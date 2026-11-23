@@ -68,6 +68,11 @@ SAMPLED = (
     "minfer_admission_shortfall_blocks_total",
     "minfer_admission_promised_blocks",
     "minfer_kv_blocks_free",
+    "minfer_gpu_free_bytes",
+    "minfer_gpu_reserved_bytes",
+    "minfer_gpu_peak_reserved_bytes",
+    "minfer_gpu_peak_allocated_bytes",
+    "minfer_kv_cache_bytes",
 )
 
 
@@ -129,9 +134,15 @@ class MetricsPoller(threading.Thread):
             self.samples.append(row)
 
 
-def summarize_samples(samples: list[dict[str, float]], warmup: float) -> dict[str, Any]:
-    """Mean and peak of each gauge after the warm-up; rates of the counters over it."""
-    rows = [s for s in samples if s["t"] >= warmup]
+def summarize_samples(
+    samples: list[dict[str, float]], warmup: float, duration: float
+) -> dict[str, Any]:
+    """Mean and peak of each gauge while the load runs, after the warm-up; counter rates.
+
+    Samples after ``duration`` are left out: once the load stops every cached block is
+    evictable and the engine idles, which would dilute every average.
+    """
+    rows = [s for s in samples if warmup <= s["t"] <= duration]
     if len(rows) < 2:
         return {}
     out: dict[str, Any] = {}
@@ -143,9 +154,19 @@ def summarize_samples(samples: list[dict[str, float]], warmup: float) -> dict[st
     evictable = [s.get("minfer_kv_blocks_evictable", 0.0) for s in rows]
     out["kv_used_fraction_mean"] = float(np.mean(used)) / blocks
     out["kv_held_by_requests_fraction_mean"] = float(np.mean(np.subtract(used, evictable))) / blocks
-    for key in ("admission_promised_blocks", "kv_blocks_free", "kv_blocks_evictable"):
+    for key in (
+        "admission_promised_blocks",
+        "kv_blocks_free",
+        "kv_blocks_evictable",
+        "gpu_free_bytes",
+        "gpu_reserved_bytes",
+    ):
         values = [s.get(f"minfer_{key}", 0.0) for s in rows]
         out[f"{key}_mean"], out[f"{key}_max"] = float(np.mean(values)), float(np.max(values))
+    for key in ("gpu_peak_reserved_bytes", "gpu_peak_allocated_bytes", "kv_cache_bytes"):
+        if f"minfer_{key}" in rows[-1]:
+            out[key] = rows[-1][f"minfer_{key}"]
+    out["gpu_free_bytes_min"] = min(s.get("minfer_gpu_free_bytes", 0.0) for s in rows)
     span = rows[-1]["t"] - rows[0]["t"]
     for key in (
         "minfer_host_staging_waits_total",
@@ -243,7 +264,7 @@ def main() -> None:
             row = rt.summarize(records, elapsed, args.warmup)
             row["code"] = code
             row["breakdown"] = breakdown([json.loads(x) for x in lines], args.warmup)
-            row["gauges"] = summarize_samples(poller.samples, args.warmup)
+            row["gauges"] = summarize_samples(poller.samples, args.warmup, args.duration)
             row["server_metrics"] = {k: v for k, v in metrics.items() if k.startswith("minfer_")}
             entry["runs"][key] = row
             out.write_text(json.dumps(results, indent=1) + "\n")
