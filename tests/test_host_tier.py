@@ -403,8 +403,30 @@ def test_round_trip_through_pinned_memory_on_the_gpu(max_staging):
 
 
 @pytest.mark.gpu
+def test_host_tier_copies_do_not_wait_for_the_engine_stream():
+    """B-014: starting an offload or scattering a restore must not block the host."""
+    import time
+
+    store = PagedKVStore(4, 64, 16, 2, 128, "cuda", torch.bfloat16)
+    tier = HostTier(store, 32, chunk_blocks=8)
+    slots, _ = tier.offload(list(range(8)))
+    tier.restore(slots, list(range(48, 56)))
+    tier.wait()  # every kernel used below has run once (first use can synchronize)
+    restore = tier.restore(slots, list(range(32, 40)))
+    torch.cuda.synchronize()
+    torch.cuda._sleep(1_000_000_000)  # the engine's stream is busy for ~0.5 s
+    began = time.perf_counter()
+    tier.offload(list(range(8, 16)))
+    tier.poll()  # scatters the completed restore
+    blocked = time.perf_counter() - began
+    torch.cuda.synchronize()
+    assert restore.done
+    assert blocked < 0.1, f"the host waited {blocked:.3f} s for the GPU"
+
+
+@pytest.mark.gpu
 def test_restore_staging_is_not_reused_before_its_scatter_has_run():
-    """B-014: a restore's staging memory must outlive the scatter queued on the engine stream.
+    """B-015: a restore's staging memory must outlive the scatter queued on the engine stream.
 
     The scatter is held back on the engine's stream; a second restore of the same size is
     started meanwhile. If the first one's staging memory went back to the allocator at once,
@@ -418,7 +440,8 @@ def test_restore_staging_is_not_reused_before_its_scatter_has_run():
     first, second = list(range(0, 8)), list(range(8, 16))
     slots_first, _ = tier.offload(first)
     slots_second, _ = tier.offload(second)
-    tier.wait()
+    tier.restore(slots_first, list(range(48, 56)))
+    tier.wait()  # every kernel used below has run once (first use can synchronize)
     targets_first, targets_second = list(range(32, 40)), list(range(40, 48))
     restore = tier.restore(slots_first, targets_first)
     torch.cuda.synchronize()  # the copy into staging is complete; the scatter is not queued

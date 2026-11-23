@@ -205,7 +205,7 @@ class HostTier:
                 chunk = gpu_blocks[cursor : cursor + count]
                 cursor += count
                 self._make_room(count)
-                index = torch.tensor(chunk, device=self.store.device)
+                index = self._index(chunk)
                 staged = [
                     gpu.index_select(1, index).transpose(0, 1).contiguous() for gpu in self._gpu
                 ]
@@ -256,12 +256,29 @@ class HostTier:
     def _finalize(self, copy: _Copy) -> None:
         """Scatter a completed restore into the store; release the staging memory."""
         if copy.gpu_blocks is not None:
-            index = torch.tensor(copy.gpu_blocks, device=self.store.device)
+            index = self._index(copy.gpu_blocks)
+            engine_stream = torch.cuda.current_stream(self.store.device) if self.cuda else None
             for gpu, source in zip(self._gpu, copy.staged, strict=True):
                 gpu.index_copy_(1, index, source.transpose(0, 1))
+                if engine_stream is not None:
+                    # Staging was allocated on the transfer stream; without this the
+                    # allocator could hand it to the next restore's copy before the
+                    # scatter just queued on the engine's stream has read it (B-015).
+                    source.record_stream(engine_stream)
         copy.staged = None
         copy.finalized = True
         self.staging_bytes -= copy.nbytes
+
+    def _index(self, blocks: list[int]) -> Tensor:
+        """Block ids as a device tensor, without making the host wait for the GPU.
+
+        ``torch.tensor(..., device="cuda")`` copies synchronously: the host waits until
+        everything queued on the engine's stream has run (B-014). A non-blocking copy from
+        pageable memory is staged by the driver before the call returns, so the list may
+        go away at once, and the host does not wait.
+        """
+        index = torch.tensor(blocks, dtype=torch.int64)
+        return index.to(self.store.device, non_blocking=True) if self.cuda else index
 
     def _make_room(self, count: int) -> None:
         """Wait for the oldest copies until a ``count``-block chunk fits under the cap."""
