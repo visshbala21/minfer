@@ -120,6 +120,11 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8062)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--resume", action="store_true", help="keep results already on disk")
+    parser.add_argument(
+        "--remeasure",
+        action="store_true",
+        help="with --resume: measure the selected configurations again, keep the others",
+    )
     args = parser.parse_args()
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
 
@@ -141,6 +146,9 @@ def main() -> None:
     }
     if args.resume and args.out.exists():
         results = json.loads(args.out.read_text())
+        if args.remeasure:
+            for name in args.configs:
+                results["configs"].pop(name, None)
     for name in args.configs:
         engine, variant = name.split("/")
         label, flags, hints = CONFIGS[name]
