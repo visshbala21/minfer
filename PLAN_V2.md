@@ -69,3 +69,23 @@ Context: with the host tier, minfer beats vLLM on TTFT p50 at 32-96 sessions but
 3. Re-run ONLY the host-tier pressure sweep at 96 and 128 sessions, 3 repetitions, minfer only (baselines unchanged), and confirm no regression at 64 and 96.
 4. Update README tables (medians) and headline honestly.
 ACCEPTANCE: diagnosis + before/after committed; 3x results at 96/128; README updated; CI green.
+
+## Phase 20 — Verify the findings before publication (cap ~8h)
+The project's findings will be published in a technical report and sent to the authors of the work evaluated. Act as a hostile reviewer of each claim below and try to break it. Rebuild venvs first. For each: re-run the relevant measurement (3 repetitions), check the setup is fair to the technique, test at least one alternative setting that could reverse the conclusion, and record the verdict (holds / holds with caveats / does not hold) in DESIGN.md and a new FINDINGS.md.
+1. Position-independent reuse adds nothing measurable on real coding traces. Check: did the trace actually contain shifted duplicates (report the fraction)? Were recompute ratios and chunk sizes reasonable vs the CacheBlend/MiniPIC papers? Test on a second real trace dataset. Under what conditions WOULD it help?
+2. Faster TTFT barely moves agent job completion time. Decompose JCT per session into tool time, queueing, prefill, decode; show the share of each; test with tool pauses scaled to 0 to show what changes.
+3. Speculation helps at low load, hurts under load. Confirm the crossover load point.
+4. Overload is driven by KV capacity, not retention. Confirm with a capacity-matched comparison (e.g. limit vLLM's KV to minfer's token count, or minfer's to vLLM's).
+5. Part of SGLang's TTFT gap is front-end tokenization. Re-confirm with token-id prompts at 7B.
+Also: package bench/ as a standalone harness usable against any OpenAI-compatible server (clear README section, one command per benchmark, documented trace sources and licenses).
+ACCEPTANCE: FINDINGS.md with a verdict and evidence per claim; all results committed; harness documented; CI green.
+
+## Phase 20 — Verify the findings before publication (cap ~8h)
+The project's findings will be published in a technical report and sent to the authors of the work evaluated. Act as a hostile reviewer of each claim below and try to break it. Rebuild venvs first. For each: re-run the relevant measurement (3 repetitions), check the setup is fair to the technique, test at least one alternative setting that could reverse the conclusion, and record the verdict (holds / holds with caveats / does not hold) in DESIGN.md and a new FINDINGS.md.
+1. Position-independent reuse adds nothing measurable on real coding traces. Check: did the trace actually contain shifted duplicates (report the fraction)? Were recompute ratios and chunk sizes reasonable vs the CacheBlend/MiniPIC papers? Test on a second real trace dataset. Under what conditions WOULD it help?
+2. Faster TTFT barely moves agent job completion time. Decompose JCT per session into tool time, queueing, prefill, decode; show the share of each; test with tool pauses scaled to 0 to show what changes.
+3. Speculation helps at low load, hurts under load. Confirm the crossover load point.
+4. Overload is driven by KV capacity, not retention. Confirm with a capacity-matched comparison (e.g. limit vLLM's KV to minfer's token count, or minfer's to vLLM's).
+5. Part of SGLang's TTFT gap is front-end tokenization. Re-confirm with token-id prompts at 7B.
+Also: package bench/ as a standalone harness usable against any OpenAI-compatible server (clear README section, one command per benchmark, documented trace sources and licenses).
+ACCEPTANCE: FINDINGS.md with a verdict and evidence per claim; all results committed; harness documented; CI green.
